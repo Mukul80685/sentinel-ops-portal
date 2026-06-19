@@ -13,6 +13,8 @@ import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index'
 import { Route as AuthenticatedVisibilityRouteImport } from './routes/_authenticated/visibility'
+import { Route as AuthenticatedServiceabilityRouteImport } from './routes/_authenticated/serviceability'
+import { Route as AuthenticatedIntelRouteImport } from './routes/_authenticated/intel'
 import { Route as AuthenticatedPriorityIndexRouteImport } from './routes/_authenticated/priority/index'
 import { Route as AuthenticatedInventoryIndexRouteImport } from './routes/_authenticated/inventory/index'
 import { Route as AuthenticatedEngagementIndexRouteImport } from './routes/_authenticated/engagement/index'
@@ -39,6 +41,17 @@ const AuthenticatedIndexRoute = AuthenticatedIndexRouteImport.update({
 const AuthenticatedVisibilityRoute = AuthenticatedVisibilityRouteImport.update({
   id: '/visibility',
   path: '/visibility',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedServiceabilityRoute =
+  AuthenticatedServiceabilityRouteImport.update({
+    id: '/serviceability',
+    path: '/serviceability',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedIntelRoute = AuthenticatedIntelRouteImport.update({
+  id: '/intel',
+  path: '/intel',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedPriorityIndexRoute =
@@ -93,6 +106,8 @@ const AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRoute =
 export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
   '/auth': typeof AuthRoute
+  '/intel': typeof AuthenticatedIntelRoute
+  '/serviceability': typeof AuthenticatedServiceabilityRoute
   '/visibility': typeof AuthenticatedVisibilityRoute
   '/engagement/$unitId': typeof AuthenticatedEngagementUnitIdRoute
   '/priority/$unitId': typeof AuthenticatedPriorityUnitIdRoute
@@ -105,6 +120,8 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/auth': typeof AuthRoute
+  '/intel': typeof AuthenticatedIntelRoute
+  '/serviceability': typeof AuthenticatedServiceabilityRoute
   '/visibility': typeof AuthenticatedVisibilityRoute
   '/': typeof AuthenticatedIndexRoute
   '/engagement/$unitId': typeof AuthenticatedEngagementUnitIdRoute
@@ -120,6 +137,8 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
+  '/_authenticated/intel': typeof AuthenticatedIntelRoute
+  '/_authenticated/serviceability': typeof AuthenticatedServiceabilityRoute
   '/_authenticated/visibility': typeof AuthenticatedVisibilityRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/_authenticated/engagement/$unitId': typeof AuthenticatedEngagementUnitIdRoute
@@ -136,6 +155,8 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/auth'
+    | '/intel'
+    | '/serviceability'
     | '/visibility'
     | '/engagement/$unitId'
     | '/priority/$unitId'
@@ -148,6 +169,8 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/auth'
+    | '/intel'
+    | '/serviceability'
     | '/visibility'
     | '/'
     | '/engagement/$unitId'
@@ -162,6 +185,8 @@ export interface FileRouteTypes {
     | '__root__'
     | '/_authenticated'
     | '/auth'
+    | '/_authenticated/intel'
+    | '/_authenticated/serviceability'
     | '/_authenticated/visibility'
     | '/_authenticated/'
     | '/_authenticated/engagement/$unitId'
@@ -207,6 +232,20 @@ declare module '@tanstack/react-router' {
       path: '/visibility'
       fullPath: '/visibility'
       preLoaderRoute: typeof AuthenticatedVisibilityRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/serviceability': {
+      id: '/_authenticated/serviceability'
+      path: '/serviceability'
+      fullPath: '/serviceability'
+      preLoaderRoute: typeof AuthenticatedServiceabilityRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/intel': {
+      id: '/_authenticated/intel'
+      path: '/intel'
+      fullPath: '/intel'
+      preLoaderRoute: typeof AuthenticatedIntelRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/priority/': {
@@ -269,6 +308,8 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthenticatedRouteRouteChildren {
+  AuthenticatedIntelRoute: typeof AuthenticatedIntelRoute
+  AuthenticatedServiceabilityRoute: typeof AuthenticatedServiceabilityRoute
   AuthenticatedVisibilityRoute: typeof AuthenticatedVisibilityRoute
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
   AuthenticatedEngagementUnitIdRoute: typeof AuthenticatedEngagementUnitIdRoute
@@ -282,6 +323,8 @@ interface AuthenticatedRouteRouteChildren {
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
+  AuthenticatedIntelRoute: AuthenticatedIntelRoute,
+  AuthenticatedServiceabilityRoute: AuthenticatedServiceabilityRoute,
   AuthenticatedVisibilityRoute: AuthenticatedVisibilityRoute,
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
   AuthenticatedEngagementUnitIdRoute: AuthenticatedEngagementUnitIdRoute,
