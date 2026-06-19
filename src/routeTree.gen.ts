@@ -12,6 +12,10 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index'
+import { Route as AuthenticatedInventoryIndexRouteImport } from './routes/_authenticated/inventory/index'
+import { Route as AuthenticatedInventoryUnitIdIndexRouteImport } from './routes/_authenticated/inventory/$unitId/index'
+import { Route as AuthenticatedInventoryUnitIdCategoryIdIndexRouteImport } from './routes/_authenticated/inventory/$unitId/$categoryId/index'
+import { Route as AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRouteImport } from './routes/_authenticated/inventory/$unitId/$categoryId/$equipmentId'
 
 const AuthRoute = AuthRouteImport.update({
   id: '/auth',
@@ -27,27 +31,83 @@ const AuthenticatedIndexRoute = AuthenticatedIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedInventoryIndexRoute =
+  AuthenticatedInventoryIndexRouteImport.update({
+    id: '/inventory/',
+    path: '/inventory/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedInventoryUnitIdIndexRoute =
+  AuthenticatedInventoryUnitIdIndexRouteImport.update({
+    id: '/inventory/$unitId/',
+    path: '/inventory/$unitId/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedInventoryUnitIdCategoryIdIndexRoute =
+  AuthenticatedInventoryUnitIdCategoryIdIndexRouteImport.update({
+    id: '/inventory/$unitId/$categoryId/',
+    path: '/inventory/$unitId/$categoryId/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRoute =
+  AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRouteImport.update({
+    id: '/inventory/$unitId/$categoryId/$equipmentId',
+    path: '/inventory/$unitId/$categoryId/$equipmentId',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
   '/auth': typeof AuthRoute
+  '/inventory/': typeof AuthenticatedInventoryIndexRoute
+  '/inventory/$unitId/': typeof AuthenticatedInventoryUnitIdIndexRoute
+  '/inventory/$unitId/$categoryId/$equipmentId': typeof AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRoute
+  '/inventory/$unitId/$categoryId/': typeof AuthenticatedInventoryUnitIdCategoryIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/auth': typeof AuthRoute
   '/': typeof AuthenticatedIndexRoute
+  '/inventory': typeof AuthenticatedInventoryIndexRoute
+  '/inventory/$unitId': typeof AuthenticatedInventoryUnitIdIndexRoute
+  '/inventory/$unitId/$categoryId/$equipmentId': typeof AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRoute
+  '/inventory/$unitId/$categoryId': typeof AuthenticatedInventoryUnitIdCategoryIdIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
+  '/_authenticated/inventory/': typeof AuthenticatedInventoryIndexRoute
+  '/_authenticated/inventory/$unitId/': typeof AuthenticatedInventoryUnitIdIndexRoute
+  '/_authenticated/inventory/$unitId/$categoryId/$equipmentId': typeof AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRoute
+  '/_authenticated/inventory/$unitId/$categoryId/': typeof AuthenticatedInventoryUnitIdCategoryIdIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/auth'
+  fullPaths:
+    | '/'
+    | '/auth'
+    | '/inventory/'
+    | '/inventory/$unitId/'
+    | '/inventory/$unitId/$categoryId/$equipmentId'
+    | '/inventory/$unitId/$categoryId/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/auth' | '/'
-  id: '__root__' | '/_authenticated' | '/auth' | '/_authenticated/'
+  to:
+    | '/auth'
+    | '/'
+    | '/inventory'
+    | '/inventory/$unitId'
+    | '/inventory/$unitId/$categoryId/$equipmentId'
+    | '/inventory/$unitId/$categoryId'
+  id:
+    | '__root__'
+    | '/_authenticated'
+    | '/auth'
+    | '/_authenticated/'
+    | '/_authenticated/inventory/'
+    | '/_authenticated/inventory/$unitId/'
+    | '/_authenticated/inventory/$unitId/$categoryId/$equipmentId'
+    | '/_authenticated/inventory/$unitId/$categoryId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -78,15 +138,54 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/inventory/': {
+      id: '/_authenticated/inventory/'
+      path: '/inventory'
+      fullPath: '/inventory/'
+      preLoaderRoute: typeof AuthenticatedInventoryIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/inventory/$unitId/': {
+      id: '/_authenticated/inventory/$unitId/'
+      path: '/inventory/$unitId'
+      fullPath: '/inventory/$unitId/'
+      preLoaderRoute: typeof AuthenticatedInventoryUnitIdIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/inventory/$unitId/$categoryId/': {
+      id: '/_authenticated/inventory/$unitId/$categoryId/'
+      path: '/inventory/$unitId/$categoryId'
+      fullPath: '/inventory/$unitId/$categoryId/'
+      preLoaderRoute: typeof AuthenticatedInventoryUnitIdCategoryIdIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/inventory/$unitId/$categoryId/$equipmentId': {
+      id: '/_authenticated/inventory/$unitId/$categoryId/$equipmentId'
+      path: '/inventory/$unitId/$categoryId/$equipmentId'
+      fullPath: '/inventory/$unitId/$categoryId/$equipmentId'
+      preLoaderRoute: typeof AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
   }
 }
 
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
+  AuthenticatedInventoryIndexRoute: typeof AuthenticatedInventoryIndexRoute
+  AuthenticatedInventoryUnitIdIndexRoute: typeof AuthenticatedInventoryUnitIdIndexRoute
+  AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRoute: typeof AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRoute
+  AuthenticatedInventoryUnitIdCategoryIdIndexRoute: typeof AuthenticatedInventoryUnitIdCategoryIdIndexRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
+  AuthenticatedInventoryIndexRoute: AuthenticatedInventoryIndexRoute,
+  AuthenticatedInventoryUnitIdIndexRoute:
+    AuthenticatedInventoryUnitIdIndexRoute,
+  AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRoute:
+    AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRoute,
+  AuthenticatedInventoryUnitIdCategoryIdIndexRoute:
+    AuthenticatedInventoryUnitIdCategoryIdIndexRoute,
 }
 
 const AuthenticatedRouteRouteWithChildren =
