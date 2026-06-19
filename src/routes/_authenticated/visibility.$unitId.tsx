@@ -16,11 +16,12 @@ export const Route = createFileRoute("/_authenticated/visibility/$unitId")({
 });
 
 function Visibility() {
+  const { unitId } = Route.useParams();
   const canEdit = useCanEdit();
   const qc = useQueryClient();
   const [q, setQ] = useState("");
   const [satFilter, setSatFilter] = useState("");
-  const [unitFilter, setUnitFilter] = useState("");
+  const unitFilter = unitId;
 
   const { data: sats = [] } = useQuery({ queryKey: ["sats"], queryFn: listSatellites });
   const { data: units = [] } = useQuery({ queryKey: ["units"], queryFn: listUnits });
@@ -47,6 +48,14 @@ function Visibility() {
     (!satFilter || s.id === satFilter)
   );
   const filteredUnits = units.filter((u) => !unitFilter || u.id === unitFilter);
+  const scopedUnit = units.find((u) => u.id === unitId);
+  if (units.length > 0 && !scopedUnit) {
+    return (
+      <AppShell title="Visibility Metrics" subtitle="Module 02" showBack>
+        <Empty title="No agent registered for this unit" />
+      </AppShell>
+    );
+  }
 
   async function setEirp(satId: string, unitId: string, value: string) {
     const eirp = value === "" ? 0 : Number(value);
