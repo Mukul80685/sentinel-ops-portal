@@ -12,19 +12,27 @@ import { useMemo, useState } from "react";
 export const Route = createFileRoute("/_authenticated/serviceability/$unitId")({ component: ServiceabilityPage });
 
 function ServiceabilityPage() {
+  const { unitId } = Route.useParams();
   const [q, setQ] = useState("");
   const [statusF, setStatusF] = useState("");
 
+  const { data: unit, isLoading: unitLoading } = useQuery({
+    queryKey: ["unit", unitId],
+    queryFn: async () => (await supabase.from("units").select("*").eq("id", unitId).maybeSingle()).data,
+  });
+
   const { data: rows = [] } = useQuery({
-    queryKey: ["serv"],
+    queryKey: ["serv", unitId],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("equipment")
         .select("id,name,remarks,serviceability, units:unit_id(code,name), category:category_id(name)")
+        .eq("unit_id", unitId)
         .order("name");
       if (error) throw error;
       return data ?? [];
     },
+    enabled: !!unit,
   });
 
   const filtered = useMemo(() => rows.filter((r: any) => {
@@ -42,10 +50,19 @@ function ServiceabilityPage() {
     return c;
   }, [rows]);
 
+  if (!unitLoading && !unit) {
+    return (
+      <AppShell title="Serviceability State" subtitle="Operational Readiness" showBack>
+        <Empty title="No agent registered for this unit" />
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell
-      title="Serviceability State"
-      subtitle="Operational Readiness // All Agencies"
+      title={unit ? `Serviceability — ${unit.code}` : "Serviceability State"}
+      subtitle="Operational Readiness"
+      showBack
       actions={
         <Button variant="outline" size="sm" onClick={() => exportCsv(filtered.map((r: any) => ({ Agency: r.units?.code, Resource: r.category?.name, Equipment: r.name, Serviceability: r.serviceability, Remarks: r.remarks ?? "" })), "serviceability.csv")} className="mono text-[11px] uppercase tracking-wider h-8">
           <Download className="h-3.5 w-3.5 mr-1" /> CSV
