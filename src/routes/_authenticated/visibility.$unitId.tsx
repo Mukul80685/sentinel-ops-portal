@@ -11,16 +11,17 @@ import { useMemo, useState } from "react";
 import { Download, Search } from "lucide-react";
 import { toast } from "sonner";
 
-export const Route = createFileRoute("/_authenticated/visibility")({
+export const Route = createFileRoute("/_authenticated/visibility/$unitId")({
   component: Visibility,
 });
 
 function Visibility() {
+  const { unitId } = Route.useParams();
   const canEdit = useCanEdit();
   const qc = useQueryClient();
   const [q, setQ] = useState("");
   const [satFilter, setSatFilter] = useState("");
-  const [unitFilter, setUnitFilter] = useState("");
+  const unitFilter = unitId;
 
   const { data: sats = [] } = useQuery({ queryKey: ["sats"], queryFn: listSatellites });
   const { data: units = [] } = useQuery({ queryKey: ["units"], queryFn: listUnits });
@@ -47,6 +48,14 @@ function Visibility() {
     (!satFilter || s.id === satFilter)
   );
   const filteredUnits = units.filter((u) => !unitFilter || u.id === unitFilter);
+  const scopedUnit = units.find((u) => u.id === unitId);
+  if (units.length > 0 && !scopedUnit) {
+    return (
+      <AppShell title="Visibility Metrics" subtitle="Module 02" showBack>
+        <Empty title="No agent registered for this unit" />
+      </AppShell>
+    );
+  }
 
   async function setEirp(satId: string, unitId: string, value: string) {
     const eirp = value === "" ? 0 : Number(value);
@@ -86,10 +95,9 @@ function Visibility() {
           <option value="">All satellites</option>
           {sats.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
-        <select className="bg-input border border-border rounded-sm px-2 py-1.5 text-sm mono" value={unitFilter} onChange={(e) => setUnitFilter(e.target.value)}>
-          <option value="">All agencies</option>
-          {units.map((u) => <option key={u.id} value={u.id}>{u.code}</option>)}
-        </select>
+        <div className="mono text-xs px-2 py-1.5 border border-border rounded-sm bg-secondary/40 truncate">
+          Unit: <span className="text-primary font-bold">{scopedUnit?.code ?? "—"}</span>
+        </div>
       </div>
 
       {sats.length === 0 || units.length === 0 ? (

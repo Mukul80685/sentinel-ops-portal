@@ -16,25 +16,28 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { signedUrl, uploadFile } from "@/lib/storage";
 
-export const Route = createFileRoute("/_authenticated/intel")({ component: IntelRepository });
+export const Route = createFileRoute("/_authenticated/intel/$unitId")({ component: IntelRepository });
 
 function IntelRepository() {
+  const { unitId } = Route.useParams();
   const canEdit = useCanEdit();
   const qc = useQueryClient();
   const [q, setQ] = useState("");
   const [satFilter, setSatFilter] = useState("");
-  const [unitFilter, setUnitFilter] = useState("");
+  const unitFilter = unitId;
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
 
   const { data: sats = [] } = useQuery({ queryKey: ["sats"], queryFn: listSatellites });
   const { data: units = [] } = useQuery({ queryKey: ["units"], queryFn: listUnits });
+  const scopedUnit = units.find((u) => u.id === unitId);
   const { data: rows = [] } = useQuery({
-    queryKey: ["intel"],
+    queryKey: ["intel", unitId],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("intel_records")
         .select("*, satellites:satellite_id(name), units:unit_id(code)")
+        .eq("unit_id", unitId)
         .order("observation_date", { ascending: false });
       if (error) throw error;
       return data ?? [];
@@ -72,10 +75,19 @@ function IntelRepository() {
     })), "intel-records.csv");
   }
 
+  if (units.length > 0 && !scopedUnit) {
+    return (
+      <AppShell title="INT Repository" subtitle="Module 05" showBack>
+        <Empty title="No agent registered for this unit" />
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell
-      title="INT Repository"
+      title={scopedUnit ? `INT Repository — ${scopedUnit.code}` : "INT Repository"}
       subtitle="Module 05 // Historical Archive"
+      showBack
       actions={
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={exportData} className="mono text-[11px] uppercase tracking-wider h-8"><Download className="h-3.5 w-3.5 mr-1" /> CSV</Button>
@@ -92,10 +104,9 @@ function IntelRepository() {
           <option value="">All satellites</option>
           {sats.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
-        <select className="bg-input border border-border rounded-sm px-2 py-1.5 text-sm mono" value={unitFilter} onChange={(e) => setUnitFilter(e.target.value)}>
-          <option value="">All agencies</option>
-          {units.map((u) => <option key={u.id} value={u.id}>{u.code}</option>)}
-        </select>
+        <div className="mono text-xs px-2 py-1.5 border border-border rounded-sm bg-secondary/40 truncate flex items-center">
+          Unit: <span className="text-primary font-bold ml-1">{scopedUnit?.code ?? "—"}</span>
+        </div>
         <div className="grid grid-cols-2 gap-1">
           <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="mono text-xs" />
           <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="mono text-xs" />

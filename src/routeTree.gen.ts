@@ -12,13 +12,16 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index'
-import { Route as AuthenticatedVisibilityRouteImport } from './routes/_authenticated/visibility'
-import { Route as AuthenticatedServiceabilityRouteImport } from './routes/_authenticated/serviceability'
-import { Route as AuthenticatedIntelRouteImport } from './routes/_authenticated/intel'
+import { Route as AuthenticatedVisibilityIndexRouteImport } from './routes/_authenticated/visibility.index'
+import { Route as AuthenticatedServiceabilityIndexRouteImport } from './routes/_authenticated/serviceability.index'
 import { Route as AuthenticatedPriorityIndexRouteImport } from './routes/_authenticated/priority/index'
 import { Route as AuthenticatedInventoryIndexRouteImport } from './routes/_authenticated/inventory/index'
+import { Route as AuthenticatedIntelIndexRouteImport } from './routes/_authenticated/intel.index'
 import { Route as AuthenticatedEngagementIndexRouteImport } from './routes/_authenticated/engagement/index'
+import { Route as AuthenticatedVisibilityUnitIdRouteImport } from './routes/_authenticated/visibility.$unitId'
+import { Route as AuthenticatedServiceabilityUnitIdRouteImport } from './routes/_authenticated/serviceability.$unitId'
 import { Route as AuthenticatedPriorityUnitIdRouteImport } from './routes/_authenticated/priority/$unitId'
+import { Route as AuthenticatedIntelUnitIdRouteImport } from './routes/_authenticated/intel.$unitId'
 import { Route as AuthenticatedEngagementUnitIdRouteImport } from './routes/_authenticated/engagement/$unitId'
 import { Route as AuthenticatedAdminUsersRouteImport } from './routes/_authenticated/admin/users'
 import { Route as AuthenticatedAdminUnitsRouteImport } from './routes/_authenticated/admin/units'
@@ -41,22 +44,18 @@ const AuthenticatedIndexRoute = AuthenticatedIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
-const AuthenticatedVisibilityRoute = AuthenticatedVisibilityRouteImport.update({
-  id: '/visibility',
-  path: '/visibility',
-  getParentRoute: () => AuthenticatedRouteRoute,
-} as any)
-const AuthenticatedServiceabilityRoute =
-  AuthenticatedServiceabilityRouteImport.update({
-    id: '/serviceability',
-    path: '/serviceability',
+const AuthenticatedVisibilityIndexRoute =
+  AuthenticatedVisibilityIndexRouteImport.update({
+    id: '/visibility/',
+    path: '/visibility/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
-const AuthenticatedIntelRoute = AuthenticatedIntelRouteImport.update({
-  id: '/intel',
-  path: '/intel',
-  getParentRoute: () => AuthenticatedRouteRoute,
-} as any)
+const AuthenticatedServiceabilityIndexRoute =
+  AuthenticatedServiceabilityIndexRouteImport.update({
+    id: '/serviceability/',
+    path: '/serviceability/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedPriorityIndexRoute =
   AuthenticatedPriorityIndexRouteImport.update({
     id: '/priority/',
@@ -69,16 +68,39 @@ const AuthenticatedInventoryIndexRoute =
     path: '/inventory/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedIntelIndexRoute = AuthenticatedIntelIndexRouteImport.update({
+  id: '/intel/',
+  path: '/intel/',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedEngagementIndexRoute =
   AuthenticatedEngagementIndexRouteImport.update({
     id: '/engagement/',
     path: '/engagement/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedVisibilityUnitIdRoute =
+  AuthenticatedVisibilityUnitIdRouteImport.update({
+    id: '/visibility/$unitId',
+    path: '/visibility/$unitId',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedServiceabilityUnitIdRoute =
+  AuthenticatedServiceabilityUnitIdRouteImport.update({
+    id: '/serviceability/$unitId',
+    path: '/serviceability/$unitId',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedPriorityUnitIdRoute =
   AuthenticatedPriorityUnitIdRouteImport.update({
     id: '/priority/$unitId',
     path: '/priority/$unitId',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedIntelUnitIdRoute =
+  AuthenticatedIntelUnitIdRouteImport.update({
+    id: '/intel/$unitId',
+    path: '/intel/$unitId',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedEngagementUnitIdRoute =
@@ -125,35 +147,41 @@ const AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRoute =
 export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
   '/auth': typeof AuthRoute
-  '/intel': typeof AuthenticatedIntelRoute
-  '/serviceability': typeof AuthenticatedServiceabilityRoute
-  '/visibility': typeof AuthenticatedVisibilityRoute
   '/admin/satellites': typeof AuthenticatedAdminSatellitesRoute
   '/admin/units': typeof AuthenticatedAdminUnitsRoute
   '/admin/users': typeof AuthenticatedAdminUsersRoute
   '/engagement/$unitId': typeof AuthenticatedEngagementUnitIdRoute
+  '/intel/$unitId': typeof AuthenticatedIntelUnitIdRoute
   '/priority/$unitId': typeof AuthenticatedPriorityUnitIdRoute
+  '/serviceability/$unitId': typeof AuthenticatedServiceabilityUnitIdRoute
+  '/visibility/$unitId': typeof AuthenticatedVisibilityUnitIdRoute
   '/engagement/': typeof AuthenticatedEngagementIndexRoute
+  '/intel/': typeof AuthenticatedIntelIndexRoute
   '/inventory/': typeof AuthenticatedInventoryIndexRoute
   '/priority/': typeof AuthenticatedPriorityIndexRoute
+  '/serviceability/': typeof AuthenticatedServiceabilityIndexRoute
+  '/visibility/': typeof AuthenticatedVisibilityIndexRoute
   '/inventory/$unitId/': typeof AuthenticatedInventoryUnitIdIndexRoute
   '/inventory/$unitId/$categoryId/$equipmentId': typeof AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRoute
   '/inventory/$unitId/$categoryId/': typeof AuthenticatedInventoryUnitIdCategoryIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/auth': typeof AuthRoute
-  '/intel': typeof AuthenticatedIntelRoute
-  '/serviceability': typeof AuthenticatedServiceabilityRoute
-  '/visibility': typeof AuthenticatedVisibilityRoute
   '/': typeof AuthenticatedIndexRoute
   '/admin/satellites': typeof AuthenticatedAdminSatellitesRoute
   '/admin/units': typeof AuthenticatedAdminUnitsRoute
   '/admin/users': typeof AuthenticatedAdminUsersRoute
   '/engagement/$unitId': typeof AuthenticatedEngagementUnitIdRoute
+  '/intel/$unitId': typeof AuthenticatedIntelUnitIdRoute
   '/priority/$unitId': typeof AuthenticatedPriorityUnitIdRoute
+  '/serviceability/$unitId': typeof AuthenticatedServiceabilityUnitIdRoute
+  '/visibility/$unitId': typeof AuthenticatedVisibilityUnitIdRoute
   '/engagement': typeof AuthenticatedEngagementIndexRoute
+  '/intel': typeof AuthenticatedIntelIndexRoute
   '/inventory': typeof AuthenticatedInventoryIndexRoute
   '/priority': typeof AuthenticatedPriorityIndexRoute
+  '/serviceability': typeof AuthenticatedServiceabilityIndexRoute
+  '/visibility': typeof AuthenticatedVisibilityIndexRoute
   '/inventory/$unitId': typeof AuthenticatedInventoryUnitIdIndexRoute
   '/inventory/$unitId/$categoryId/$equipmentId': typeof AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRoute
   '/inventory/$unitId/$categoryId': typeof AuthenticatedInventoryUnitIdCategoryIdIndexRoute
@@ -162,18 +190,21 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
-  '/_authenticated/intel': typeof AuthenticatedIntelRoute
-  '/_authenticated/serviceability': typeof AuthenticatedServiceabilityRoute
-  '/_authenticated/visibility': typeof AuthenticatedVisibilityRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/_authenticated/admin/satellites': typeof AuthenticatedAdminSatellitesRoute
   '/_authenticated/admin/units': typeof AuthenticatedAdminUnitsRoute
   '/_authenticated/admin/users': typeof AuthenticatedAdminUsersRoute
   '/_authenticated/engagement/$unitId': typeof AuthenticatedEngagementUnitIdRoute
+  '/_authenticated/intel/$unitId': typeof AuthenticatedIntelUnitIdRoute
   '/_authenticated/priority/$unitId': typeof AuthenticatedPriorityUnitIdRoute
+  '/_authenticated/serviceability/$unitId': typeof AuthenticatedServiceabilityUnitIdRoute
+  '/_authenticated/visibility/$unitId': typeof AuthenticatedVisibilityUnitIdRoute
   '/_authenticated/engagement/': typeof AuthenticatedEngagementIndexRoute
+  '/_authenticated/intel/': typeof AuthenticatedIntelIndexRoute
   '/_authenticated/inventory/': typeof AuthenticatedInventoryIndexRoute
   '/_authenticated/priority/': typeof AuthenticatedPriorityIndexRoute
+  '/_authenticated/serviceability/': typeof AuthenticatedServiceabilityIndexRoute
+  '/_authenticated/visibility/': typeof AuthenticatedVisibilityIndexRoute
   '/_authenticated/inventory/$unitId/': typeof AuthenticatedInventoryUnitIdIndexRoute
   '/_authenticated/inventory/$unitId/$categoryId/$equipmentId': typeof AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRoute
   '/_authenticated/inventory/$unitId/$categoryId/': typeof AuthenticatedInventoryUnitIdCategoryIdIndexRoute
@@ -183,35 +214,41 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/auth'
-    | '/intel'
-    | '/serviceability'
-    | '/visibility'
     | '/admin/satellites'
     | '/admin/units'
     | '/admin/users'
     | '/engagement/$unitId'
+    | '/intel/$unitId'
     | '/priority/$unitId'
+    | '/serviceability/$unitId'
+    | '/visibility/$unitId'
     | '/engagement/'
+    | '/intel/'
     | '/inventory/'
     | '/priority/'
+    | '/serviceability/'
+    | '/visibility/'
     | '/inventory/$unitId/'
     | '/inventory/$unitId/$categoryId/$equipmentId'
     | '/inventory/$unitId/$categoryId/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/auth'
-    | '/intel'
-    | '/serviceability'
-    | '/visibility'
     | '/'
     | '/admin/satellites'
     | '/admin/units'
     | '/admin/users'
     | '/engagement/$unitId'
+    | '/intel/$unitId'
     | '/priority/$unitId'
+    | '/serviceability/$unitId'
+    | '/visibility/$unitId'
     | '/engagement'
+    | '/intel'
     | '/inventory'
     | '/priority'
+    | '/serviceability'
+    | '/visibility'
     | '/inventory/$unitId'
     | '/inventory/$unitId/$categoryId/$equipmentId'
     | '/inventory/$unitId/$categoryId'
@@ -219,18 +256,21 @@ export interface FileRouteTypes {
     | '__root__'
     | '/_authenticated'
     | '/auth'
-    | '/_authenticated/intel'
-    | '/_authenticated/serviceability'
-    | '/_authenticated/visibility'
     | '/_authenticated/'
     | '/_authenticated/admin/satellites'
     | '/_authenticated/admin/units'
     | '/_authenticated/admin/users'
     | '/_authenticated/engagement/$unitId'
+    | '/_authenticated/intel/$unitId'
     | '/_authenticated/priority/$unitId'
+    | '/_authenticated/serviceability/$unitId'
+    | '/_authenticated/visibility/$unitId'
     | '/_authenticated/engagement/'
+    | '/_authenticated/intel/'
     | '/_authenticated/inventory/'
     | '/_authenticated/priority/'
+    | '/_authenticated/serviceability/'
+    | '/_authenticated/visibility/'
     | '/_authenticated/inventory/$unitId/'
     | '/_authenticated/inventory/$unitId/$categoryId/$equipmentId'
     | '/_authenticated/inventory/$unitId/$categoryId/'
@@ -264,25 +304,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
-    '/_authenticated/visibility': {
-      id: '/_authenticated/visibility'
+    '/_authenticated/visibility/': {
+      id: '/_authenticated/visibility/'
       path: '/visibility'
-      fullPath: '/visibility'
-      preLoaderRoute: typeof AuthenticatedVisibilityRouteImport
+      fullPath: '/visibility/'
+      preLoaderRoute: typeof AuthenticatedVisibilityIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
-    '/_authenticated/serviceability': {
-      id: '/_authenticated/serviceability'
+    '/_authenticated/serviceability/': {
+      id: '/_authenticated/serviceability/'
       path: '/serviceability'
-      fullPath: '/serviceability'
-      preLoaderRoute: typeof AuthenticatedServiceabilityRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/intel': {
-      id: '/_authenticated/intel'
-      path: '/intel'
-      fullPath: '/intel'
-      preLoaderRoute: typeof AuthenticatedIntelRouteImport
+      fullPath: '/serviceability/'
+      preLoaderRoute: typeof AuthenticatedServiceabilityIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/priority/': {
@@ -299,6 +332,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedInventoryIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/intel/': {
+      id: '/_authenticated/intel/'
+      path: '/intel'
+      fullPath: '/intel/'
+      preLoaderRoute: typeof AuthenticatedIntelIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/engagement/': {
       id: '/_authenticated/engagement/'
       path: '/engagement'
@@ -306,11 +346,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedEngagementIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/visibility/$unitId': {
+      id: '/_authenticated/visibility/$unitId'
+      path: '/visibility/$unitId'
+      fullPath: '/visibility/$unitId'
+      preLoaderRoute: typeof AuthenticatedVisibilityUnitIdRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/serviceability/$unitId': {
+      id: '/_authenticated/serviceability/$unitId'
+      path: '/serviceability/$unitId'
+      fullPath: '/serviceability/$unitId'
+      preLoaderRoute: typeof AuthenticatedServiceabilityUnitIdRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/priority/$unitId': {
       id: '/_authenticated/priority/$unitId'
       path: '/priority/$unitId'
       fullPath: '/priority/$unitId'
       preLoaderRoute: typeof AuthenticatedPriorityUnitIdRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/intel/$unitId': {
+      id: '/_authenticated/intel/$unitId'
+      path: '/intel/$unitId'
+      fullPath: '/intel/$unitId'
+      preLoaderRoute: typeof AuthenticatedIntelUnitIdRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/engagement/$unitId': {
@@ -366,36 +427,43 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthenticatedRouteRouteChildren {
-  AuthenticatedIntelRoute: typeof AuthenticatedIntelRoute
-  AuthenticatedServiceabilityRoute: typeof AuthenticatedServiceabilityRoute
-  AuthenticatedVisibilityRoute: typeof AuthenticatedVisibilityRoute
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
   AuthenticatedAdminSatellitesRoute: typeof AuthenticatedAdminSatellitesRoute
   AuthenticatedAdminUnitsRoute: typeof AuthenticatedAdminUnitsRoute
   AuthenticatedAdminUsersRoute: typeof AuthenticatedAdminUsersRoute
   AuthenticatedEngagementUnitIdRoute: typeof AuthenticatedEngagementUnitIdRoute
+  AuthenticatedIntelUnitIdRoute: typeof AuthenticatedIntelUnitIdRoute
   AuthenticatedPriorityUnitIdRoute: typeof AuthenticatedPriorityUnitIdRoute
+  AuthenticatedServiceabilityUnitIdRoute: typeof AuthenticatedServiceabilityUnitIdRoute
+  AuthenticatedVisibilityUnitIdRoute: typeof AuthenticatedVisibilityUnitIdRoute
   AuthenticatedEngagementIndexRoute: typeof AuthenticatedEngagementIndexRoute
+  AuthenticatedIntelIndexRoute: typeof AuthenticatedIntelIndexRoute
   AuthenticatedInventoryIndexRoute: typeof AuthenticatedInventoryIndexRoute
   AuthenticatedPriorityIndexRoute: typeof AuthenticatedPriorityIndexRoute
+  AuthenticatedServiceabilityIndexRoute: typeof AuthenticatedServiceabilityIndexRoute
+  AuthenticatedVisibilityIndexRoute: typeof AuthenticatedVisibilityIndexRoute
   AuthenticatedInventoryUnitIdIndexRoute: typeof AuthenticatedInventoryUnitIdIndexRoute
   AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRoute: typeof AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRoute
   AuthenticatedInventoryUnitIdCategoryIdIndexRoute: typeof AuthenticatedInventoryUnitIdCategoryIdIndexRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
-  AuthenticatedIntelRoute: AuthenticatedIntelRoute,
-  AuthenticatedServiceabilityRoute: AuthenticatedServiceabilityRoute,
-  AuthenticatedVisibilityRoute: AuthenticatedVisibilityRoute,
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
   AuthenticatedAdminSatellitesRoute: AuthenticatedAdminSatellitesRoute,
   AuthenticatedAdminUnitsRoute: AuthenticatedAdminUnitsRoute,
   AuthenticatedAdminUsersRoute: AuthenticatedAdminUsersRoute,
   AuthenticatedEngagementUnitIdRoute: AuthenticatedEngagementUnitIdRoute,
+  AuthenticatedIntelUnitIdRoute: AuthenticatedIntelUnitIdRoute,
   AuthenticatedPriorityUnitIdRoute: AuthenticatedPriorityUnitIdRoute,
+  AuthenticatedServiceabilityUnitIdRoute:
+    AuthenticatedServiceabilityUnitIdRoute,
+  AuthenticatedVisibilityUnitIdRoute: AuthenticatedVisibilityUnitIdRoute,
   AuthenticatedEngagementIndexRoute: AuthenticatedEngagementIndexRoute,
+  AuthenticatedIntelIndexRoute: AuthenticatedIntelIndexRoute,
   AuthenticatedInventoryIndexRoute: AuthenticatedInventoryIndexRoute,
   AuthenticatedPriorityIndexRoute: AuthenticatedPriorityIndexRoute,
+  AuthenticatedServiceabilityIndexRoute: AuthenticatedServiceabilityIndexRoute,
+  AuthenticatedVisibilityIndexRoute: AuthenticatedVisibilityIndexRoute,
   AuthenticatedInventoryUnitIdIndexRoute:
     AuthenticatedInventoryUnitIdIndexRoute,
   AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRoute:
