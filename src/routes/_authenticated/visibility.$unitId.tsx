@@ -95,10 +95,9 @@ function Visibility() {
           <option value="">All satellites</option>
           {sats.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
-        <select className="bg-input border border-border rounded-sm px-2 py-1.5 text-sm mono" value={unitFilter} onChange={(e) => setUnitFilter(e.target.value)}>
-          <option value="">All agencies</option>
-          {units.map((u) => <option key={u.id} value={u.id}>{u.code}</option>)}
-        </select>
+        <div className="mono text-xs px-2 py-1.5 border border-border rounded-sm bg-secondary/40 truncate">
+          Unit: <span className="text-primary font-bold">{scopedUnit?.code ?? "—"}</span>
+        </div>
       </div>
 
       {sats.length === 0 || units.length === 0 ? (
