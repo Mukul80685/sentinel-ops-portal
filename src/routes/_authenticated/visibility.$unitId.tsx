@@ -11,7 +11,7 @@ import { useMemo, useState } from "react";
 import { Download, Search } from "lucide-react";
 import { toast } from "sonner";
 
-export const Route = createFileRoute("/_authenticated/visibility")({
+export const Route = createFileRoute("/_authenticated/visibility/$unitId")({
   component: Visibility,
 });
 

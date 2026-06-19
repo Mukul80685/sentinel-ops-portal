@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Download, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 
-export const Route = createFileRoute("/_authenticated/serviceability")({ component: ServiceabilityPage });
+export const Route = createFileRoute("/_authenticated/serviceability/$unitId")({ component: ServiceabilityPage });
 
 function ServiceabilityPage() {
   const [q, setQ] = useState("");

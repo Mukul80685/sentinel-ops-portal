@@ -16,7 +16,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { signedUrl, uploadFile } from "@/lib/storage";
 
-export const Route = createFileRoute("/_authenticated/intel")({ component: IntelRepository });
+export const Route = createFileRoute("/_authenticated/intel/$unitId")({ component: IntelRepository });
 
 function IntelRepository() {
   const canEdit = useCanEdit();
