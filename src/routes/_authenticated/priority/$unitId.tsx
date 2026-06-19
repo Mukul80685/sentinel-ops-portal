@@ -147,7 +147,7 @@ function PriorityUnit() {
   );
 }
 
-function Th({ children }: { children: React.ReactNode }) {
+function Th({ children }: { children?: React.ReactNode }) {
   return <th className="text-left px-3 py-2 text-[11px] uppercase tracking-wider border-r border-border">{children}</th>;
 }
 
