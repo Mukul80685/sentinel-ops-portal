@@ -77,8 +77,9 @@ function IntelRepository() {
 
   return (
     <AppShell
-      title="INT Repository"
+      title={scopedUnit ? `INT Repository — ${scopedUnit.code}` : "INT Repository"}
       subtitle="Module 05 // Historical Archive"
+      showBack
       actions={
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={exportData} className="mono text-[11px] uppercase tracking-wider h-8"><Download className="h-3.5 w-3.5 mr-1" /> CSV</Button>
