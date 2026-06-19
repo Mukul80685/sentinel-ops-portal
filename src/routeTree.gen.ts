@@ -20,6 +20,9 @@ import { Route as AuthenticatedInventoryIndexRouteImport } from './routes/_authe
 import { Route as AuthenticatedEngagementIndexRouteImport } from './routes/_authenticated/engagement/index'
 import { Route as AuthenticatedPriorityUnitIdRouteImport } from './routes/_authenticated/priority/$unitId'
 import { Route as AuthenticatedEngagementUnitIdRouteImport } from './routes/_authenticated/engagement/$unitId'
+import { Route as AuthenticatedAdminUsersRouteImport } from './routes/_authenticated/admin/users'
+import { Route as AuthenticatedAdminUnitsRouteImport } from './routes/_authenticated/admin/units'
+import { Route as AuthenticatedAdminSatellitesRouteImport } from './routes/_authenticated/admin/satellites'
 import { Route as AuthenticatedInventoryUnitIdIndexRouteImport } from './routes/_authenticated/inventory/$unitId/index'
 import { Route as AuthenticatedInventoryUnitIdCategoryIdIndexRouteImport } from './routes/_authenticated/inventory/$unitId/$categoryId/index'
 import { Route as AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRouteImport } from './routes/_authenticated/inventory/$unitId/$categoryId/$equipmentId'
@@ -84,6 +87,22 @@ const AuthenticatedEngagementUnitIdRoute =
     path: '/engagement/$unitId',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedAdminUsersRoute = AuthenticatedAdminUsersRouteImport.update({
+  id: '/admin/users',
+  path: '/admin/users',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedAdminUnitsRoute = AuthenticatedAdminUnitsRouteImport.update({
+  id: '/admin/units',
+  path: '/admin/units',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedAdminSatellitesRoute =
+  AuthenticatedAdminSatellitesRouteImport.update({
+    id: '/admin/satellites',
+    path: '/admin/satellites',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedInventoryUnitIdIndexRoute =
   AuthenticatedInventoryUnitIdIndexRouteImport.update({
     id: '/inventory/$unitId/',
@@ -109,6 +128,9 @@ export interface FileRoutesByFullPath {
   '/intel': typeof AuthenticatedIntelRoute
   '/serviceability': typeof AuthenticatedServiceabilityRoute
   '/visibility': typeof AuthenticatedVisibilityRoute
+  '/admin/satellites': typeof AuthenticatedAdminSatellitesRoute
+  '/admin/units': typeof AuthenticatedAdminUnitsRoute
+  '/admin/users': typeof AuthenticatedAdminUsersRoute
   '/engagement/$unitId': typeof AuthenticatedEngagementUnitIdRoute
   '/priority/$unitId': typeof AuthenticatedPriorityUnitIdRoute
   '/engagement/': typeof AuthenticatedEngagementIndexRoute
@@ -124,6 +146,9 @@ export interface FileRoutesByTo {
   '/serviceability': typeof AuthenticatedServiceabilityRoute
   '/visibility': typeof AuthenticatedVisibilityRoute
   '/': typeof AuthenticatedIndexRoute
+  '/admin/satellites': typeof AuthenticatedAdminSatellitesRoute
+  '/admin/units': typeof AuthenticatedAdminUnitsRoute
+  '/admin/users': typeof AuthenticatedAdminUsersRoute
   '/engagement/$unitId': typeof AuthenticatedEngagementUnitIdRoute
   '/priority/$unitId': typeof AuthenticatedPriorityUnitIdRoute
   '/engagement': typeof AuthenticatedEngagementIndexRoute
@@ -141,6 +166,9 @@ export interface FileRoutesById {
   '/_authenticated/serviceability': typeof AuthenticatedServiceabilityRoute
   '/_authenticated/visibility': typeof AuthenticatedVisibilityRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
+  '/_authenticated/admin/satellites': typeof AuthenticatedAdminSatellitesRoute
+  '/_authenticated/admin/units': typeof AuthenticatedAdminUnitsRoute
+  '/_authenticated/admin/users': typeof AuthenticatedAdminUsersRoute
   '/_authenticated/engagement/$unitId': typeof AuthenticatedEngagementUnitIdRoute
   '/_authenticated/priority/$unitId': typeof AuthenticatedPriorityUnitIdRoute
   '/_authenticated/engagement/': typeof AuthenticatedEngagementIndexRoute
@@ -158,6 +186,9 @@ export interface FileRouteTypes {
     | '/intel'
     | '/serviceability'
     | '/visibility'
+    | '/admin/satellites'
+    | '/admin/units'
+    | '/admin/users'
     | '/engagement/$unitId'
     | '/priority/$unitId'
     | '/engagement/'
@@ -173,6 +204,9 @@ export interface FileRouteTypes {
     | '/serviceability'
     | '/visibility'
     | '/'
+    | '/admin/satellites'
+    | '/admin/units'
+    | '/admin/users'
     | '/engagement/$unitId'
     | '/priority/$unitId'
     | '/engagement'
@@ -189,6 +223,9 @@ export interface FileRouteTypes {
     | '/_authenticated/serviceability'
     | '/_authenticated/visibility'
     | '/_authenticated/'
+    | '/_authenticated/admin/satellites'
+    | '/_authenticated/admin/units'
+    | '/_authenticated/admin/users'
     | '/_authenticated/engagement/$unitId'
     | '/_authenticated/priority/$unitId'
     | '/_authenticated/engagement/'
@@ -283,6 +320,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedEngagementUnitIdRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/admin/users': {
+      id: '/_authenticated/admin/users'
+      path: '/admin/users'
+      fullPath: '/admin/users'
+      preLoaderRoute: typeof AuthenticatedAdminUsersRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/admin/units': {
+      id: '/_authenticated/admin/units'
+      path: '/admin/units'
+      fullPath: '/admin/units'
+      preLoaderRoute: typeof AuthenticatedAdminUnitsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/admin/satellites': {
+      id: '/_authenticated/admin/satellites'
+      path: '/admin/satellites'
+      fullPath: '/admin/satellites'
+      preLoaderRoute: typeof AuthenticatedAdminSatellitesRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/inventory/$unitId/': {
       id: '/_authenticated/inventory/$unitId/'
       path: '/inventory/$unitId'
@@ -312,6 +370,9 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedServiceabilityRoute: typeof AuthenticatedServiceabilityRoute
   AuthenticatedVisibilityRoute: typeof AuthenticatedVisibilityRoute
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
+  AuthenticatedAdminSatellitesRoute: typeof AuthenticatedAdminSatellitesRoute
+  AuthenticatedAdminUnitsRoute: typeof AuthenticatedAdminUnitsRoute
+  AuthenticatedAdminUsersRoute: typeof AuthenticatedAdminUsersRoute
   AuthenticatedEngagementUnitIdRoute: typeof AuthenticatedEngagementUnitIdRoute
   AuthenticatedPriorityUnitIdRoute: typeof AuthenticatedPriorityUnitIdRoute
   AuthenticatedEngagementIndexRoute: typeof AuthenticatedEngagementIndexRoute
@@ -327,6 +388,9 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedServiceabilityRoute: AuthenticatedServiceabilityRoute,
   AuthenticatedVisibilityRoute: AuthenticatedVisibilityRoute,
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
+  AuthenticatedAdminSatellitesRoute: AuthenticatedAdminSatellitesRoute,
+  AuthenticatedAdminUnitsRoute: AuthenticatedAdminUnitsRoute,
+  AuthenticatedAdminUsersRoute: AuthenticatedAdminUsersRoute,
   AuthenticatedEngagementUnitIdRoute: AuthenticatedEngagementUnitIdRoute,
   AuthenticatedPriorityUnitIdRoute: AuthenticatedPriorityUnitIdRoute,
   AuthenticatedEngagementIndexRoute: AuthenticatedEngagementIndexRoute,

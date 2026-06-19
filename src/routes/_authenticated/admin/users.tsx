@@ -29,7 +29,7 @@ function UsersAdmin() {
 
   async function toggleRole(userId: string, role: string, has: boolean) {
     if (has) {
-      const { error } = await supabase.from("user_roles").delete().eq("user_id", userId).eq("role", role);
+      const { error } = await supabase.from("user_roles").delete().eq("user_id", userId).eq("role", role as any);
       if (error) return toast.error(error.message);
     } else {
       const { error } = await supabase.from("user_roles").insert({ user_id: userId, role: role as any });
