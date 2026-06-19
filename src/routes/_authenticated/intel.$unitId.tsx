@@ -19,22 +19,25 @@ import { signedUrl, uploadFile } from "@/lib/storage";
 export const Route = createFileRoute("/_authenticated/intel/$unitId")({ component: IntelRepository });
 
 function IntelRepository() {
+  const { unitId } = Route.useParams();
   const canEdit = useCanEdit();
   const qc = useQueryClient();
   const [q, setQ] = useState("");
   const [satFilter, setSatFilter] = useState("");
-  const [unitFilter, setUnitFilter] = useState("");
+  const unitFilter = unitId;
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
 
   const { data: sats = [] } = useQuery({ queryKey: ["sats"], queryFn: listSatellites });
   const { data: units = [] } = useQuery({ queryKey: ["units"], queryFn: listUnits });
+  const scopedUnit = units.find((u) => u.id === unitId);
   const { data: rows = [] } = useQuery({
-    queryKey: ["intel"],
+    queryKey: ["intel", unitId],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("intel_records")
         .select("*, satellites:satellite_id(name), units:unit_id(code)")
+        .eq("unit_id", unitId)
         .order("observation_date", { ascending: false });
       if (error) throw error;
       return data ?? [];
