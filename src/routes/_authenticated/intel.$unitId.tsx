@@ -75,6 +75,14 @@ function IntelRepository() {
     })), "intel-records.csv");
   }
 
+  if (units.length > 0 && !scopedUnit) {
+    return (
+      <AppShell title="INT Repository" subtitle="Module 05" showBack>
+        <Empty title="No agent registered for this unit" />
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell
       title={scopedUnit ? `INT Repository — ${scopedUnit.code}` : "INT Repository"}
