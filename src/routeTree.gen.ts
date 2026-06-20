@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index'
+import { Route as AuthenticatedImportantRouteImport } from './routes/_authenticated/important'
 import { Route as AuthenticatedVisibilityIndexRouteImport } from './routes/_authenticated/visibility.index'
 import { Route as AuthenticatedServiceabilityIndexRouteImport } from './routes/_authenticated/serviceability.index'
 import { Route as AuthenticatedPriorityIndexRouteImport } from './routes/_authenticated/priority/index'
@@ -21,6 +22,7 @@ import { Route as AuthenticatedEngagementIndexRouteImport } from './routes/_auth
 import { Route as AuthenticatedPriorityUnitIdRouteImport } from './routes/_authenticated/priority/$unitId'
 import { Route as AuthenticatedIntelUnitIdRouteImport } from './routes/_authenticated/intel.$unitId'
 import { Route as AuthenticatedEngagementUnitIdRouteImport } from './routes/_authenticated/engagement/$unitId'
+import { Route as AuthenticatedAllocateIntelIdRouteImport } from './routes/_authenticated/allocate.$intelId'
 import { Route as AuthenticatedAdminUsersRouteImport } from './routes/_authenticated/admin/users'
 import { Route as AuthenticatedAdminUnitsRouteImport } from './routes/_authenticated/admin/units'
 import { Route as AuthenticatedAdminSatellitesRouteImport } from './routes/_authenticated/admin/satellites'
@@ -40,6 +42,11 @@ const AuthenticatedRouteRoute = AuthenticatedRouteRouteImport.update({
 const AuthenticatedIndexRoute = AuthenticatedIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedImportantRoute = AuthenticatedImportantRouteImport.update({
+  id: '/important',
+  path: '/important',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedVisibilityIndexRoute =
@@ -95,6 +102,12 @@ const AuthenticatedEngagementUnitIdRoute =
     path: '/engagement/$unitId',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedAllocateIntelIdRoute =
+  AuthenticatedAllocateIntelIdRouteImport.update({
+    id: '/allocate/$intelId',
+    path: '/allocate/$intelId',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedAdminUsersRoute = AuthenticatedAdminUsersRouteImport.update({
   id: '/admin/users',
   path: '/admin/users',
@@ -133,9 +146,11 @@ const AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRoute =
 export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
   '/auth': typeof AuthRoute
+  '/important': typeof AuthenticatedImportantRoute
   '/admin/satellites': typeof AuthenticatedAdminSatellitesRoute
   '/admin/units': typeof AuthenticatedAdminUnitsRoute
   '/admin/users': typeof AuthenticatedAdminUsersRoute
+  '/allocate/$intelId': typeof AuthenticatedAllocateIntelIdRoute
   '/engagement/$unitId': typeof AuthenticatedEngagementUnitIdRoute
   '/intel/$unitId': typeof AuthenticatedIntelUnitIdRoute
   '/priority/$unitId': typeof AuthenticatedPriorityUnitIdRoute
@@ -151,10 +166,12 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/auth': typeof AuthRoute
+  '/important': typeof AuthenticatedImportantRoute
   '/': typeof AuthenticatedIndexRoute
   '/admin/satellites': typeof AuthenticatedAdminSatellitesRoute
   '/admin/units': typeof AuthenticatedAdminUnitsRoute
   '/admin/users': typeof AuthenticatedAdminUsersRoute
+  '/allocate/$intelId': typeof AuthenticatedAllocateIntelIdRoute
   '/engagement/$unitId': typeof AuthenticatedEngagementUnitIdRoute
   '/intel/$unitId': typeof AuthenticatedIntelUnitIdRoute
   '/priority/$unitId': typeof AuthenticatedPriorityUnitIdRoute
@@ -172,10 +189,12 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
+  '/_authenticated/important': typeof AuthenticatedImportantRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/_authenticated/admin/satellites': typeof AuthenticatedAdminSatellitesRoute
   '/_authenticated/admin/units': typeof AuthenticatedAdminUnitsRoute
   '/_authenticated/admin/users': typeof AuthenticatedAdminUsersRoute
+  '/_authenticated/allocate/$intelId': typeof AuthenticatedAllocateIntelIdRoute
   '/_authenticated/engagement/$unitId': typeof AuthenticatedEngagementUnitIdRoute
   '/_authenticated/intel/$unitId': typeof AuthenticatedIntelUnitIdRoute
   '/_authenticated/priority/$unitId': typeof AuthenticatedPriorityUnitIdRoute
@@ -194,9 +213,11 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/auth'
+    | '/important'
     | '/admin/satellites'
     | '/admin/units'
     | '/admin/users'
+    | '/allocate/$intelId'
     | '/engagement/$unitId'
     | '/intel/$unitId'
     | '/priority/$unitId'
@@ -212,10 +233,12 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/auth'
+    | '/important'
     | '/'
     | '/admin/satellites'
     | '/admin/units'
     | '/admin/users'
+    | '/allocate/$intelId'
     | '/engagement/$unitId'
     | '/intel/$unitId'
     | '/priority/$unitId'
@@ -232,10 +255,12 @@ export interface FileRouteTypes {
     | '__root__'
     | '/_authenticated'
     | '/auth'
+    | '/_authenticated/important'
     | '/_authenticated/'
     | '/_authenticated/admin/satellites'
     | '/_authenticated/admin/units'
     | '/_authenticated/admin/users'
+    | '/_authenticated/allocate/$intelId'
     | '/_authenticated/engagement/$unitId'
     | '/_authenticated/intel/$unitId'
     | '/_authenticated/priority/$unitId'
@@ -276,6 +301,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof AuthenticatedIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/important': {
+      id: '/_authenticated/important'
+      path: '/important'
+      fullPath: '/important'
+      preLoaderRoute: typeof AuthenticatedImportantRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/visibility/': {
@@ -341,6 +373,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedEngagementUnitIdRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/allocate/$intelId': {
+      id: '/_authenticated/allocate/$intelId'
+      path: '/allocate/$intelId'
+      fullPath: '/allocate/$intelId'
+      preLoaderRoute: typeof AuthenticatedAllocateIntelIdRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/admin/users': {
       id: '/_authenticated/admin/users'
       path: '/admin/users'
@@ -387,10 +426,12 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthenticatedRouteRouteChildren {
+  AuthenticatedImportantRoute: typeof AuthenticatedImportantRoute
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
   AuthenticatedAdminSatellitesRoute: typeof AuthenticatedAdminSatellitesRoute
   AuthenticatedAdminUnitsRoute: typeof AuthenticatedAdminUnitsRoute
   AuthenticatedAdminUsersRoute: typeof AuthenticatedAdminUsersRoute
+  AuthenticatedAllocateIntelIdRoute: typeof AuthenticatedAllocateIntelIdRoute
   AuthenticatedEngagementUnitIdRoute: typeof AuthenticatedEngagementUnitIdRoute
   AuthenticatedIntelUnitIdRoute: typeof AuthenticatedIntelUnitIdRoute
   AuthenticatedPriorityUnitIdRoute: typeof AuthenticatedPriorityUnitIdRoute
@@ -406,10 +447,12 @@ interface AuthenticatedRouteRouteChildren {
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
+  AuthenticatedImportantRoute: AuthenticatedImportantRoute,
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
   AuthenticatedAdminSatellitesRoute: AuthenticatedAdminSatellitesRoute,
   AuthenticatedAdminUnitsRoute: AuthenticatedAdminUnitsRoute,
   AuthenticatedAdminUsersRoute: AuthenticatedAdminUsersRoute,
+  AuthenticatedAllocateIntelIdRoute: AuthenticatedAllocateIntelIdRoute,
   AuthenticatedEngagementUnitIdRoute: AuthenticatedEngagementUnitIdRoute,
   AuthenticatedIntelUnitIdRoute: AuthenticatedIntelUnitIdRoute,
   AuthenticatedPriorityUnitIdRoute: AuthenticatedPriorityUnitIdRoute,

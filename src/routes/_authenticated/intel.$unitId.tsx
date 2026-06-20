@@ -22,7 +22,6 @@ import {
   Star,
   Target,
   X,
-  Activity,
   TrendingUp,
   TrendingDown,
 } from "lucide-react";
