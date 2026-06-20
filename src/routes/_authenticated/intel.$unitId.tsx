@@ -376,8 +376,6 @@ function IntelCard({
     </ContextMenu>
   );
 }
-  );
-}
 
 function NewIntelDialog({ onSaved }: { onSaved: () => void }) {
   const [open, setOpen] = useState(false);
