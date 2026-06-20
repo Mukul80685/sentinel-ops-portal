@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
 import { Empty } from "@/components/Empty";
@@ -11,7 +11,43 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Plus, Trash2, Search, Download, FileText, Paperclip } from "lucide-react";
+import {
+  Plus,
+  Trash2,
+  Search,
+  Download,
+  FileText,
+  Paperclip,
+  MoreHorizontal,
+  Star,
+  Target,
+  X,
+  Activity,
+  TrendingUp,
+  TrendingDown,
+} from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { signedUrl, uploadFile } from "@/lib/storage";
@@ -22,11 +58,14 @@ function IntelRepository() {
   const { unitId } = Route.useParams();
   const canEdit = useCanEdit();
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const [q, setQ] = useState("");
   const [satFilter, setSatFilter] = useState("");
   const unitFilter = unitId;
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [productivity, setProductivity] = useState<"all" | "productive" | "non">("all");
+  const [dropTarget, setDropTarget] = useState<any | null>(null);
 
   const { data: sats = [] } = useQuery({ queryKey: ["sats"], queryFn: listSatellites });
   const { data: units = [] } = useQuery({ queryKey: ["units"], queryFn: listUnits });
@@ -44,23 +83,52 @@ function IntelRepository() {
     },
   });
 
+  const isProductive = (r: any) => {
+    if (r.is_productive !== null && r.is_productive !== undefined) return r.is_productive;
+    // Default rule: presence of frequency + meaningful summary/analysis
+    return Boolean(r.frequency && (r.summary || r.analysis_report));
+  };
+
   const filtered = useMemo(() => rows.filter((r: any) => {
     if (satFilter && r.satellite_id !== satFilter) return false;
     if (unitFilter && r.unit_id !== unitFilter) return false;
     if (dateFrom && r.observation_date < dateFrom) return false;
     if (dateTo && r.observation_date > dateTo) return false;
+    if (productivity === "productive" && !isProductive(r)) return false;
+    if (productivity === "non" && isProductive(r)) return false;
     if (q) {
       const hay = `${r.satellites?.name ?? ""} ${r.units?.code ?? ""} ${r.frequency ?? ""} ${r.band ?? ""} ${r.summary ?? ""} ${r.analysis_report ?? ""}`.toLowerCase();
       if (!hay.includes(q.toLowerCase())) return false;
     }
     return true;
-  }), [rows, q, satFilter, unitFilter, dateFrom, dateTo]);
+  }), [rows, q, satFilter, unitFilter, dateFrom, dateTo, productivity]);
 
-  async function remove(id: string) {
-    if (!confirm("Delete record?")) return;
+  const productive = useMemo(() => filtered.filter(isProductive), [filtered]);
+  const nonProductive = useMemo(() => filtered.filter((r: any) => !isProductive(r)), [filtered]);
+
+  async function confirmDrop(id: string) {
     const { error } = await supabase.from("intel_records").delete().eq("id", id);
     if (error) return toast.error(error.message);
+    toast.success("Frequency dropped from repository");
+    setDropTarget(null);
     qc.invalidateQueries({ queryKey: ["intel"] });
+  }
+
+  async function addToImportant(r: any) {
+    if (!r.satellite_id) return toast.error("Record has no satellite assigned");
+    const { error } = await supabase.from("important_frequencies").insert({
+      satellite_id: r.satellite_id,
+      intel_record_id: r.id,
+      frequency: r.frequency ?? "—",
+      band: r.band ?? null,
+      label: r.summary ? r.summary.slice(0, 80) : null,
+    });
+    if (error) return toast.error(error.message);
+    toast.success("Added to Important Frequencies");
+  }
+
+  function allot(r: any) {
+    navigate({ to: "/allocate/$intelId", params: { intelId: r.id } });
   }
 
   function exportData() {
@@ -90,12 +158,18 @@ function IntelRepository() {
       showBack
       actions={
         <div className="flex gap-2">
+          <Link
+            to="/important"
+            className="mono text-[11px] uppercase tracking-wider h-8 px-3 inline-flex items-center border border-border rounded-sm hover:border-primary hover:text-primary"
+          >
+            <Star className="h-3.5 w-3.5 mr-1" /> Important
+          </Link>
           <Button variant="outline" size="sm" onClick={exportData} className="mono text-[11px] uppercase tracking-wider h-8"><Download className="h-3.5 w-3.5 mr-1" /> CSV</Button>
           {canEdit && <NewIntelDialog onSaved={() => qc.invalidateQueries({ queryKey: ["intel"] })} />}
         </div>
       }
     >
-      <div className="panel p-3 mb-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
+      <div className="panel p-3 mb-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2">
         <div className="relative lg:col-span-2">
           <Search className="h-3.5 w-3.5 absolute left-2 top-2.5 text-muted-foreground" />
           <Input placeholder="Search keyword, frequency, summary…" value={q} onChange={(e) => setQ(e.target.value)} className="pl-7 mono" />
@@ -103,6 +177,15 @@ function IntelRepository() {
         <select className="bg-input border border-border rounded-sm px-2 py-1.5 text-sm mono" value={satFilter} onChange={(e) => setSatFilter(e.target.value)}>
           <option value="">All satellites</option>
           {sats.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+        <select
+          className="bg-input border border-border rounded-sm px-2 py-1.5 text-sm mono"
+          value={productivity}
+          onChange={(e) => setProductivity(e.target.value as any)}
+        >
+          <option value="all">All frequencies</option>
+          <option value="productive">Productive only</option>
+          <option value="non">Non-productive only</option>
         </select>
         <div className="mono text-xs px-2 py-1.5 border border-border rounded-sm bg-secondary/40 truncate flex items-center">
           Unit: <span className="text-primary font-bold ml-1">{scopedUnit?.code ?? "—"}</span>
@@ -116,48 +199,183 @@ function IntelRepository() {
       {filtered.length === 0 ? (
         <Empty title="No records match" hint={rows.length === 0 ? "No intelligence records archived yet." : "Try adjusting your filters."} />
       ) : (
-        <div className="grid gap-3 grid-cols-1 lg:grid-cols-2">
-          {filtered.map((r: any) => (
-            <IntelCard key={r.id} record={r} canEdit={canEdit} onDelete={() => remove(r.id)} />
-          ))}
+        <div className="space-y-5">
+          <Section
+            title="Productive Frequencies"
+            icon={<TrendingUp className="h-3.5 w-3.5 text-emerald-400" />}
+            records={productive}
+            canEdit={canEdit}
+            onAllot={allot}
+            onDrop={(r) => setDropTarget(r)}
+            onImportant={addToImportant}
+          />
+          <Section
+            title="Non-Productive Frequencies"
+            icon={<TrendingDown className="h-3.5 w-3.5 text-muted-foreground" />}
+            records={nonProductive}
+            canEdit={canEdit}
+            onAllot={allot}
+            onDrop={(r) => setDropTarget(r)}
+            onImportant={addToImportant}
+          />
         </div>
       )}
+
+      <AlertDialog open={!!dropTarget} onOpenChange={(o) => !o && setDropTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="mono uppercase tracking-wider flex items-center gap-2">
+              <X className="h-4 w-4 text-destructive" /> Drop Frequency
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Do you really want to delete this frequency from the repository?
+              <span className="block mt-2 mono text-foreground">
+                {dropTarget?.frequency ?? "—"} · {dropTarget?.satellites?.name ?? "—"}
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>No</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => dropTarget && confirmDrop(dropTarget.id)}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Yes, Drop
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AppShell>
   );
 }
 
-function IntelCard({ record, canEdit, onDelete }: { record: any; canEdit: boolean; onDelete: () => void }) {
+function Section({
+  title,
+  icon,
+  records,
+  canEdit,
+  onAllot,
+  onDrop,
+  onImportant,
+}: {
+  title: string;
+  icon: React.ReactNode;
+  records: any[];
+  canEdit: boolean;
+  onAllot: (r: any) => void;
+  onDrop: (r: any) => void;
+  onImportant: (r: any) => void;
+}) {
+  return (
+    <section>
+      <div className="label-eyebrow flex items-center gap-1 mb-2">
+        {icon} {title} <span className="text-muted-foreground">({records.length})</span>
+      </div>
+      {records.length === 0 ? (
+        <div className="panel p-3 text-[11px] mono text-muted-foreground">No records in this category.</div>
+      ) : (
+        <div className="grid gap-3 grid-cols-1 lg:grid-cols-2">
+          {records.map((r: any) => (
+            <IntelCard
+              key={r.id}
+              record={r}
+              canEdit={canEdit}
+              onAllot={() => onAllot(r)}
+              onDrop={() => onDrop(r)}
+              onImportant={() => onImportant(r)}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function IntelCard({
+  record,
+  canEdit,
+  onAllot,
+  onDrop,
+  onImportant,
+}: {
+  record: any;
+  canEdit: boolean;
+  onAllot: () => void;
+  onDrop: () => void;
+  onImportant: () => void;
+}) {
   const { data: attachments = [] } = useQuery({
     queryKey: ["intel-att", record.id],
     queryFn: async () => (await supabase.from("attachments").select("*").eq("entity_type", "intel").eq("entity_id", record.id)).data ?? [],
   });
   return (
-    <div className="panel p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="label-eyebrow">{record.observation_date} • {record.units?.code ?? "—"}</div>
-          <div className="mono text-base font-bold uppercase truncate">{record.satellites?.name ?? "—"}</div>
-          <div className="text-[11px] text-muted-foreground mono mt-1">{record.frequency} {record.band && `• ${record.band}`}</div>
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div className="panel p-4 select-none">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="label-eyebrow">{record.observation_date} • {record.units?.code ?? "—"}</div>
+              <div className="mono text-base font-bold uppercase truncate">{record.satellites?.name ?? "—"}</div>
+              <div className="text-[11px] text-muted-foreground mono mt-1">
+                {record.frequency ?? "—"} {record.band && `• ${record.band}`}
+              </div>
+            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" aria-label="Actions">
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="mono text-[12px] uppercase tracking-wider">
+                <DropdownMenuItem onClick={onAllot}>
+                  <Target className="h-3.5 w-3.5 mr-2 text-primary" /> Allot
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={onImportant}>
+                  <Star className="h-3.5 w-3.5 mr-2 text-accent" /> Add to Important
+                </DropdownMenuItem>
+                {canEdit && (
+                  <DropdownMenuItem onClick={onDrop} className="text-destructive focus:text-destructive">
+                    <Trash2 className="h-3.5 w-3.5 mr-2" /> Drop
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+          {record.summary && <p className="text-sm mt-3 text-foreground/90">{record.summary}</p>}
+          {record.analysis_report && <p className="text-xs mt-2 text-muted-foreground whitespace-pre-wrap">{record.analysis_report}</p>}
+          {attachments.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-border">
+              <div className="label-eyebrow flex items-center gap-1"><Paperclip className="h-3 w-3" /> Attachments</div>
+              <ul className="mt-1 space-y-1">
+                {attachments.map((a: any) => (
+                  <li key={a.id}>
+                    <button onClick={async () => window.open(await signedUrl(a.file_url), "_blank")} className="text-xs mono text-primary hover:underline flex items-center gap-1">
+                      <FileText className="h-3 w-3" /> {a.file_name}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <div className="mt-3 text-[10px] mono text-muted-foreground">Right-click for actions</div>
         </div>
-        {canEdit && <Button variant="ghost" size="sm" onClick={onDelete}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>}
-      </div>
-      {record.summary && <p className="text-sm mt-3 text-foreground/90">{record.summary}</p>}
-      {record.analysis_report && <p className="text-xs mt-2 text-muted-foreground whitespace-pre-wrap">{record.analysis_report}</p>}
-      {attachments.length > 0 && (
-        <div className="mt-3 pt-3 border-t border-border">
-          <div className="label-eyebrow flex items-center gap-1"><Paperclip className="h-3 w-3" /> Attachments</div>
-          <ul className="mt-1 space-y-1">
-            {attachments.map((a: any) => (
-              <li key={a.id}>
-                <button onClick={async () => window.open(await signedUrl(a.file_url), "_blank")} className="text-xs mono text-primary hover:underline flex items-center gap-1">
-                  <FileText className="h-3 w-3" /> {a.file_name}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="mono text-[12px] uppercase tracking-wider">
+        <ContextMenuItem onClick={onAllot}>
+          <Target className="h-3.5 w-3.5 mr-2 text-primary" /> Allot
+        </ContextMenuItem>
+        {canEdit && (
+          <ContextMenuItem onClick={onDrop} className="text-destructive focus:text-destructive">
+            <Trash2 className="h-3.5 w-3.5 mr-2" /> Drop
+          </ContextMenuItem>
+        )}
+        <ContextMenuItem onClick={onImportant}>
+          <Star className="h-3.5 w-3.5 mr-2 text-accent" /> Add to Important Frequencies
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
   );
 }
 
