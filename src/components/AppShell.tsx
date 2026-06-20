@@ -12,6 +12,7 @@ import {
   Satellite,
   Users,
   Settings,
+  Star,
 } from "lucide-react";
 import { useAuth, useIsAdmin } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
@@ -24,6 +25,7 @@ const navItems = [
   { to: "/priority", label: "Priority & Allocation", icon: ListOrdered },
   { to: "/engagement", label: "Engagement Status", icon: Activity },
   { to: "/intel", label: "INT Repository", icon: Archive },
+  { to: "/important", label: "Important Frequencies", icon: Star },
   { to: "/serviceability", label: "Serviceability State", icon: Shield },
 ];
 

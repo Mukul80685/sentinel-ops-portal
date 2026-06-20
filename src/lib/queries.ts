@@ -1,7 +1,15 @@
 import { supabase } from "@/integrations/supabase/client";
 
 export type Unit = { id: string; code: string; name: string; description: string | null };
-export type Satellite = { id: string; name: string; orbital_position: number; notes: string | null };
+export type Satellite = {
+  id: string;
+  name: string;
+  orbital_position: number;
+  notes: string | null;
+  launch_date?: string | null;
+  transponder_count?: number | null;
+  frequency_bands?: string[] | null;
+};
 export type Category = { id: string; name: string; sort_order: number };
 export type Serviceability = "Operational" | "Partially Serviceable" | "Under Repair" | "Non-Serviceable";
 export type Priority = "Critical" | "High" | "Medium" | "Low";
