@@ -104,6 +104,47 @@ export type Database = {
         }
         Relationships: []
       }
+      beams: {
+        Row: {
+          band: string
+          beam_type: string | null
+          created_at: string
+          id: string
+          name: string
+          notes: string | null
+          satellite_id: string
+          updated_at: string
+        }
+        Insert: {
+          band: string
+          beam_type?: string | null
+          created_at?: string
+          id?: string
+          name: string
+          notes?: string | null
+          satellite_id: string
+          updated_at?: string
+        }
+        Update: {
+          band?: string
+          beam_type?: string | null
+          created_at?: string
+          id?: string
+          name?: string
+          notes?: string | null
+          satellite_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "beams_satellite_id_fkey"
+            columns: ["satellite_id"]
+            isOneToOne: false
+            referencedRelation: "satellites"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       engagements: {
         Row: {
           antenna_id: string | null
@@ -266,13 +307,116 @@ export type Database = {
         }
         Relationships: []
       }
+      fault_details: {
+        Row: {
+          category: string | null
+          created_at: string
+          date_raised: string
+          description: string | null
+          equipment_id: string
+          estimated_restoration: string | null
+          id: string
+          maintenance_remarks: string | null
+          resolved: boolean
+          updated_at: string
+        }
+        Insert: {
+          category?: string | null
+          created_at?: string
+          date_raised?: string
+          description?: string | null
+          equipment_id: string
+          estimated_restoration?: string | null
+          id?: string
+          maintenance_remarks?: string | null
+          resolved?: boolean
+          updated_at?: string
+        }
+        Update: {
+          category?: string | null
+          created_at?: string
+          date_raised?: string
+          description?: string | null
+          equipment_id?: string
+          estimated_restoration?: string | null
+          id?: string
+          maintenance_remarks?: string | null
+          resolved?: boolean
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fault_details_equipment_id_fkey"
+            columns: ["equipment_id"]
+            isOneToOne: false
+            referencedRelation: "equipment"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      important_frequencies: {
+        Row: {
+          added_by: string | null
+          band: string | null
+          created_at: string
+          frequency: string
+          id: string
+          intel_record_id: string | null
+          label: string | null
+          notes: string | null
+          satellite_id: string
+          updated_at: string
+        }
+        Insert: {
+          added_by?: string | null
+          band?: string | null
+          created_at?: string
+          frequency: string
+          id?: string
+          intel_record_id?: string | null
+          label?: string | null
+          notes?: string | null
+          satellite_id: string
+          updated_at?: string
+        }
+        Update: {
+          added_by?: string | null
+          band?: string | null
+          created_at?: string
+          frequency?: string
+          id?: string
+          intel_record_id?: string | null
+          label?: string | null
+          notes?: string | null
+          satellite_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "important_frequencies_intel_record_id_fkey"
+            columns: ["intel_record_id"]
+            isOneToOne: false
+            referencedRelation: "intel_records"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "important_frequencies_satellite_id_fkey"
+            columns: ["satellite_id"]
+            isOneToOne: false
+            referencedRelation: "satellites"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       intel_records: {
         Row: {
+          activity_level: string | null
           analysis_report: string | null
           band: string | null
           created_at: string
           frequency: string | null
           id: string
+          is_productive: boolean | null
           observation_date: string
           satellite_id: string | null
           summary: string | null
@@ -280,11 +424,13 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          activity_level?: string | null
           analysis_report?: string | null
           band?: string | null
           created_at?: string
           frequency?: string | null
           id?: string
+          is_productive?: boolean | null
           observation_date?: string
           satellite_id?: string | null
           summary?: string | null
@@ -292,11 +438,13 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          activity_level?: string | null
           analysis_report?: string | null
           band?: string | null
           created_at?: string
           frequency?: string | null
           id?: string
+          is_productive?: boolean | null
           observation_date?: string
           satellite_id?: string | null
           summary?: string | null
@@ -344,29 +492,80 @@ export type Database = {
       satellites: {
         Row: {
           created_at: string
+          frequency_bands: string[] | null
           id: string
+          launch_date: string | null
           name: string
           notes: string | null
           orbital_position: number
+          transponder_count: number | null
           updated_at: string
         }
         Insert: {
           created_at?: string
+          frequency_bands?: string[] | null
           id?: string
+          launch_date?: string | null
           name: string
           notes?: string | null
           orbital_position: number
+          transponder_count?: number | null
           updated_at?: string
         }
         Update: {
           created_at?: string
+          frequency_bands?: string[] | null
           id?: string
+          launch_date?: string | null
           name?: string
           notes?: string | null
           orbital_position?: number
+          transponder_count?: number | null
           updated_at?: string
         }
         Relationships: []
+      }
+      unit_beam_visibility: {
+        Row: {
+          beam_id: string
+          id: string
+          notes: string | null
+          unit_id: string
+          updated_at: string
+          visible: boolean
+        }
+        Insert: {
+          beam_id: string
+          id?: string
+          notes?: string | null
+          unit_id: string
+          updated_at?: string
+          visible?: boolean
+        }
+        Update: {
+          beam_id?: string
+          id?: string
+          notes?: string | null
+          unit_id?: string
+          updated_at?: string
+          visible?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "unit_beam_visibility_beam_id_fkey"
+            columns: ["beam_id"]
+            isOneToOne: false
+            referencedRelation: "beams"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "unit_beam_visibility_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "units"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       units: {
         Row: {
