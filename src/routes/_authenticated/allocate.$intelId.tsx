@@ -1,0 +1,207 @@
+import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
+import { AppShell } from "@/components/AppShell";
+import { Empty } from "@/components/Empty";
+import { listUnits } from "@/lib/queries";
+import { supabase } from "@/integrations/supabase/client";
+import { Button } from "@/components/ui/button";
+import { useCanEdit } from "@/lib/auth";
+import { Target, CheckCircle2, XCircle, ArrowRight } from "lucide-react";
+import { toast } from "sonner";
+
+export const Route = createFileRoute("/_authenticated/allocate/$intelId")({
+  component: AllocateRecommendation,
+});
+
+const ACTIVE_STATUSES = new Set(["Planned", "In Progress", "Paused"]);
+
+function AllocateRecommendation() {
+  const { intelId } = Route.useParams();
+  const canEdit = useCanEdit();
+  const router = useRouter();
+
+  const { data: intel } = useQuery({
+    queryKey: ["intel-single", intelId],
+    queryFn: async () =>
+      (
+        await supabase
+          .from("intel_records")
+          .select("*, satellites:satellite_id(id,name)")
+          .eq("id", intelId)
+          .maybeSingle()
+      ).data,
+  });
+
+  const satId = (intel as any)?.satellite_id ?? null;
+
+  const { data: units = [] } = useQuery({ queryKey: ["units"], queryFn: listUnits });
+  const { data: equipment = [] } = useQuery({
+    queryKey: ["equipment-all"],
+    queryFn: async () => (await supabase.from("equipment").select("id,unit_id,serviceability")).data ?? [],
+  });
+  const { data: engagements = [] } = useQuery({
+    queryKey: ["eng-all"],
+    queryFn: async () => (await supabase.from("engagements").select("id,unit_id,status")).data ?? [],
+  });
+  const { data: beams = [] } = useQuery({
+    queryKey: ["beams"],
+    queryFn: async () => (await supabase.from("beams").select("*")).data ?? [],
+  });
+  const { data: ubv = [] } = useQuery({
+    queryKey: ["ubv"],
+    queryFn: async () => (await supabase.from("unit_beam_visibility").select("*").eq("visible", true)).data ?? [],
+  });
+
+  const evaluations = useMemo(() => {
+    return units.map((u) => {
+      const eq = equipment.filter((e: any) => e.unit_id === u.id);
+      const serviceable = eq.filter((e: any) => e.serviceability === "Operational").length;
+      const active = engagements.filter((e: any) => e.unit_id === u.id && ACTIVE_STATUSES.has(e.status)).length;
+      const available = Math.max(0, serviceable - active);
+      const pct = serviceable === 0 ? 100 : Math.round((active / serviceable) * 100);
+
+      const satBeams = satId ? beams.filter((b: any) => b.satellite_id === satId) : [];
+      const unitBeams = satBeams.filter((b: any) =>
+        ubv.some((v: any) => v.unit_id === u.id && v.beam_id === b.id),
+      );
+      const sees = unitBeams.length > 0;
+      const visibleBands = Array.from(new Set(unitBeams.map((b: any) => b.band)));
+      const visibleBeams = unitBeams.map((b: any) => b.name);
+
+      const reasons: string[] = [];
+      if (!sees) reasons.push("No visibility of satellite");
+      if (serviceable === 0) reasons.push("No serviceable equipment");
+      if (pct >= 100) reasons.push("Engagement capacity saturated");
+      if (available === 0 && serviceable > 0) reasons.push("All resources currently committed");
+
+      const eligible = sees && serviceable > 0 && available > 0 && pct < 100;
+      // Score: more available + better visibility + lower saturation
+      const score = eligible ? available * 10 + visibleBeams.length * 5 - pct : -1;
+
+      return { unit: u, serviceable, active, available, pct, sees, visibleBands, visibleBeams, eligible, reasons, score };
+    });
+  }, [units, equipment, engagements, beams, ubv, satId]);
+
+  const eligible = evaluations.filter((e) => e.eligible).sort((a, b) => b.score - a.score);
+  const ineligible = evaluations.filter((e) => !e.eligible);
+
+  async function commitAllocation(unitId: string) {
+    if (!intel) return;
+    if (!satId) return toast.error("Frequency has no satellite assigned");
+    const { error } = await supabase.from("engagements").insert({
+      unit_id: unitId,
+      satellite_id: satId,
+      status: "Planned",
+      remarks: `Allotted from INT ${(intel as any).frequency ?? ""} ${(intel as any).band ?? ""}`.trim(),
+    });
+    if (error) return toast.error(error.message);
+    toast.success("Frequency allotted");
+    router.navigate({ to: "/engagement/$unitId", params: { unitId } });
+  }
+
+  return (
+    <AppShell
+      title="Allocation Recommendation"
+      subtitle={`Frequency ${(intel as any)?.frequency ?? "—"} · ${(intel as any)?.satellites?.name ?? "—"}`}
+      showBack
+    >
+      <div className="panel p-3 mb-3 grid grid-cols-1 md:grid-cols-4 gap-3 text-[12px] mono">
+        <Stat label="Satellite" value={(intel as any)?.satellites?.name ?? "—"} />
+        <Stat label="Frequency" value={(intel as any)?.frequency ?? "—"} />
+        <Stat label="Band" value={(intel as any)?.band ?? "—"} />
+        <Stat label="Eligible Units" value={String(eligible.length)} accent />
+      </div>
+
+      <section className="mb-5">
+        <div className="label-eyebrow mb-2 flex items-center gap-1">
+          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> Recommended Units
+        </div>
+        {eligible.length === 0 ? (
+          <Empty title="No unit currently eligible" hint="Check satellite visibility, serviceability, or engagement saturation." />
+        ) : (
+          <div className="space-y-2">
+            {eligible.map((e, idx) => (
+              <div key={e.unit.id} className="panel p-3">
+                <div className="flex items-center gap-3">
+                  <div className={`mono text-xs px-2 py-1 rounded-sm uppercase tracking-wider ${idx === 0 ? "bg-primary text-primary-foreground" : "bg-secondary text-foreground"}`}>
+                    {idx === 0 ? "Best Fit" : idx === 1 ? "Good Fit" : `Option ${idx + 1}`}
+                  </div>
+                  <div className="mono text-sm font-bold uppercase flex-1">
+                    {e.unit.code} <span className="text-muted-foreground font-normal">— {e.unit.name}</span>
+                  </div>
+                  {canEdit && (
+                    <Button size="sm" onClick={() => commitAllocation(e.unit.id)} className="mono text-[11px] uppercase tracking-wider h-8">
+                      <Target className="h-3.5 w-3.5 mr-1" /> Allot Here
+                    </Button>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mt-3 text-[11px] mono">
+                  <Cell label="Available" value={String(e.available)} />
+                  <Cell label="Serviceable" value={String(e.serviceable)} />
+                  <Cell label="Engagement" value={`${e.pct}%`} />
+                  <Cell label="Sat Visibility" value={e.sees ? "Yes" : "No"} />
+                  <Cell label="Beams" value={e.visibleBeams.join(", ") || "—"} />
+                </div>
+                {e.visibleBands.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {e.visibleBands.map((b) => (
+                      <span key={b} className="text-[10px] mono uppercase border border-border bg-secondary/60 px-1.5 py-0.5 rounded-sm">{b}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {ineligible.length > 0 && (
+        <section>
+          <div className="label-eyebrow mb-2 flex items-center gap-1">
+            <XCircle className="h-3.5 w-3.5 text-destructive" /> Not Eligible
+          </div>
+          <div className="grid gap-2 grid-cols-1 md:grid-cols-2">
+            {ineligible.map((e) => (
+              <div key={e.unit.id} className="panel p-3 opacity-80">
+                <div className="flex items-center justify-between">
+                  <div className="mono text-sm font-bold uppercase">{e.unit.code}</div>
+                  <div className="text-[11px] mono text-muted-foreground">{e.pct}% engaged</div>
+                </div>
+                <ul className="mt-2 space-y-1">
+                  {e.reasons.map((r) => (
+                    <li key={r} className="text-[11px] mono text-destructive flex items-center gap-1">
+                      <ArrowRight className="h-3 w-3" /> {r}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <div className="mt-6 text-[11px] mono text-muted-foreground">
+        <Link to="/intel" className="text-primary hover:underline">← Back to INT Repository</Link>
+      </div>
+    </AppShell>
+  );
+}
+
+function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <div className="panel px-3 py-2">
+      <div className="label-eyebrow">{label}</div>
+      <div className={`mono text-sm ${accent ? "text-primary font-bold" : "text-foreground"} truncate`}>{value}</div>
+    </div>
+  );
+}
+
+function Cell({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="label-eyebrow">{label}</div>
+      <div className="text-foreground">{value}</div>
+    </div>
+  );
+}
