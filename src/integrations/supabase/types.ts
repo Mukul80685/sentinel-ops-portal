@@ -412,13 +412,19 @@ export type Database = {
         Row: {
           activity_level: string | null
           analysis_report: string | null
+          analyst_remarks: string | null
           band: string | null
+          classification: string
           created_at: string
           frequency: string | null
           id: string
+          intel_type: string
           is_productive: boolean | null
+          key_findings: string | null
           observation_date: string
+          report_number: string | null
           satellite_id: string | null
+          source: string | null
           summary: string | null
           unit_id: string | null
           updated_at: string
@@ -426,13 +432,19 @@ export type Database = {
         Insert: {
           activity_level?: string | null
           analysis_report?: string | null
+          analyst_remarks?: string | null
           band?: string | null
+          classification?: string
           created_at?: string
           frequency?: string | null
           id?: string
+          intel_type?: string
           is_productive?: boolean | null
+          key_findings?: string | null
           observation_date?: string
+          report_number?: string | null
           satellite_id?: string | null
+          source?: string | null
           summary?: string | null
           unit_id?: string | null
           updated_at?: string
@@ -440,13 +452,19 @@ export type Database = {
         Update: {
           activity_level?: string | null
           analysis_report?: string | null
+          analyst_remarks?: string | null
           band?: string | null
+          classification?: string
           created_at?: string
           frequency?: string | null
           id?: string
+          intel_type?: string
           is_productive?: boolean | null
+          key_findings?: string | null
           observation_date?: string
+          report_number?: string | null
           satellite_id?: string | null
+          source?: string | null
           summary?: string | null
           unit_id?: string | null
           updated_at?: string
