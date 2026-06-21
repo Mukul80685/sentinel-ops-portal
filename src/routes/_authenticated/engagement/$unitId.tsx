@@ -13,6 +13,16 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import {
+  ResponsiveContainer, AreaChart, Area, LineChart, Line, XAxis, YAxis,
+  CartesianGrid, Tooltip as RTooltip,
+} from "recharts";
+
+function seedRand(seed: string) {
+  let h = 2166136261;
+  for (let i = 0; i < seed.length; i++) { h ^= seed.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return () => { h ^= h << 13; h ^= h >>> 17; h ^= h << 5; return ((h >>> 0) % 10000) / 10000; };
+}
 
 const STATUSES = ["Planned", "In Progress", "Completed", "Paused", "Failed"] as const;
 
@@ -40,6 +50,14 @@ function EngagementUnit() {
     },
   });
 
+  const rand = seedRand(unitId);
+  const active = rows.filter((r: any) => r.status === "In Progress" || r.status === "Planned").length;
+  const total = Math.max(rows.length, 6);
+  const utilPct = Math.min(100, Math.round((active / total) * 100));
+  const utilColor = utilPct >= 71 ? "var(--status-bad)" : utilPct >= 41 ? "var(--status-warn)" : "var(--status-ok)";
+  const timeline = Array.from({ length: 24 }).map((_, h) => ({ h: `${String(h).padStart(2, "0")}:00`, util: Math.max(5, Math.min(100, Math.round(utilPct + (rand() - 0.5) * 40))) }));
+  const forecast = Array.from({ length: 7 }).map((_, d) => ({ d: `D+${d + 1}`, util: Math.max(5, Math.min(100, Math.round(utilPct + (rand() - 0.5) * 30))) }));
+
   async function update(id: string, patch: any) {
     const { error } = await supabase.from("engagements").update(patch).eq("id", id);
     if (error) return toast.error(error.message);
@@ -59,6 +77,64 @@ function EngagementUnit() {
       showBack
       actions={canEdit ? <AddEngagement unitId={unitId} /> : null}
     >
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-3">
+        <div className="panel p-3 flex items-center gap-4">
+          <svg width={84} height={84} viewBox="0 0 84 84" className="-rotate-90">
+            <circle cx={42} cy={42} r={36} stroke="hsl(var(--border))" strokeWidth={8} fill="none" />
+            <circle cx={42} cy={42} r={36} stroke={utilColor} strokeWidth={8} fill="none"
+              strokeDasharray={`${(utilPct / 100) * (2 * Math.PI * 36)} ${2 * Math.PI * 36}`} strokeLinecap="round" />
+          </svg>
+          <div>
+            <div className="label-eyebrow">Current Engagement</div>
+            <div className="mono text-3xl font-bold">{utilPct}%</div>
+            <div className="text-[11px] mono text-muted-foreground">{active} active task(s)</div>
+          </div>
+        </div>
+        <div className="panel p-3 lg:col-span-2">
+          <div className="label-eyebrow mb-1">24h Engagement Timeline</div>
+          <div style={{ width: "100%", height: 110 }}>
+            <ResponsiveContainer>
+              <AreaChart data={timeline}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis dataKey="h" tick={{ fontSize: 9 }} stroke="hsl(var(--muted-foreground))" interval={3} />
+                <YAxis domain={[0, 100]} tick={{ fontSize: 9 }} stroke="hsl(var(--muted-foreground))" />
+                <RTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }} />
+                <Area type="monotone" dataKey="util" stroke="hsl(var(--primary))" fill="hsl(var(--primary) / 0.25)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-3">
+        <div className="panel p-3">
+          <div className="label-eyebrow mb-1">7-Day Utilisation Forecast</div>
+          <div style={{ width: "100%", height: 130 }}>
+            <ResponsiveContainer>
+              <LineChart data={forecast}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis dataKey="d" tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" />
+                <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" />
+                <RTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }} />
+                <Line type="monotone" dataKey="util" stroke="hsl(var(--accent))" strokeWidth={2} dot />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+        <div className="panel p-3">
+          <div className="label-eyebrow mb-2">Active Tasks &amp; Allocation</div>
+          <ul className="text-[12px] mono space-y-1">
+            {rows.slice(0, 5).map((r: any) => (
+              <li key={r.id} className="flex items-center justify-between border-b border-border pb-1">
+                <span className="truncate">{r.satellites?.name ?? "—"}</span>
+                <span className="text-muted-foreground">{r.antenna?.name ?? "—"}</span>
+                <span className={`text-[10px] uppercase ${engStatusClass(r.status)} px-1.5 py-0.5 rounded-sm`}>{r.status}</span>
+              </li>
+            ))}
+            {rows.length === 0 && <li className="text-muted-foreground">No tasks yet</li>}
+          </ul>
+        </div>
+      </div>
+
       {rows.length === 0 ? (
         <Empty title="No active engagements" />
       ) : (

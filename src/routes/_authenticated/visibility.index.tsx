@@ -12,7 +12,63 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Search, Satellite as SatIcon, Radio } from "lucide-react";
+import { Search, Satellite as SatIcon, Radio, Clock, MapPin, TrendingUp } from "lucide-react";
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+} from "recharts";
+
+// Deterministic pseudo-random helper from a string seed.
+function seedRand(seed: string) {
+  let h = 2166136261;
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return () => {
+    h ^= h << 13; h ^= h >>> 17; h ^= h << 5;
+    return ((h >>> 0) % 10000) / 10000;
+  };
+}
+
+function buildMockVisibility(satId: string, satName: string) {
+  const rand = seedRand(satId + satName);
+  const currentPct = 55 + Math.floor(rand() * 40); // 55-95
+  const timeline = Array.from({ length: 24 }).map((_, h) => ({
+    h: `${String(h).padStart(2, "0")}:00`,
+    pct: Math.max(0, Math.min(100, Math.round(currentPct + (rand() - 0.5) * 35))),
+  }));
+  const history = Array.from({ length: 14 }).map((_, d) => ({
+    d: `D-${13 - d}`,
+    pct: Math.max(20, Math.min(100, Math.round(currentPct + (rand() - 0.5) * 25))),
+  }));
+  const stations = ["Site Alpha", "Site Bravo", "Site Charlie", "Site Delta"];
+  const passes = Array.from({ length: 5 }).map((_, i) => {
+    const minsFromNow = Math.round(20 + rand() * 600);
+    const dur = 4 + Math.round(rand() * 8);
+    return {
+      idx: i + 1,
+      start: new Date(Date.now() + minsFromNow * 60000).toISOString().slice(11, 16) + "Z",
+      duration: `${dur} min`,
+      max_el: `${30 + Math.round(rand() * 60)}°`,
+      station: stations[Math.floor(rand() * stations.length)],
+    };
+  });
+  const access = stations.map((s) => ({
+    station: s,
+    aos: new Date(Date.now() + rand() * 4 * 3600 * 1000).toISOString().slice(11, 16) + "Z",
+    los: new Date(Date.now() + (4 + rand() * 4) * 3600 * 1000).toISOString().slice(11, 16) + "Z",
+    coverage: `${50 + Math.round(rand() * 40)}%`,
+  }));
+  return { currentPct, timeline, history, passes, access };
+}
 
 export const Route = createFileRoute("/_authenticated/visibility/")({
   component: VisibilityList,
@@ -61,6 +117,10 @@ function VisibilityList() {
 
   const activeSat = sats.find((s) => s.id === activeSatId) ?? null;
   const activeBeams = activeSat ? beamsBySat[activeSat.id] ?? [] : [];
+  const mock = useMemo(
+    () => (activeSat ? buildMockVisibility(activeSat.id, activeSat.name) : null),
+    [activeSat],
+  );
 
   // Build unit -> [{ band, beam }] for the active satellite
   const unitBreakdown = useMemo(() => {
@@ -140,19 +200,85 @@ function VisibilityList() {
       )}
 
       <Dialog open={!!activeSat} onOpenChange={(o) => !o && setActiveSatId(null)}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="mono uppercase tracking-wider flex items-center gap-2">
               <SatIcon className="h-4 w-4 text-primary" /> {activeSat?.name} — Visibility
             </DialogTitle>
           </DialogHeader>
-          {activeSat && (
+          {activeSat && mock && (
             <div className="space-y-3">
-              <div className="grid grid-cols-3 gap-2 text-[11px] mono">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px] mono">
                 <Info label="Orbit" value={`${Number(activeSat.orbital_position).toFixed(2)}°E`} />
                 <Info label="Launched" value={activeSat.launch_date ?? "—"} />
                 <Info label="Transponders" value={String(activeSat.transponder_count ?? "—")} />
+                <Info label="Current Visibility" value={`${mock.currentPct}%`} />
               </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                <div className="panel p-3">
+                  <div className="label-eyebrow flex items-center gap-1 mb-1"><Clock className="h-3 w-3" /> 24h Visibility Timeline</div>
+                  <div style={{ width: "100%", height: 160 }}>
+                    <ResponsiveContainer>
+                      <AreaChart data={mock.timeline}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                        <XAxis dataKey="h" tick={{ fontSize: 9 }} stroke="hsl(var(--muted-foreground))" interval={3} />
+                        <YAxis domain={[0, 100]} tick={{ fontSize: 9 }} stroke="hsl(var(--muted-foreground))" />
+                        <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }} />
+                        <Area type="monotone" dataKey="pct" stroke="hsl(var(--primary))" fill="hsl(var(--primary) / 0.25)" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+                <div className="panel p-3">
+                  <div className="label-eyebrow flex items-center gap-1 mb-1"><TrendingUp className="h-3 w-3" /> 14-Day Historical Trend</div>
+                  <div style={{ width: "100%", height: 160 }}>
+                    <ResponsiveContainer>
+                      <LineChart data={mock.history}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                        <XAxis dataKey="d" tick={{ fontSize: 9 }} stroke="hsl(var(--muted-foreground))" />
+                        <YAxis domain={[0, 100]} tick={{ fontSize: 9 }} stroke="hsl(var(--muted-foreground))" />
+                        <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }} />
+                        <Line type="monotone" dataKey="pct" stroke="hsl(var(--accent))" strokeWidth={2} dot={false} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                <div className="panel p-3">
+                  <div className="label-eyebrow flex items-center gap-1 mb-2"><Clock className="h-3 w-3" /> Upcoming Passes</div>
+                  <table className="w-full text-[11px] mono">
+                    <thead className="text-muted-foreground">
+                      <tr><th className="text-left">#</th><th className="text-left">Start</th><th className="text-left">Dur</th><th className="text-left">Max El</th><th className="text-left">Station</th></tr>
+                    </thead>
+                    <tbody>
+                      {mock.passes.map((p) => (
+                        <tr key={p.idx} className="border-t border-border">
+                          <td className="py-1">{p.idx}</td><td>{p.start}</td><td>{p.duration}</td><td>{p.max_el}</td><td>{p.station}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="panel p-3">
+                  <div className="label-eyebrow flex items-center gap-1 mb-2"><MapPin className="h-3 w-3" /> Ground-Station Access Window</div>
+                  <table className="w-full text-[11px] mono">
+                    <thead className="text-muted-foreground">
+                      <tr><th className="text-left">Station</th><th className="text-left">AOS</th><th className="text-left">LOS</th><th className="text-left">Cov</th></tr>
+                    </thead>
+                    <tbody>
+                      {mock.access.map((a) => (
+                        <tr key={a.station} className="border-t border-border">
+                          <td className="py-1">{a.station}</td><td>{a.aos}</td><td>{a.los}</td><td className="text-primary">{a.coverage}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
               {unitBreakdown.length === 0 ? (
                 <Empty title="No unit visibility data" hint="Add beams and unit-beam visibility entries." />
               ) : (

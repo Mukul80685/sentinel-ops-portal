@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { useAuth, useIsAdmin } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 const navItems = [
   { to: "/", label: "Command", icon: Home, exact: true },
@@ -54,8 +54,13 @@ export function AppShell({
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
   const primaryRole = roles[0] ?? "viewer";
-  const now = new Date();
-  const stamp = now.toISOString().replace("T", " ").slice(0, 19) + "Z";
+  const [stamp, setStamp] = useState<string>("");
+  useEffect(() => {
+    const fmt = () => new Date().toISOString().replace("T", " ").slice(0, 19) + "Z";
+    setStamp(fmt());
+    const id = setInterval(() => setStamp(fmt()), 1000);
+    return () => clearInterval(id);
+  }, []);
 
   return (
     <div className="flex min-h-screen text-foreground">

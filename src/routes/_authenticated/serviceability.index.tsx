@@ -18,6 +18,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, Search, Wrench } from "lucide-react";
 import { toast } from "sonner";
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RTooltip, Legend } from "recharts";
 
 export const Route = createFileRoute("/_authenticated/serviceability/")({
   component: ServiceabilityPage,
@@ -72,8 +73,53 @@ function ServiceabilityPage() {
 
   const isFaulty = (s: string) => s !== "Operational";
 
+  const summary = useMemo(() => {
+    const counts = { Operational: 0, "Partially Serviceable": 0, "Under Repair": 0, "Non-Serviceable": 0 } as Record<string, number>;
+    equipment.forEach((e: any) => { counts[e.serviceability] = (counts[e.serviceability] ?? 0) + 1; });
+    const total = equipment.length || 1;
+    return {
+      total: equipment.length,
+      op: counts["Operational"] ?? 0,
+      partial: counts["Partially Serviceable"] ?? 0,
+      repair: counts["Under Repair"] ?? 0,
+      down: counts["Non-Serviceable"] ?? 0,
+      readiness: Math.round(((counts["Operational"] ?? 0) / total) * 100),
+      pie: [
+        { name: "Operational",      value: counts["Operational"] ?? 0,            color: "hsl(142 70% 45%)" },
+        { name: "Partially Svc",    value: counts["Partially Serviceable"] ?? 0,  color: "hsl(38 92% 50%)" },
+        { name: "Under Repair",     value: counts["Under Repair"] ?? 0,           color: "hsl(25 95% 53%)" },
+        { name: "Non-Serviceable",  value: counts["Non-Serviceable"] ?? 0,        color: "hsl(0 84% 60%)" },
+      ],
+    };
+  }, [equipment]);
+
   return (
     <AppShell title="Serviceability State" subtitle="Operational Readiness // All Units">
+      {equipment.length > 0 && (
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-3">
+          <SumCard label="Total Equipment" value={summary.total} tone="" />
+          <SumCard label="Operational"     value={summary.op}    tone="text-emerald-400" />
+          <SumCard label="Partial / Repair" value={summary.partial + summary.repair} tone="text-amber-400" />
+          <SumCard label="Non-Serviceable" value={summary.down}  tone="text-destructive" />
+          <SumCard label="Readiness"       value={`${summary.readiness}%`} tone="text-primary" />
+        </div>
+      )}
+      {equipment.length > 0 && (
+        <div className="panel p-3 mb-3">
+          <div className="label-eyebrow mb-1">Operational Readiness</div>
+          <div style={{ width: "100%", height: 180 }}>
+            <ResponsiveContainer>
+              <PieChart>
+                <Pie data={summary.pie} dataKey="value" nameKey="name" innerRadius={40} outerRadius={70} paddingAngle={2}>
+                  {summary.pie.map((s, i) => <Cell key={i} fill={s.color} />)}
+                </Pie>
+                <RTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }} />
+                <Legend wrapperStyle={{ fontSize: 11, fontFamily: "monospace" }} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
       <div className="panel p-3 mb-3">
         <div className="relative max-w-md">
           <Search className="h-3.5 w-3.5 absolute left-2 top-2.5 text-muted-foreground" />
@@ -188,6 +234,15 @@ function Info({ label, value }: { label: string; value: string }) {
     <div className="panel px-2 py-1.5">
       <div className="label-eyebrow">{label}</div>
       <div className="text-foreground truncate">{value}</div>
+    </div>
+  );
+}
+
+function SumCard({ label, value, tone }: { label: string; value: React.ReactNode; tone?: string }) {
+  return (
+    <div className="panel p-3">
+      <div className="label-eyebrow">{label}</div>
+      <div className={`mono text-2xl font-bold mt-1 ${tone ?? ""}`}>{value}</div>
     </div>
   );
 }
