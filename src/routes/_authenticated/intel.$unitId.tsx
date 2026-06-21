@@ -24,6 +24,8 @@ import {
   X,
   TrendingUp,
   TrendingDown,
+  Eye,
+  ShieldAlert,
 } from "lucide-react";
 import {
   AlertDialog,
@@ -65,6 +67,8 @@ function IntelRepository() {
   const [dateTo, setDateTo] = useState("");
   const [productivity, setProductivity] = useState<"all" | "productive" | "non">("all");
   const [dropTarget, setDropTarget] = useState<any | null>(null);
+  const [typeFilter, setTypeFilter] = useState<string>("ALL");
+  const [detailRecord, setDetailRecord] = useState<any | null>(null);
 
   const { data: sats = [] } = useQuery({ queryKey: ["sats"], queryFn: listSatellites });
   const { data: units = [] } = useQuery({ queryKey: ["units"], queryFn: listUnits });
@@ -91,16 +95,17 @@ function IntelRepository() {
   const filtered = useMemo(() => rows.filter((r: any) => {
     if (satFilter && r.satellite_id !== satFilter) return false;
     if (unitFilter && r.unit_id !== unitFilter) return false;
+    if (typeFilter !== "ALL" && (r.intel_type ?? "SIGINT") !== typeFilter) return false;
     if (dateFrom && r.observation_date < dateFrom) return false;
     if (dateTo && r.observation_date > dateTo) return false;
     if (productivity === "productive" && !isProductive(r)) return false;
     if (productivity === "non" && isProductive(r)) return false;
     if (q) {
-      const hay = `${r.satellites?.name ?? ""} ${r.units?.code ?? ""} ${r.frequency ?? ""} ${r.band ?? ""} ${r.summary ?? ""} ${r.analysis_report ?? ""}`.toLowerCase();
+      const hay = `${r.satellites?.name ?? ""} ${r.units?.code ?? ""} ${r.frequency ?? ""} ${r.band ?? ""} ${r.summary ?? ""} ${r.analysis_report ?? ""} ${r.intel_type ?? ""} ${r.report_number ?? ""}`.toLowerCase();
       if (!hay.includes(q.toLowerCase())) return false;
     }
     return true;
-  }), [rows, q, satFilter, unitFilter, dateFrom, dateTo, productivity]);
+  }), [rows, q, satFilter, unitFilter, dateFrom, dateTo, productivity, typeFilter]);
 
   const productive = useMemo(() => filtered.filter(isProductive), [filtered]);
   const nonProductive = useMemo(() => filtered.filter((r: any) => !isProductive(r)), [filtered]);
@@ -168,6 +173,24 @@ function IntelRepository() {
         </div>
       }
     >
+      <div className="panel p-2 mb-3 flex flex-wrap items-center gap-1">
+        <span className="label-eyebrow mr-2">Intel Type</span>
+        {["ALL", "SIGINT", "COMINT", "ELINT", "OSINT", "TECHINT"].map((t) => {
+          const count = t === "ALL" ? rows.length : rows.filter((r: any) => (r.intel_type ?? "SIGINT") === t).length;
+          const active = typeFilter === t;
+          return (
+            <button
+              key={t}
+              onClick={() => setTypeFilter(t)}
+              className={`mono text-[11px] uppercase tracking-wider px-2.5 py-1 rounded-sm border ${
+                active ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:text-foreground hover:border-primary"
+              }`}
+            >
+              {t} <span className="opacity-70">({count})</span>
+            </button>
+          );
+        })}
+      </div>
       <div className="panel p-3 mb-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2">
         <div className="relative lg:col-span-2">
           <Search className="h-3.5 w-3.5 absolute left-2 top-2.5 text-muted-foreground" />
@@ -207,6 +230,7 @@ function IntelRepository() {
             onAllot={allot}
             onDrop={(r) => setDropTarget(r)}
             onImportant={addToImportant}
+            onView={(r) => setDetailRecord(r)}
           />
           <Section
             title="Non-Productive Frequencies"
@@ -216,6 +240,7 @@ function IntelRepository() {
             onAllot={allot}
             onDrop={(r) => setDropTarget(r)}
             onImportant={addToImportant}
+            onView={(r) => setDetailRecord(r)}
           />
         </div>
       )}
@@ -244,7 +269,67 @@ function IntelRepository() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={!!detailRecord} onOpenChange={(o) => !o && setDetailRecord(null)}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="mono uppercase tracking-wider flex items-center gap-2">
+              <FileText className="h-4 w-4 text-primary" /> {detailRecord?.report_number ?? "Report"} — {detailRecord?.intel_type ?? "SIGINT"}
+            </DialogTitle>
+          </DialogHeader>
+          {detailRecord && (
+            <div className="space-y-3 text-sm">
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center gap-1 mono text-[10px] uppercase tracking-wider px-2 py-1 rounded-sm bg-destructive/15 text-destructive border border-destructive/40">
+                  <ShieldAlert className="h-3 w-3" /> {detailRecord.classification ?? "CONFIDENTIAL"}
+                </span>
+                <span className="mono text-[10px] uppercase tracking-wider px-2 py-1 rounded-sm bg-secondary border border-border">
+                  {detailRecord.intel_type ?? "SIGINT"}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-[11px] mono">
+                <DInfo label="Report No." value={detailRecord.report_number ?? "—"} />
+                <DInfo label="Date" value={detailRecord.observation_date ?? "—"} />
+                <DInfo label="Source" value={detailRecord.source ?? "—"} />
+                <DInfo label="Satellite" value={detailRecord.satellites?.name ?? "—"} />
+                <DInfo label="Frequency" value={detailRecord.frequency ?? "—"} />
+                <DInfo label="Band" value={detailRecord.band ?? "—"} />
+                <DInfo label="Unit" value={detailRecord.units?.code ?? "—"} />
+                <DInfo label="Activity" value={detailRecord.activity_level ?? "—"} />
+                <DInfo label="Productive" value={detailRecord.is_productive ? "Yes" : "No"} />
+              </div>
+              <div>
+                <div className="label-eyebrow">Summary</div>
+                <p className="text-foreground/90 mt-1">{detailRecord.summary ?? "—"}</p>
+              </div>
+              <div>
+                <div className="label-eyebrow">Key Findings</div>
+                <pre className="text-foreground/90 mt-1 whitespace-pre-wrap font-sans text-sm">{detailRecord.key_findings ?? "—"}</pre>
+              </div>
+              <div>
+                <div className="label-eyebrow">Analysis Report</div>
+                <p className="text-muted-foreground mt-1 whitespace-pre-wrap">{detailRecord.analysis_report ?? "—"}</p>
+              </div>
+              <div>
+                <div className="label-eyebrow">Analyst Remarks</div>
+                <p className="text-foreground/90 mt-1">{detailRecord.analyst_remarks ?? "—"}</p>
+              </div>
+              <div className="label-eyebrow flex items-center gap-1"><Paperclip className="h-3 w-3" /> Attachments</div>
+              <div className="text-[11px] mono text-muted-foreground">No attachments uploaded for this mock record.</div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </AppShell>
+  );
+}
+
+function DInfo({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="panel px-2 py-1.5">
+      <div className="label-eyebrow">{label}</div>
+      <div className="text-foreground truncate">{value}</div>
+    </div>
   );
 }
 
@@ -256,6 +341,7 @@ function Section({
   onAllot,
   onDrop,
   onImportant,
+  onView,
 }: {
   title: string;
   icon: React.ReactNode;
@@ -264,6 +350,7 @@ function Section({
   onAllot: (r: any) => void;
   onDrop: (r: any) => void;
   onImportant: (r: any) => void;
+  onView: (r: any) => void;
 }) {
   return (
     <section>
@@ -282,6 +369,7 @@ function Section({
               onAllot={() => onAllot(r)}
               onDrop={() => onDrop(r)}
               onImportant={() => onImportant(r)}
+              onView={() => onView(r)}
             />
           ))}
         </div>
@@ -296,12 +384,14 @@ function IntelCard({
   onAllot,
   onDrop,
   onImportant,
+  onView,
 }: {
   record: any;
   canEdit: boolean;
   onAllot: () => void;
   onDrop: () => void;
   onImportant: () => void;
+  onView: () => void;
 }) {
   const { data: attachments = [] } = useQuery({
     queryKey: ["intel-att", record.id],
@@ -310,22 +400,30 @@ function IntelCard({
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
-        <div className="panel p-4 select-none">
+        <div className="panel p-4 select-none cursor-pointer" onClick={onView}>
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <div className="label-eyebrow">{record.observation_date} • {record.units?.code ?? "—"}</div>
+              <div className="label-eyebrow flex items-center gap-1">
+                <span className="px-1 py-px rounded-sm bg-primary/15 text-primary border border-primary/30">{record.intel_type ?? "SIGINT"}</span>
+                {record.report_number ?? record.observation_date}
+                <span>· {record.units?.code ?? "—"}</span>
+              </div>
               <div className="mono text-base font-bold uppercase truncate">{record.satellites?.name ?? "—"}</div>
               <div className="text-[11px] text-muted-foreground mono mt-1">
                 {record.frequency ?? "—"} {record.band && `• ${record.band}`}
+                {record.classification && <span className="ml-2 text-destructive">[{record.classification}]</span>}
               </div>
             </div>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" aria-label="Actions">
+                <Button variant="ghost" size="sm" aria-label="Actions" onClick={(e) => e.stopPropagation()}>
                   <MoreHorizontal className="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="mono text-[12px] uppercase tracking-wider">
+              <DropdownMenuContent align="end" className="mono text-[12px] uppercase tracking-wider" onClick={(e) => e.stopPropagation()}>
+                <DropdownMenuItem onClick={onView}>
+                  <Eye className="h-3.5 w-3.5 mr-2 text-primary" /> View Details
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={onAllot}>
                   <Target className="h-3.5 w-3.5 mr-2 text-primary" /> Allot
                 </DropdownMenuItem>
@@ -341,7 +439,6 @@ function IntelCard({
             </DropdownMenu>
           </div>
           {record.summary && <p className="text-sm mt-3 text-foreground/90">{record.summary}</p>}
-          {record.analysis_report && <p className="text-xs mt-2 text-muted-foreground whitespace-pre-wrap">{record.analysis_report}</p>}
           {attachments.length > 0 && (
             <div className="mt-3 pt-3 border-t border-border">
               <div className="label-eyebrow flex items-center gap-1"><Paperclip className="h-3 w-3" /> Attachments</div>
@@ -356,10 +453,13 @@ function IntelCard({
               </ul>
             </div>
           )}
-          <div className="mt-3 text-[10px] mono text-muted-foreground">Right-click for actions</div>
+          <div className="mt-3 text-[10px] mono text-muted-foreground">Click for full report · right-click for quick actions</div>
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent className="mono text-[12px] uppercase tracking-wider">
+        <ContextMenuItem onClick={onView}>
+          <Eye className="h-3.5 w-3.5 mr-2 text-primary" /> View Details
+        </ContextMenuItem>
         <ContextMenuItem onClick={onAllot}>
           <Target className="h-3.5 w-3.5 mr-2 text-primary" /> Allot
         </ContextMenuItem>
