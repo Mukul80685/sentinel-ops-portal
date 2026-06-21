@@ -122,7 +122,7 @@ function RootComponent() {
       <AuthProvider>
         {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
         <Outlet />
-        <Toaster richColors position="top-right" theme="dark" />
+        <Toaster richColors position="top-right" theme="light" />
       </AuthProvider>
     </QueryClientProvider>
   );

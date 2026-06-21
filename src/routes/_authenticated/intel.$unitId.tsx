@@ -149,7 +149,7 @@ function IntelRepository() {
 
   if (units.length > 0 && !scopedUnit) {
     return (
-      <AppShell title="INT Repository" subtitle="Module 05" showBack>
+      <AppShell title="INT Repository" showBack>
         <Empty title="No agent registered for this unit" />
       </AppShell>
     );
@@ -158,7 +158,7 @@ function IntelRepository() {
   return (
     <AppShell
       title={scopedUnit ? `INT Repository — ${scopedUnit.code}` : "INT Repository"}
-      subtitle="Module 05 // Historical Archive"
+      subtitle="Historical Archive"
       showBack
       actions={
         <div className="flex gap-2">

@@ -1,13 +1,34 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
+import { InventoryModuleNav } from "@/components/inventory/InventoryModuleNav";
 import { supabase } from "@/integrations/supabase/client";
 import { listCategories } from "@/lib/queries";
-import { Boxes } from "lucide-react";
+import {
+  Activity,
+  Boxes,
+  Package,
+  Radio,
+  Satellite,
+  Server,
+  Zap,
+  type LucideProps,
+} from "lucide-react";
+import type { ComponentType } from "react";
 
 export const Route = createFileRoute("/_authenticated/inventory/$unitId/")({
   component: InventoryCategories,
 });
+
+// ── Per-category icon map ─────────────────────────────────────────────────────
+const CATEGORY_ICONS: Record<string, ComponentType<LucideProps>> = {
+  "Antenna":            Satellite,   // parabolic / dish
+  "LNA":                Zap,         // amplifier / signal boost
+  "LNB":                Radio,       // RF block downconverter
+  "Demodulators":       Activity,    // waveform / signal processing
+  "Processing Servers": Server,      // server rack / compute
+  "Other Resources":    Package,     // generic equipment
+};
 
 function InventoryCategories() {
   const { unitId } = Route.useParams();
@@ -32,32 +53,47 @@ function InventoryCategories() {
     },
   });
 
+  // Derive clean "Unit A — Resource Inventory" title from code
+  const unitLetter = unit?.code?.split("-").pop() ?? "";
+  const headerTitle = unit
+    ? `Unit ${unitLetter} \u2014 Resource Inventory`
+    : "Resource Inventory";
+
   return (
     <AppShell
-      title={unit ? `${unit.code} — ${unit.name}` : "Agency"}
-      subtitle="Resource Inventory // Categories"
+      title={headerTitle}
       showBack
+      horizontalNav={<InventoryModuleNav />}
     >
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 gap-3">
-        {cats.map((c) => (
-          <Link
-            key={c.id}
-            to="/inventory/$unitId/$categoryId"
-            params={{ unitId, categoryId: c.id }}
-            className="tile flex items-center justify-between gap-3"
-          >
-            <div className="flex items-center gap-3">
-              <div className="h-9 w-9 grid place-items-center rounded-sm border border-border bg-secondary text-primary">
-                <Boxes className="h-4 w-4" />
+      {/* Square icon tiles — 3 columns × 2 rows for 6 categories */}
+      <div className="grid grid-cols-3 gap-4">
+        {cats.map((c) => {
+          const CatIcon = CATEGORY_ICONS[c.name] ?? Boxes;
+          const count = counts[c.id] ?? 0;
+          return (
+            <Link
+              key={c.id}
+              to="/inventory/$unitId/$categoryId"
+              params={{ unitId, categoryId: c.id }}
+              className="tile flex flex-col items-center justify-center gap-3 aspect-square hover:bg-secondary/60 transition-colors"
+            >
+              {/* Large icon box */}
+              <div className="h-14 w-14 grid place-items-center rounded-sm border border-border bg-secondary text-primary">
+                <CatIcon className="h-7 w-7" />
               </div>
-              <div>
-                <div className="label-eyebrow">Category</div>
-                <div className="mono text-sm font-bold uppercase">{c.name}</div>
+
+              {/* Label + count */}
+              <div className="text-center space-y-0.5">
+                <div className="mono text-xs font-bold uppercase tracking-tight leading-tight">
+                  {c.name}
+                </div>
+                <div className="mono text-[11px] text-muted-foreground">
+                  {count} item{count !== 1 ? "s" : ""}
+                </div>
               </div>
-            </div>
-            <div className="mono text-xl font-bold">{counts[c.id] ?? 0}</div>
-          </Link>
-        ))}
+            </Link>
+          );
+        })}
       </div>
     </AppShell>
   );

@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
+import { InventoryModuleNav } from "@/components/inventory/InventoryModuleNav";
 import { Empty } from "@/components/Empty";
 import { supabase } from "@/integrations/supabase/client";
 import { useCanEdit } from "@/lib/auth";
@@ -11,13 +12,20 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useState } from "react";
 import { toast } from "sonner";
-import { Plus, ImageOff } from "lucide-react";
+import { ClipboardList, ImageOff } from "lucide-react";
 import { fileUrl, uploadFile } from "@/lib/storage";
 import { statusClass } from "@/lib/queries";
 
 export const Route = createFileRoute("/_authenticated/inventory/$unitId/$categoryId/")({
   component: EquipmentList,
 });
+
+const SERVICEABILITY_OPTIONS = [
+  "Operational",
+  "Partially Serviceable",
+  "Under Repair",
+  "Non-Serviceable",
+] as const;
 
 function EquipmentList() {
   const { unitId, categoryId } = Route.useParams();
@@ -49,15 +57,34 @@ function EquipmentList() {
     },
   });
 
+  const refresh = () => qc.invalidateQueries({ queryKey: ["eq", unitId, categoryId] });
+
+  // Derive clean "Unit A" from code
+  const unitLetter = meta?.unit?.code?.split("-").pop() ?? "";
+  const headerTitle = meta
+    ? `Unit ${unitLetter} \u2014 ${meta.cat?.name ?? "Equipment"}`
+    : "Equipment";
+
   return (
     <AppShell
-      title={meta ? `${meta.unit?.code ?? ""} • ${meta.cat?.name ?? ""}` : "Equipment"}
-      subtitle="Resource Inventory // Equipment"
+      title={headerTitle}
       showBack
-      actions={canEdit ? <AddEquipmentDialog unitId={unitId} categoryId={categoryId} onSaved={() => qc.invalidateQueries({ queryKey: ["eq", unitId, categoryId] })} /> : null}
+      horizontalNav={<InventoryModuleNav />}
+      actions={
+        canEdit ? (
+          <AddDetailsDialog
+            items={items}
+            unitId={unitId}
+            onSaved={refresh}
+          />
+        ) : null
+      }
     >
       {items.length === 0 ? (
-        <Empty title="No equipment registered" hint={canEdit ? "Use ADD EQUIPMENT to register a unit." : "Awaiting registration by an operator."} />
+        <Empty
+          title="No equipment registered"
+          hint="Add equipment from the unit overview to see items here."
+        />
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
           {items.map((eq: any) => (
@@ -90,87 +117,212 @@ function EquipmentList() {
   );
 }
 
-function AddEquipmentDialog({ unitId, categoryId, onSaved }: { unitId: string; categoryId: string; onSaved: () => void }) {
+// ── Add Details dialog — enriches an existing equipment record ────────────────
+
+type EqItem = { id: string; name: string; make?: string | null; model?: string | null; serial_number?: string | null; serviceability?: string; remarks?: string | null };
+
+const EMPTY_FORM = {
+  name: "",
+  make: "",
+  model: "",
+  serial_number: "",
+  serviceability: "Operational" as string,
+  remarks: "",
+};
+
+function AddDetailsDialog({
+  items,
+  unitId,
+  onSaved,
+}: {
+  items: EqItem[];
+  unitId: string;
+  onSaved: () => void;
+}) {
+  const qc = useQueryClient();
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({
-    name: "",
-    make: "",
-    model: "",
-    serial_number: "",
-    serviceability: "Operational" as const,
-    specifications: "",
-    remarks: "",
-  });
+  const [selectedId, setSelectedId] = useState("");
+  const [form, setForm] = useState(EMPTY_FORM);
   const [photo, setPhoto] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
 
+  function handleSelectItem(id: string) {
+    setSelectedId(id);
+    setPhoto(null);
+    const item = items.find((i) => i.id === id);
+    if (item) {
+      setForm({
+        name: item.name ?? "",
+        make: item.make ?? "",
+        model: item.model ?? "",
+        serial_number: item.serial_number ?? "",
+        serviceability: item.serviceability ?? "Operational",
+        remarks: item.remarks ?? "",
+      });
+    }
+  }
+
+  function reset() {
+    setSelectedId("");
+    setPhoto(null);
+    setForm(EMPTY_FORM);
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (!selectedId) { toast.error("Please choose a resource."); return; }
+    if (!form.make.trim()) { toast.error("Make is required."); return; }
+    if (!form.model.trim()) { toast.error("Model is required."); return; }
+    if (!form.serial_number.trim()) { toast.error("Serial number is required."); return; }
+    if (!photo) { toast.error("Photograph is required."); return; }
+
     setBusy(true);
     try {
-      let photo_url: string | null = null;
-      if (photo) photo_url = await uploadFile(photo, `equipment/${unitId}`);
-      const { error } = await supabase.from("equipment").insert({
-        unit_id: unitId,
-        category_id: categoryId,
-        ...form,
-        photo_url,
-      });
+      const photo_url = await uploadFile(photo, `equipment/${unitId}`);
+      const { error } = await supabase
+        .from("equipment")
+        .update({
+          name: form.name.trim() || undefined,
+          make: form.make.trim(),
+          model: form.model.trim(),
+          serial_number: form.serial_number.trim(),
+          serviceability: form.serviceability,
+          remarks: form.remarks.trim() || null,
+          photo_url,
+        })
+        .eq("id", selectedId);
       if (error) throw error;
-      toast.success("Equipment registered");
+      toast.success("Details submitted.");
       setOpen(false);
+      reset();
       onSaved();
-    } catch (e: any) {
-      toast.error(e.message);
+      qc.invalidateQueries({ queryKey: ["eq-detail", selectedId] });
+    } catch (err: any) {
+      toast.error(err.message ?? "Failed to submit details.");
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) reset(); }}>
       <DialogTrigger asChild>
         <Button size="sm" className="mono text-[11px] uppercase tracking-wider h-8">
-          <Plus className="h-3.5 w-3.5 mr-1" /> Add Equipment
+          <ClipboardList className="h-3.5 w-3.5 mr-1" /> Add Details
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="mono uppercase tracking-wider">Register Equipment</DialogTitle>
+          <DialogTitle className="mono uppercase tracking-wider">Add Details</DialogTitle>
         </DialogHeader>
-        <form onSubmit={submit} className="space-y-3">
-          <Field label="Name *">
-            <Input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-          </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Make">
-              <Input value={form.make} onChange={(e) => setForm({ ...form, make: e.target.value })} />
-            </Field>
-            <Field label="Model">
-              <Input value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} />
-            </Field>
-          </div>
-          <Field label="Serial Number">
-            <Input value={form.serial_number} onChange={(e) => setForm({ ...form, serial_number: e.target.value })} />
-          </Field>
-          <Field label="Serviceability">
-            <Select value={form.serviceability} onValueChange={(v) => setForm({ ...form, serviceability: v as any })}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+
+        <form onSubmit={submit} className="space-y-4">
+          {/* Step 1 — always visible: choose existing resource */}
+          <Field label="Choose Resource">
+            <Select value={selectedId} onValueChange={handleSelectItem}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select existing resource" />
+              </SelectTrigger>
               <SelectContent>
-                {["Operational", "Partially Serviceable", "Under Repair", "Non-Serviceable"].map((s) => (
-                  <SelectItem key={s} value={s}>{s}</SelectItem>
-                ))}
+                {items.length === 0 ? (
+                  <div className="px-3 py-2 text-[12px] text-muted-foreground mono">No resources available</div>
+                ) : (
+                  items.map((item) => (
+                    <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>
+                  ))
+                )}
               </SelectContent>
             </Select>
           </Field>
-          <Field label="Photograph">
-            <Input type="file" accept="image/*" onChange={(e) => setPhoto(e.target.files?.[0] ?? null)} />
-          </Field>
-          <Field label="Remarks">
-            <Input value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} />
-          </Field>
-          <Button type="submit" disabled={busy} className="w-full mono uppercase tracking-wider">
-            {busy ? "Saving…" : "Register"}
+
+          {/* Step 2 — detail form, revealed after selection */}
+          {selectedId && (
+            <>
+              <div className="border-t border-border pt-3">
+                <div className="label-eyebrow mb-3">Equipment Details</div>
+              </div>
+
+              {/* Required fields */}
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Make *">
+                  <Input
+                    required
+                    value={form.make}
+                    onChange={(e) => setForm({ ...form, make: e.target.value })}
+                    placeholder="e.g. Hughes"
+                  />
+                </Field>
+                <Field label="Model *">
+                  <Input
+                    required
+                    value={form.model}
+                    onChange={(e) => setForm({ ...form, model: e.target.value })}
+                    placeholder="e.g. HX100"
+                  />
+                </Field>
+              </div>
+
+              <Field label="Serial Number *">
+                <Input
+                  required
+                  value={form.serial_number}
+                  onChange={(e) => setForm({ ...form, serial_number: e.target.value })}
+                  placeholder="e.g. SN-XXXXXXXX"
+                />
+              </Field>
+
+              <Field label="Serviceability *">
+                <Select
+                  value={form.serviceability}
+                  onValueChange={(v) => setForm({ ...form, serviceability: v })}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {SERVICEABILITY_OPTIONS.map((s) => (
+                      <SelectItem key={s} value={s}>{s}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+
+              <Field label="Photograph *">
+                <Input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => setPhoto(e.target.files?.[0] ?? null)}
+                />
+                {!photo && (
+                  <p className="mono text-[11px] text-muted-foreground mt-1">
+                    An image is required before submitting.
+                  </p>
+                )}
+              </Field>
+
+              {/* Optional fields */}
+              <Field label="Name">
+                <Input
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  placeholder="Optional display name"
+                />
+              </Field>
+
+              <Field label="Remarks">
+                <Input
+                  value={form.remarks}
+                  onChange={(e) => setForm({ ...form, remarks: e.target.value })}
+                  placeholder="Optional remarks"
+                />
+              </Field>
+            </>
+          )}
+
+          <Button
+            type="submit"
+            disabled={busy || !selectedId || !photo}
+            className="w-full mono uppercase tracking-wider"
+          >
+            {busy ? "Submitting…" : "Submit"}
           </Button>
         </form>
       </DialogContent>

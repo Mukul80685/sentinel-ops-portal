@@ -3,6 +3,6 @@ import { UnitTilePicker } from "@/components/UnitTilePicker";
 
 export const Route = createFileRoute("/_authenticated/priority/")({
   component: () => (
-    <UnitTilePicker title="Satellite Priority & Allocation" subtitle="Module 03 // Select Unit" basePath="/priority" />
+    <UnitTilePicker title="Satellite Priority and Allocation" subtitle="Select Unit" basePath="/priority" />
   ),
 });

@@ -12,6 +12,8 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index'
+import { Route as AuthenticatedReportsRouteImport } from './routes/_authenticated/reports'
+import { Route as AuthenticatedMinutesRouteImport } from './routes/_authenticated/minutes'
 import { Route as AuthenticatedImportantRouteImport } from './routes/_authenticated/important'
 import { Route as AuthenticatedVisibilityIndexRouteImport } from './routes/_authenticated/visibility.index'
 import { Route as AuthenticatedServiceabilityIndexRouteImport } from './routes/_authenticated/serviceability.index'
@@ -42,6 +44,16 @@ const AuthenticatedRouteRoute = AuthenticatedRouteRouteImport.update({
 const AuthenticatedIndexRoute = AuthenticatedIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedReportsRoute = AuthenticatedReportsRouteImport.update({
+  id: '/reports',
+  path: '/reports',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedMinutesRoute = AuthenticatedMinutesRouteImport.update({
+  id: '/minutes',
+  path: '/minutes',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedImportantRoute = AuthenticatedImportantRouteImport.update({
@@ -147,6 +159,8 @@ export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
   '/auth': typeof AuthRoute
   '/important': typeof AuthenticatedImportantRoute
+  '/minutes': typeof AuthenticatedMinutesRoute
+  '/reports': typeof AuthenticatedReportsRoute
   '/admin/satellites': typeof AuthenticatedAdminSatellitesRoute
   '/admin/units': typeof AuthenticatedAdminUnitsRoute
   '/admin/users': typeof AuthenticatedAdminUsersRoute
@@ -167,6 +181,8 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/auth': typeof AuthRoute
   '/important': typeof AuthenticatedImportantRoute
+  '/minutes': typeof AuthenticatedMinutesRoute
+  '/reports': typeof AuthenticatedReportsRoute
   '/': typeof AuthenticatedIndexRoute
   '/admin/satellites': typeof AuthenticatedAdminSatellitesRoute
   '/admin/units': typeof AuthenticatedAdminUnitsRoute
@@ -190,6 +206,8 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
   '/_authenticated/important': typeof AuthenticatedImportantRoute
+  '/_authenticated/minutes': typeof AuthenticatedMinutesRoute
+  '/_authenticated/reports': typeof AuthenticatedReportsRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/_authenticated/admin/satellites': typeof AuthenticatedAdminSatellitesRoute
   '/_authenticated/admin/units': typeof AuthenticatedAdminUnitsRoute
@@ -214,6 +232,8 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/important'
+    | '/minutes'
+    | '/reports'
     | '/admin/satellites'
     | '/admin/units'
     | '/admin/users'
@@ -234,6 +254,8 @@ export interface FileRouteTypes {
   to:
     | '/auth'
     | '/important'
+    | '/minutes'
+    | '/reports'
     | '/'
     | '/admin/satellites'
     | '/admin/units'
@@ -256,6 +278,8 @@ export interface FileRouteTypes {
     | '/_authenticated'
     | '/auth'
     | '/_authenticated/important'
+    | '/_authenticated/minutes'
+    | '/_authenticated/reports'
     | '/_authenticated/'
     | '/_authenticated/admin/satellites'
     | '/_authenticated/admin/units'
@@ -301,6 +325,20 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof AuthenticatedIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/reports': {
+      id: '/_authenticated/reports'
+      path: '/reports'
+      fullPath: '/reports'
+      preLoaderRoute: typeof AuthenticatedReportsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/minutes': {
+      id: '/_authenticated/minutes'
+      path: '/minutes'
+      fullPath: '/minutes'
+      preLoaderRoute: typeof AuthenticatedMinutesRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/important': {
@@ -427,6 +465,8 @@ declare module '@tanstack/react-router' {
 
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedImportantRoute: typeof AuthenticatedImportantRoute
+  AuthenticatedMinutesRoute: typeof AuthenticatedMinutesRoute
+  AuthenticatedReportsRoute: typeof AuthenticatedReportsRoute
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
   AuthenticatedAdminSatellitesRoute: typeof AuthenticatedAdminSatellitesRoute
   AuthenticatedAdminUnitsRoute: typeof AuthenticatedAdminUnitsRoute
@@ -448,6 +488,8 @@ interface AuthenticatedRouteRouteChildren {
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedImportantRoute: AuthenticatedImportantRoute,
+  AuthenticatedMinutesRoute: AuthenticatedMinutesRoute,
+  AuthenticatedReportsRoute: AuthenticatedReportsRoute,
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
   AuthenticatedAdminSatellitesRoute: AuthenticatedAdminSatellitesRoute,
   AuthenticatedAdminUnitsRoute: AuthenticatedAdminUnitsRoute,
@@ -480,3 +522,13 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}
