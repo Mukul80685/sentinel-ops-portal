@@ -1,6 +1,7 @@
 /**
  * INT Repository – shared data model, mock generation, filtering, and CSV utilities.
  */
+import * as XLSX from "xlsx";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -589,3 +590,115 @@ export function recordsToExportRows(records: IntelRecord[]): (string | number)[]
 }
 
 export { formatDisplayDate };
+
+// ─── Interim repository entry model ──────────────────────────────────────────
+
+/** A satellite entry that exists due to an active engagement but has no uploaded data yet. */
+export interface InterimRepoEntry extends SatelliteSummary {
+  isInterim: true;
+  /** Engagement status driving this entry (e.g. "In Progress", "Planned") */
+  engagementStatus: string;
+  /** Supabase satellite UUID, used for visibility lookups */
+  satelliteDbId: string;
+}
+
+export type RepoEntry = (SatelliteSummary & { isInterim?: false; satelliteDbId?: string }) | InterimRepoEntry;
+
+/** Returns true if a repo entry has no uploaded scan data. */
+export function isEmptyEntry(e: RepoEntry): boolean {
+  return e.isInterim === true || e.uploadCount === 0;
+}
+
+// ─── LocalStorage: per-satellite upload metadata ─────────────────────────────
+
+const LS_SAT_META_PREFIX = "intel-sat-meta-";
+
+interface SatUploadMeta {
+  hasData: boolean;
+  lastUpload: string | null;
+}
+
+export function loadSatMeta(unitId: string, satelliteKey: string): SatUploadMeta {
+  try {
+    const raw = localStorage.getItem(`${LS_SAT_META_PREFIX}${unitId}-${satelliteKey}`);
+    return raw ? JSON.parse(raw) : { hasData: false, lastUpload: null };
+  } catch {
+    return { hasData: false, lastUpload: null };
+  }
+}
+
+export function saveSatMeta(unitId: string, satelliteKey: string, meta: SatUploadMeta): void {
+  localStorage.setItem(`${LS_SAT_META_PREFIX}${unitId}-${satelliteKey}`, JSON.stringify(meta));
+}
+
+// ─── Band → polarization mapping ─────────────────────────────────────────────
+
+/** Convert a DB beam band (C, Ku, Ka, S, L) to the INT Repository polarization options. */
+export function bandToPolarizations(band: string): string[] {
+  const b = band.trim().toUpperCase();
+  if (b === "KU") return ["KU-H", "KU-V"];
+  if (b === "C")  return ["C-H",  "C-V"];
+  if (b === "KA") return ["KA-H", "KA-V"];
+  if (b === "S")  return ["S-H",  "S-V"];
+  if (b === "L")  return ["L-H",  "L-V"];
+  return [`${b}-H`, `${b}-V`];
+}
+
+// ─── XLSX / CSV file parsing ──────────────────────────────────────────────────
+
+/** Accepted upload MIME types and extensions. */
+export const ACCEPTED_FILE_TYPES = ".csv,.xlsx,.xls";
+
+export function validateUploadFile(file: File): string | null {
+  const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+  if (!["csv", "xlsx", "xls"].includes(ext)) {
+    return "Invalid format. Only CSV or Excel (.xlsx / .xls) files allowed.";
+  }
+  return null;
+}
+
+/** Parse a CSV text string into IntelRecord[]. Wraps existing parseIntelCsv. */
+export function parseCsvFile(text: string, unitId: string, unitLabel: string): IntelRecord[] {
+  return parseIntelCsv(text, unitId, unitLabel);
+}
+
+/** Parse an XLSX/XLS file buffer into IntelRecord[]. */
+export function parseXlsxFile(buffer: ArrayBuffer, unitId: string, unitLabel: string): IntelRecord[] {
+  const workbook = XLSX.read(buffer, { type: "array" });
+  const sheetName = workbook.SheetNames[0];
+  if (!sheetName) return [];
+  const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName]);
+  return parseIntelCsv(csv, unitId, unitLabel);
+}
+
+/** Read a File and parse it into IntelRecord[], returning a Promise. */
+export function parseUploadedFile(
+  file: File,
+  unitId: string,
+  unitLabel: string,
+): Promise<IntelRecord[]> {
+  return new Promise((resolve, reject) => {
+    const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+    const reader = new FileReader();
+
+    if (ext === "csv") {
+      reader.onload = (e) => {
+        const text = e.target?.result as string;
+        resolve(parseCsvFile(text, unitId, unitLabel));
+      };
+      reader.onerror = () => reject(new Error("Failed to read CSV file"));
+      reader.readAsText(file);
+    } else {
+      reader.onload = (e) => {
+        const buf = e.target?.result as ArrayBuffer;
+        try {
+          resolve(parseXlsxFile(buf, unitId, unitLabel));
+        } catch (err) {
+          reject(err);
+        }
+      };
+      reader.onerror = () => reject(new Error("Failed to read XLSX file"));
+      reader.readAsArrayBuffer(file);
+    }
+  });
+}

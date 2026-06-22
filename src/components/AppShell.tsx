@@ -661,8 +661,8 @@ export function AppShell({
   showBack?: boolean;
   isHome?: boolean;
   hideSidebar?: boolean;
-  /** "modules" = show other-module links (default). "secondary" = show nav items (User/Units/…) */
-  sidebarVariant?: "modules" | "secondary";
+  /** "modules" = show other-module links (default). "secondary" = show nav items (User/Units/…). "home" = identical to homepage sidebar. */
+  sidebarVariant?: "modules" | "secondary" | "home";
   horizontalNav?: ReactNode;
   actions?: ReactNode;
   children: ReactNode;
@@ -691,6 +691,17 @@ export function AppShell({
         }`}
       >
         {isHome ? (
+          <HomeSidebar
+            mode={mode}
+            setMode={setMode}
+            isAdmin={isAdmin}
+            signOut={signOut}
+            pathname={pathname}
+            resolveSecondaryTo={resolveSecondaryTo}
+            stamp={stamp}
+            onClockClick={() => setDtOpen(true)}
+          />
+        ) : sidebarVariant === "home" ? (
           <HomeSidebar
             mode={mode}
             setMode={setMode}
@@ -760,14 +771,16 @@ export function AppShell({
           <header className="border-b border-border bg-card/60 backdrop-blur sticky top-0 z-20">
             <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3 px-4 sm:px-6 py-3">
               <div className="flex items-center">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => router.history.back()}
-                  className="mono text-[11px] h-8 uppercase tracking-wider"
-                >
-                  <ArrowLeft className="h-3.5 w-3.5 mr-1" /> Back
-                </Button>
+                {showBack && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => router.history.back()}
+                    className="mono text-[11px] h-8 uppercase tracking-wider"
+                  >
+                    <ArrowLeft className="h-3.5 w-3.5 mr-1" /> Back
+                  </Button>
+                )}
               </div>
 
               <div className="min-w-0 text-center px-2">

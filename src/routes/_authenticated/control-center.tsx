@@ -1,649 +1,2167 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link, useRouterState } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { AppShell } from "@/components/AppShell";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Activity,
   AlertTriangle,
+  Archive,
+  BarChart3,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  Globe,
+  Info,
   LayoutDashboard,
-  Link2,
-  Maximize2,
+  ListOrdered,
+  Minus,
   Plus,
-  Radio,
   Satellite as SatIcon,
-  Send,
-  Signal,
-  Wifi,
+  Search,
+  Shield,
+  Star,
+  TrendingDown,
+  TrendingUp,
   X,
+  Zap,
 } from "lucide-react";
-import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/control-center")({
   component: ControlCenterPage,
   head: () => ({ meta: [{ title: "Control Center — SSACC" }] }),
+  validateSearch: (search: Record<string, unknown>) => ({
+    unit: typeof search.unit === "string" ? search.unit : undefined,
+  }),
 });
 
-// ─── Static mock data ─────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// TYPES
+// ═══════════════════════════════════════════════════════════════════════════════
 
 const UNIT_LABELS = [
-  "Unit A","Unit B","Unit C","Unit D",
-  "Unit E","Unit F","Unit G","Unit H",
+  "Unit A", "Unit B", "Unit C", "Unit D",
+  "Unit E", "Unit F", "Unit G", "Unit H",
 ] as const;
 type UnitLabel = typeof UNIT_LABELS[number];
 
-type Sat = { id:string; name:string; pos:string; bands:string; status:"active"|"standby" };
-const SATELLITES: Sat[] = [
-  { id:"s1", name:"INSAT-4A",    pos:"93.5°E",  bands:"C / Ku",  status:"active"  },
-  { id:"s2", name:"AsiaSat 7",   pos:"105.5°E", bands:"Ku",      status:"active"  },
-  { id:"s3", name:"ChinaSat 9",  pos:"92.2°E",  bands:"C",       status:"active"  },
-  { id:"s4", name:"Measat-3b",   pos:"91.5°E",  bands:"C / Ku",  status:"active"  },
-  { id:"s5", name:"SES-9",       pos:"108.2°E", bands:"Ku",      status:"standby" },
-  { id:"s6", name:"Thaicom 8",   pos:"78.5°E",  bands:"Ku",      status:"active"  },
-  { id:"s7", name:"Intelsat 17", pos:"66°E",    bands:"C",       status:"active"  },
-  { id:"s8", name:"SES-12",      pos:"95°E",    bands:"Ku / Ka", status:"active"  },
-];
-const SAT_MAP = Object.fromEntries(SATELLITES.map(s => [s.id, s]));
+const REGIONS = [
+  "China", "India", "Pakistan", "Europe",
+  "Middle East", "SE Asia", "Russia", "Americas",
+] as const;
+type Region = typeof REGIONS[number];
+type OrbitType = "GEO" | "MEO" | "LEO";
 
-type FStatus = "Optimal" | "Suboptimal" | "Interference Risk";
-type FreqRow  = { band:string; freq:string; status:FStatus };
+type MetricTrend     = "improving" | "stable" | "degrading";
+type InsightCategory = "Capability" | "Coverage" | "Output" | "Utilization";
+type Severity        = "High" | "Medium" | "Low";
 
-const INIT_ALLOC: Record<string, string[]> = {
-  "Unit A":["s1","s2"], "Unit B":["s3"],      "Unit C":["s4","s5"],
-  "Unit D":["s6"],       "Unit E":["s7"],       "Unit F":["s8"],
-  "Unit G":[],           "Unit H":["s1"],
+type SatRecord = { id: string; name: string; region: Region; orbit: OrbitType };
+
+type Insight = {
+  id: string;
+  title: string;
+  detail: string;
+  units?: UnitLabel[];
+  regions?: string[];
+  category: InsightCategory;
+  severity: Severity;
+  trend: MetricTrend;
 };
-const INIT_FREQ: Record<string, FreqRow[]> = {
-  "Unit A":[{ band:"C-band",  freq:"3.785 GHz",  status:"Optimal"           },
-            { band:"Ku-band", freq:"11.470 GHz", status:"Suboptimal"        }],
-  "Unit B":[{ band:"C-band",  freq:"4.100 GHz",  status:"Interference Risk" }],
-  "Unit C":[{ band:"Ku-band", freq:"12.250 GHz", status:"Optimal"           },
-            { band:"Ka-band", freq:"28.500 GHz", status:"Optimal"           }],
-  "Unit D":[{ band:"Ku-band", freq:"10.980 GHz", status:"Suboptimal"        }],
-  "Unit E":[{ band:"C-band",  freq:"3.960 GHz",  status:"Optimal"           }],
-  "Unit F":[{ band:"Ku-band", freq:"11.720 GHz", status:"Optimal"           },
-            { band:"Ka-band", freq:"29.100 GHz", status:"Interference Risk" }],
-  "Unit G":[],
-  "Unit H":[{ band:"C-band",  freq:"4.000 GHz",  status:"Optimal"           }],
+
+type BandType = "C-band" | "KU band" | "KA band" | "Extended C-band";
+type PolType  = "C-EDGE" | "KU-VL" | "KU-HL" | "KU-HH" | "KU-HV" | "CH-CV" | "RF-CP" | "LH-CP";
+
+type SatScanData = {
+  satellite: string;
+  band: BandType;
+  pol: PolType;
+  scanned: number;
+  analyzed: number;
+  productive: number;
+  nonProductive: number;
 };
-const CMD_TEMPLATES = [
-  "Shift satellite to alternate beam",
-  "Change frequency band to C-band",
-  "Increase monitoring priority to HIGH",
-  "Switch to backup transponder",
-  "Execute frequency hop sequence",
-  "Realign antenna to primary vector",
-  "Initiate full spectrum scan",
-  "Engage redundant signal path",
+
+type SatHistory = {
+  satellite: string;
+  time: string;
+  outcome: "productive" | "mixed" | "non-productive";
+};
+
+type UnitScanData = {
+  activeSats: SatScanData[];
+  history: SatHistory[];
+};
+
+// — Optimization Engine types ————————————————————————————————————————————————
+type OptStatus   = "OPTIMIZED" | "SUBOPTIMAL" | "MISALLOCATED";
+type RecPriority = "URGENT" | "EFFICIENCY" | "EIRP" | "PRIORITY";
+type FactorKey   = "resource" | "visibility" | "priority" | "eirp" | "serviceability" | "engagement";
+
+type FactorEntry = {
+  score: number;
+  issues: string[];
+  severity: "ok" | "warn" | "critical";
+};
+
+type UnitOptData = {
+  compositeScore: number;
+  status: OptStatus;
+  satelliteLoad: number;
+  maxCapacity: number;
+  faultDays?: number;
+} & Record<FactorKey, FactorEntry>;
+
+type ReassignRec = {
+  id: string;
+  recPriority: RecPriority;
+  fromUnit: UnitLabel;
+  toUnit: UnitLabel;
+  satellite: string;
+  reason: string;
+  gain: string;
+  steps: string[];
+  confidence: "Low" | "Medium" | "High";
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SATELLITE CATALOG — 150 ENTRIES (source of truth for assignment data)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const SAT_CATALOG: SatRecord[] = [
+  // China (25)
+  { id:"c01", name:"ChinaSat 1A",    region:"China",    orbit:"GEO" },
+  { id:"c02", name:"ChinaSat 2A",    region:"China",    orbit:"GEO" },
+  { id:"c03", name:"ChinaSat 3A",    region:"China",    orbit:"GEO" },
+  { id:"c04", name:"ChinaSat 4",     region:"China",    orbit:"GEO" },
+  { id:"c05", name:"ChinaSat 5B",    region:"China",    orbit:"GEO" },
+  { id:"c06", name:"ChinaSat 6A",    region:"China",    orbit:"GEO" },
+  { id:"c07", name:"ChinaSat 6B",    region:"China",    orbit:"GEO" },
+  { id:"c08", name:"ChinaSat 7",     region:"China",    orbit:"GEO" },
+  { id:"c09", name:"ChinaSat 9",     region:"China",    orbit:"GEO" },
+  { id:"c10", name:"ChinaSat 9A",    region:"China",    orbit:"GEO" },
+  { id:"c11", name:"ChinaSat 10",    region:"China",    orbit:"GEO" },
+  { id:"c12", name:"ChinaSat 11",    region:"China",    orbit:"GEO" },
+  { id:"c13", name:"ChinaSat 12",    region:"China",    orbit:"GEO" },
+  { id:"c14", name:"ChinaSat 16",    region:"China",    orbit:"GEO" },
+  { id:"c15", name:"ChinaSat 18",    region:"China",    orbit:"GEO" },
+  { id:"c16", name:"SinoSat 1",      region:"China",    orbit:"GEO" },
+  { id:"c17", name:"SinoSat 2",      region:"China",    orbit:"GEO" },
+  { id:"c18", name:"Apstar 5",       region:"China",    orbit:"GEO" },
+  { id:"c19", name:"Apstar 6",       region:"China",    orbit:"GEO" },
+  { id:"c20", name:"Apstar 6C",      region:"China",    orbit:"GEO" },
+  { id:"c21", name:"Apstar 7",       region:"China",    orbit:"GEO" },
+  { id:"c22", name:"Apstar 9",       region:"China",    orbit:"GEO" },
+  { id:"c23", name:"Zhongxing 9A",   region:"China",    orbit:"GEO" },
+  { id:"c24", name:"Fengyun 4A",     region:"China",    orbit:"GEO" },
+  { id:"c25", name:"Beidou-IGSO 1",  region:"China",    orbit:"MEO" },
+  // India (20)
+  { id:"i01", name:"INSAT-3A",    region:"India",    orbit:"GEO" },
+  { id:"i02", name:"INSAT-3DR",   region:"India",    orbit:"GEO" },
+  { id:"i03", name:"INSAT-4A",    region:"India",    orbit:"GEO" },
+  { id:"i04", name:"INSAT-4B",    region:"India",    orbit:"GEO" },
+  { id:"i05", name:"INSAT-4C",    region:"India",    orbit:"GEO" },
+  { id:"i06", name:"GSAT-7",      region:"India",    orbit:"GEO" },
+  { id:"i07", name:"GSAT-7A",     region:"India",    orbit:"GEO" },
+  { id:"i08", name:"GSAT-9",      region:"India",    orbit:"GEO" },
+  { id:"i09", name:"GSAT-10",     region:"India",    orbit:"GEO" },
+  { id:"i10", name:"GSAT-11",     region:"India",    orbit:"GEO" },
+  { id:"i11", name:"GSAT-12",     region:"India",    orbit:"GEO" },
+  { id:"i12", name:"GSAT-14",     region:"India",    orbit:"GEO" },
+  { id:"i13", name:"GSAT-15",     region:"India",    orbit:"GEO" },
+  { id:"i14", name:"GSAT-17",     region:"India",    orbit:"GEO" },
+  { id:"i15", name:"GSAT-18",     region:"India",    orbit:"GEO" },
+  { id:"i16", name:"GSAT-19",     region:"India",    orbit:"GEO" },
+  { id:"i17", name:"GSAT-20",     region:"India",    orbit:"GEO" },
+  { id:"i18", name:"Kalpana-1",   region:"India",    orbit:"GEO" },
+  { id:"i19", name:"EduSat",      region:"India",    orbit:"GEO" },
+  { id:"i20", name:"Cartosat-2E", region:"India",    orbit:"LEO" },
+  // Pakistan (5)
+  { id:"p01", name:"PakSat 1R",   region:"Pakistan", orbit:"GEO" },
+  { id:"p02", name:"PakSat MM1",  region:"Pakistan", orbit:"GEO" },
+  { id:"p03", name:"PAKTES-1A",   region:"Pakistan", orbit:"LEO" },
+  { id:"p04", name:"PakSat 38E",  region:"Pakistan", orbit:"GEO" },
+  { id:"p05", name:"PakSat-NR",   region:"Pakistan", orbit:"GEO" },
+  // Europe (25)
+  { id:"e01", name:"Eutelsat 5WB",  region:"Europe",   orbit:"GEO" },
+  { id:"e02", name:"Eutelsat 7A",   region:"Europe",   orbit:"GEO" },
+  { id:"e03", name:"Eutelsat 8WB",  region:"Europe",   orbit:"GEO" },
+  { id:"e04", name:"Eutelsat 10A",  region:"Europe",   orbit:"GEO" },
+  { id:"e05", name:"Eutelsat 12WB", region:"Europe",   orbit:"GEO" },
+  { id:"e06", name:"Eutelsat 16A",  region:"Europe",   orbit:"GEO" },
+  { id:"e07", name:"Eutelsat 25B",  region:"Europe",   orbit:"GEO" },
+  { id:"e08", name:"Eutelsat 28A",  region:"Europe",   orbit:"GEO" },
+  { id:"e09", name:"Eutelsat 33C",  region:"Europe",   orbit:"GEO" },
+  { id:"e10", name:"SES-1",         region:"Europe",   orbit:"GEO" },
+  { id:"e11", name:"SES-3",         region:"Europe",   orbit:"GEO" },
+  { id:"e12", name:"SES-5",         region:"Europe",   orbit:"GEO" },
+  { id:"e13", name:"SES-6",         region:"Europe",   orbit:"GEO" },
+  { id:"e14", name:"SES-8",         region:"Europe",   orbit:"GEO" },
+  { id:"e15", name:"SES-10",        region:"Europe",   orbit:"GEO" },
+  { id:"e16", name:"SES-11",        region:"Europe",   orbit:"GEO" },
+  { id:"e17", name:"SES-12",        region:"Europe",   orbit:"GEO" },
+  { id:"e18", name:"Astra 1M",      region:"Europe",   orbit:"GEO" },
+  { id:"e19", name:"Astra 1N",      region:"Europe",   orbit:"GEO" },
+  { id:"e20", name:"Astra 2B",      region:"Europe",   orbit:"GEO" },
+  { id:"e21", name:"Astra 3B",      region:"Europe",   orbit:"GEO" },
+  { id:"e22", name:"Thor 5",        region:"Europe",   orbit:"GEO" },
+  { id:"e23", name:"Thor 7",        region:"Europe",   orbit:"GEO" },
+  { id:"e24", name:"Hispasat 1E",   region:"Europe",   orbit:"GEO" },
+  { id:"e25", name:"Hotbird 13G",   region:"Europe",   orbit:"GEO" },
+  // Middle East (15)
+  { id:"m01", name:"Arabsat 5A",    region:"Middle East", orbit:"GEO" },
+  { id:"m02", name:"Arabsat 5C",    region:"Middle East", orbit:"GEO" },
+  { id:"m03", name:"Arabsat 6A",    region:"Middle East", orbit:"GEO" },
+  { id:"m04", name:"Badr 4",        region:"Middle East", orbit:"GEO" },
+  { id:"m05", name:"Badr 5",        region:"Middle East", orbit:"GEO" },
+  { id:"m06", name:"Badr 6",        region:"Middle East", orbit:"GEO" },
+  { id:"m07", name:"Badr 7",        region:"Middle East", orbit:"GEO" },
+  { id:"m08", name:"Badr 8",        region:"Middle East", orbit:"GEO" },
+  { id:"m09", name:"Yahsat 1A",     region:"Middle East", orbit:"GEO" },
+  { id:"m10", name:"Yahsat 1B",     region:"Middle East", orbit:"GEO" },
+  { id:"m11", name:"Nilesat 201",   region:"Middle East", orbit:"GEO" },
+  { id:"m12", name:"Nilesat 301",   region:"Middle East", orbit:"GEO" },
+  { id:"m13", name:"Es'hailSat 1",  region:"Middle East", orbit:"GEO" },
+  { id:"m14", name:"Es'hailSat 2",  region:"Middle East", orbit:"GEO" },
+  { id:"m15", name:"Gulfsat 1",     region:"Middle East", orbit:"GEO" },
+  // SE Asia (20)
+  { id:"a01", name:"Measat 3",     region:"SE Asia",  orbit:"GEO" },
+  { id:"a02", name:"Measat 3A",    region:"SE Asia",  orbit:"GEO" },
+  { id:"a03", name:"Measat 3B",    region:"SE Asia",  orbit:"GEO" },
+  { id:"a04", name:"Thaicom 4",    region:"SE Asia",  orbit:"GEO" },
+  { id:"a05", name:"Thaicom 5",    region:"SE Asia",  orbit:"GEO" },
+  { id:"a06", name:"Thaicom 6",    region:"SE Asia",  orbit:"GEO" },
+  { id:"a07", name:"Thaicom 7",    region:"SE Asia",  orbit:"GEO" },
+  { id:"a08", name:"Thaicom 8",    region:"SE Asia",  orbit:"GEO" },
+  { id:"a09", name:"JCSat 3A",     region:"SE Asia",  orbit:"GEO" },
+  { id:"a10", name:"JCSat 16",     region:"SE Asia",  orbit:"GEO" },
+  { id:"a11", name:"JCSat 17",     region:"SE Asia",  orbit:"GEO" },
+  { id:"a12", name:"AsiaSat 3S",   region:"SE Asia",  orbit:"GEO" },
+  { id:"a13", name:"AsiaSat 5",    region:"SE Asia",  orbit:"GEO" },
+  { id:"a14", name:"AsiaSat 6",    region:"SE Asia",  orbit:"GEO" },
+  { id:"a15", name:"AsiaSat 7",    region:"SE Asia",  orbit:"GEO" },
+  { id:"a16", name:"AsiaSat 8",    region:"SE Asia",  orbit:"GEO" },
+  { id:"a17", name:"AsiaSat 9",    region:"SE Asia",  orbit:"GEO" },
+  { id:"a18", name:"VinaPhone 1",  region:"SE Asia",  orbit:"GEO" },
+  { id:"a19", name:"JCSat TN",     region:"SE Asia",  orbit:"GEO" },
+  { id:"a20", name:"PalaSat 1",    region:"SE Asia",  orbit:"LEO" },
+  // Russia (15)
+  { id:"r01", name:"Express AM5",   region:"Russia",   orbit:"GEO" },
+  { id:"r02", name:"Express AM6",   region:"Russia",   orbit:"GEO" },
+  { id:"r03", name:"Express AM7",   region:"Russia",   orbit:"GEO" },
+  { id:"r04", name:"Express AM8",   region:"Russia",   orbit:"GEO" },
+  { id:"r05", name:"Express AM9",   region:"Russia",   orbit:"GEO" },
+  { id:"r06", name:"Express AT1",   region:"Russia",   orbit:"GEO" },
+  { id:"r07", name:"Express AT2",   region:"Russia",   orbit:"GEO" },
+  { id:"r08", name:"Luch 5A",       region:"Russia",   orbit:"GEO" },
+  { id:"r09", name:"Luch 5V",       region:"Russia",   orbit:"GEO" },
+  { id:"r10", name:"Luch 5X",       region:"Russia",   orbit:"GEO" },
+  { id:"r11", name:"Gonets-M 1",    region:"Russia",   orbit:"LEO" },
+  { id:"r12", name:"Gonets-M 2",    region:"Russia",   orbit:"LEO" },
+  { id:"r13", name:"Amos 7",        region:"Russia",   orbit:"GEO" },
+  { id:"r14", name:"Amos 8",        region:"Russia",   orbit:"GEO" },
+  { id:"r15", name:"Ekspress AMU7", region:"Russia",   orbit:"GEO" },
+  // Americas (25)
+  { id:"w01", name:"Intelsat 17",   region:"Americas", orbit:"GEO" },
+  { id:"w02", name:"Intelsat 18",   region:"Americas", orbit:"GEO" },
+  { id:"w03", name:"Intelsat 19",   region:"Americas", orbit:"GEO" },
+  { id:"w04", name:"Intelsat 20",   region:"Americas", orbit:"GEO" },
+  { id:"w05", name:"Intelsat 21",   region:"Americas", orbit:"GEO" },
+  { id:"w06", name:"Intelsat 22",   region:"Americas", orbit:"GEO" },
+  { id:"w07", name:"Intelsat 26",   region:"Americas", orbit:"GEO" },
+  { id:"w08", name:"Intelsat 27",   region:"Americas", orbit:"GEO" },
+  { id:"w09", name:"AMC-1",         region:"Americas", orbit:"GEO" },
+  { id:"w10", name:"AMC-3",         region:"Americas", orbit:"GEO" },
+  { id:"w11", name:"AMC-11",        region:"Americas", orbit:"GEO" },
+  { id:"w12", name:"Galaxy 17",     region:"Americas", orbit:"GEO" },
+  { id:"w13", name:"Galaxy 18",     region:"Americas", orbit:"GEO" },
+  { id:"w14", name:"Galaxy 23",     region:"Americas", orbit:"GEO" },
+  { id:"w15", name:"DirecTV 4S",    region:"Americas", orbit:"GEO" },
+  { id:"w16", name:"DirecTV 6",     region:"Americas", orbit:"GEO" },
+  { id:"w17", name:"Viasat-1",      region:"Americas", orbit:"GEO" },
+  { id:"w18", name:"Viasat-2",      region:"Americas", orbit:"MEO" },
+  { id:"w19", name:"Anik F1R",      region:"Americas", orbit:"GEO" },
+  { id:"w20", name:"Anik F2",       region:"Americas", orbit:"GEO" },
+  { id:"w21", name:"Anik F3",       region:"Americas", orbit:"GEO" },
+  { id:"w22", name:"Telestar 18V",  region:"Americas", orbit:"GEO" },
+  { id:"w23", name:"SatMex 6",      region:"Americas", orbit:"GEO" },
+  { id:"w24", name:"SatMex 8",      region:"Americas", orbit:"GEO" },
+  { id:"w25", name:"SES Americas",  region:"Americas", orbit:"MEO" },
 ];
-type CmdEntry = { id:string; unit:string; text:string; priority:"Low"|"Medium"|"High"; time:string };
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// Deterministic assignment pool → A≈28, B≈24, F≈24, C/D≈20, E≈16, G≈8, H≈4, null≈6
+const _POOL: Array<UnitLabel | null> = [
+  "Unit A","Unit A","Unit A","Unit A","Unit A","Unit A","Unit A",
+  "Unit B","Unit B","Unit B","Unit B","Unit B","Unit B",
+  "Unit C","Unit C","Unit C","Unit C","Unit C",
+  "Unit D","Unit D","Unit D","Unit D","Unit D",
+  "Unit E","Unit E","Unit E","Unit E",
+  "Unit F","Unit F","Unit F","Unit F","Unit F","Unit F",
+  "Unit G","Unit G",
+  "Unit H",
+  null, null,
+];
+const INIT_ASSIGNMENTS: Record<string, UnitLabel | null> = Object.fromEntries(
+  SAT_CATALOG.map((s, i) => [s.id, _POOL[i % _POOL.length]])
+);
+const OPTIMAL_LOAD = Math.round(SAT_CATALOG.length / UNIT_LABELS.length); // 19
 
-function freqBadge(s: FStatus) {
-  const base = "inline-flex mono text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm border font-bold";
-  if (s === "Optimal")           return `${base} bg-emerald-500/10 border-emerald-500/30 text-emerald-500`;
-  if (s === "Suboptimal")        return `${base} bg-amber-400/10 border-amber-400/30 text-amber-400`;
-  return `${base} bg-destructive/10 border-destructive/30 text-destructive`;
+// ═══════════════════════════════════════════════════════════════════════════════
+// INTELLIGENCE MOCK DATA
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const CAPABILITY_DATA: Record<UnitLabel, {
+  score: number; serviceable: number; total: number; gaps: string[];
+}> = {
+  "Unit A": { score: 82, serviceable: 9,  total: 11, gaps: ["Backup LNA offline"]                               },
+  "Unit B": { score: 91, serviceable: 10, total: 11, gaps: []                                                   },
+  "Unit C": { score: 47, serviceable: 5,  total: 11, gaps: ["Primary antenna degraded", "Server fault"]         },
+  "Unit D": { score: 78, serviceable: 9,  total: 12, gaps: ["Demodulator fault"]                                },
+  "Unit E": { score: 94, serviceable: 11, total: 12, gaps: []                                                   },
+  "Unit F": { score: 86, serviceable: 10, total: 12, gaps: ["Secondary feed offline"]                           },
+  "Unit G": { score: 22, serviceable: 2,  total: 10, gaps: ["Antenna down", "LNA critical", "Server offline"]  },
+  "Unit H": { score: 65, serviceable: 7,  total: 11, gaps: ["Signal processor degraded"]                       },
+};
+
+type CoverageEntry = {
+  region: Region; intensity: number; units: UnitLabel[];
+  status: "high" | "adequate" | "thin" | "blind" | "overlap";
+};
+const COVERAGE_DATA: CoverageEntry[] = [
+  { region: "China",       intensity: 85, units: ["Unit A","Unit B","Unit D"],     status: "overlap"  },
+  { region: "India",       intensity: 70, units: ["Unit A","Unit C","Unit E"],     status: "adequate" },
+  { region: "Pakistan",    intensity: 55, units: ["Unit B","Unit F"],              status: "adequate" },
+  { region: "Europe",      intensity: 45, units: ["Unit C","Unit E"],              status: "thin"     },
+  { region: "Middle East", intensity: 62, units: ["Unit B","Unit D","Unit F"],     status: "adequate" },
+  { region: "SE Asia",     intensity: 38, units: ["Unit A"],                       status: "thin"     },
+  { region: "Russia",      intensity: 20, units: ["Unit D"],                       status: "thin"     },
+  { region: "Americas",    intensity: 0,  units: [],                               status: "blind"    },
+];
+
+const INT_OUTPUT: Record<UnitLabel, { total: number; productive: number; trend: MetricTrend }> = {
+  "Unit A": { total: 48, productive: 34, trend: "improving" },
+  "Unit B": { total: 22, productive: 12, trend: "degrading" },
+  "Unit C": { total: 35, productive: 28, trend: "stable"    },
+  "Unit D": { total: 31, productive: 18, trend: "stable"    },
+  "Unit E": { total: 29, productive: 25, trend: "improving" },
+  "Unit F": { total: 44, productive: 38, trend: "improving" },
+  "Unit G": { total: 0,  productive: 0,  trend: "degrading" },
+  "Unit H": { total: 15, productive: 9,  trend: "degrading" },
+};
+
+const SYSTEM_METRICS: Record<string, { value: number; trend: MetricTrend; label: string; sublabel: string }> = {
+  readiness:   { value: 72, trend: "stable",    label: "System Readiness",          sublabel: "from Capability + Serviceability" },
+  coverage:    { value: 56, trend: "degrading", label: "Coverage Effectiveness",    sublabel: "from Visibility + Priority"       },
+  output:      { value: 68, trend: "improving", label: "INT Output Efficiency",     sublabel: "from INT Repository"              },
+  utilization: { value: 62, trend: "stable",    label: "Resource Utilization",      sublabel: "from Engagement + Assignments"    },
+};
+
+const DECISION_INSIGHTS: Insight[] = [
+  {
+    id: "dc1", severity: "High", category: "Capability", trend: "degrading",
+    title: "Unit G critically below operational threshold",
+    detail: "3 major assets offline. Capability score 22% against 50% minimum. Assignment and scanning suspended until recovery.",
+    units: ["Unit G"],
+  },
+  {
+    id: "dc2", severity: "High", category: "Capability", trend: "degrading",
+    title: "Unit C capability deficit degrading coverage quality",
+    detail: "47% capability — primary antenna and server fault unresolved. India and Europe coverage contribution is at risk.",
+    units: ["Unit C"], regions: ["India", "Europe"],
+  },
+  {
+    id: "dc3", severity: "High", category: "Coverage", trend: "stable",
+    title: "Americas region has zero coverage — blind spot confirmed",
+    detail: "No unit is assigned to any of the 25 Americas-sector satellites. Entire sector is unmonitored.",
+    regions: ["Americas"],
+  },
+  {
+    id: "dc4", severity: "High", category: "Output", trend: "degrading",
+    title: "Unit G INT output fully offline",
+    detail: "Zero frequencies scanned this cycle. Equipment failure has cascaded into complete output loss.",
+    units: ["Unit G"],
+  },
+  {
+    id: "dc5", severity: "Medium", category: "Utilization", trend: "degrading",
+    title: "Unit A overloaded — 47% above optimal load",
+    detail: "28 satellites assigned against optimal 19. Scan quality and reporting cycle time are at risk. Recommend redistributing to Unit H.",
+    units: ["Unit A"],
+  },
+  {
+    id: "dc6", severity: "Medium", category: "Utilization", trend: "stable",
+    title: "Unit H critically underutilized — 4 of 19 slots occupied",
+    detail: "15 assignment capacity slots idle. Candidate for receiving satellites from overloaded units A, B, or F.",
+    units: ["Unit H"],
+  },
+  {
+    id: "dc7", severity: "Medium", category: "Coverage", trend: "degrading",
+    title: "SE Asia and Russia at single-unit dependency risk",
+    detail: "SE Asia at 38% intensity (1 unit), Russia at 20% (1 unit). Any disruption to Unit A or D eliminates coverage in those sectors.",
+    regions: ["SE Asia", "Russia"], units: ["Unit A", "Unit D"],
+  },
+  {
+    id: "dc8", severity: "Medium", category: "Output", trend: "degrading",
+    title: "Unit B INT productivity below threshold",
+    detail: "55% productivity rate against 70% target. Downward trend observed. 10 of 22 scanned frequencies returned no actionable data.",
+    units: ["Unit B"],
+  },
+  {
+    id: "dc9", severity: "Low", category: "Coverage", trend: "stable",
+    title: "China triple-unit overlap — assess deconfliction opportunity",
+    detail: "Units A, B, D all covering China. Controlled redundancy but represents rebalancing opportunity toward Americas and Russia.",
+    regions: ["China"], units: ["Unit A", "Unit B", "Unit D"],
+  },
+  {
+    id: "dc10", severity: "Low", category: "Output", trend: "improving",
+    title: "Units E and F above efficiency benchmark",
+    detail: "Unit E 86% productivity, Unit F 86%. Allocation pattern and scan methodology of these units should be reviewed as reference model.",
+    units: ["Unit E", "Unit F"],
+  },
+];
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// UNIT ACTIVITY SNAPSHOT — MOCK DATA
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// UNIT SCAN DATA — MULTI-SATELLITE PER UNIT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const UNIT_SCAN_DATA: Record<UnitLabel, UnitScanData> = {
+  "Unit A": {
+    activeSats: [
+      { satellite: "ChinaSat 6B",  band: "KU band",        pol: "KU-HH",  scanned: 48, analyzed: 44, productive: 34, nonProductive: 10 },
+      { satellite: "AsiaSat 7",    band: "C-band",          pol: "C-EDGE", scanned: 22, analyzed: 18, productive:  9, nonProductive:  9 },
+      { satellite: "Intelsat 17",  band: "KU band",         pol: "KU-VL",  scanned: 15, analyzed: 12, productive:  8, nonProductive:  4 },
+      { satellite: "SES-12",       band: "KU band",         pol: "KU-HL",  scanned: 30, analyzed: 27, productive: 18, nonProductive:  9 },
+      { satellite: "Apstar 6D",    band: "KU band",         pol: "KU-HV",  scanned: 10, analyzed:  8, productive:  5, nonProductive:  3 },
+      { satellite: "ChinaSat 9A",  band: "KU band",         pol: "KU-HH",  scanned: 25, analyzed: 22, productive: 15, nonProductive:  7 },
+    ],
+    history: [
+      { satellite: "ChinaSat 11",  time: "21:00", outcome: "productive"     },
+      { satellite: "ChinaSat 9",   time: "20:30", outcome: "productive"     },
+      { satellite: "Apstar 6C",    time: "20:00", outcome: "mixed"          },
+      { satellite: "SinoSat 1",    time: "19:30", outcome: "mixed"          },
+      { satellite: "Apstar 7",     time: "19:00", outcome: "productive"     },
+    ],
+  },
+  "Unit B": {
+    activeSats: [
+      { satellite: "AsiaSat 7",    band: "C-band",          pol: "C-EDGE", scanned: 22, analyzed: 18, productive:  9, nonProductive:  9 },
+      { satellite: "Measat 3a",    band: "KU band",         pol: "KU-HH",  scanned: 18, analyzed: 15, productive:  7, nonProductive:  8 },
+      { satellite: "NSS-12",       band: "C-band",          pol: "C-EDGE", scanned: 20, analyzed: 16, productive:  9, nonProductive:  7 },
+      { satellite: "AsiaSat 5",    band: "C-band",          pol: "CH-CV",  scanned: 12, analyzed: 10, productive:  5, nonProductive:  5 },
+    ],
+    history: [
+      { satellite: "ChinaSat 6C",  time: "21:15", outcome: "mixed"          },
+      { satellite: "Measat 3B",    time: "20:45", outcome: "mixed"          },
+      { satellite: "Intelsat 906", time: "20:15", outcome: "productive"     },
+      { satellite: "AsiaSat 5",    time: "19:45", outcome: "non-productive" },
+      { satellite: "SES-7",        time: "19:15", outcome: "mixed"          },
+    ],
+  },
+  "Unit C": {
+    activeSats: [
+      { satellite: "SES-12",       band: "KU band",         pol: "KU-VL",  scanned: 35, analyzed: 25, productive: 12, nonProductive: 13 },
+      { satellite: "SES-7",        band: "KU band",         pol: "KU-HL",  scanned: 28, analyzed: 20, productive: 10, nonProductive: 10 },
+      { satellite: "Asiastar 1",   band: "Extended C-band", pol: "CH-CV",  scanned: 18, analyzed: 12, productive:  6, nonProductive:  6 },
+      { satellite: "SES-8",        band: "KU band",         pol: "KU-HH",  scanned: 20, analyzed: 15, productive:  8, nonProductive:  7 },
+      { satellite: "SES-9",        band: "KU band",         pol: "KU-HV",  scanned: 15, analyzed: 10, productive:  4, nonProductive:  6 },
+    ],
+    history: [
+      { satellite: "SES-10",       time: "21:30", outcome: "mixed"          },
+      { satellite: "SES-11",       time: "21:00", outcome: "non-productive" },
+      { satellite: "Intelsat 20",  time: "20:30", outcome: "mixed"          },
+      { satellite: "SES-6",        time: "20:00", outcome: "mixed"          },
+      { satellite: "Horizons 3E",  time: "19:30", outcome: "productive"     },
+    ],
+  },
+  "Unit D": {
+    activeSats: [
+      { satellite: "Badr 7",       band: "KU band",         pol: "KU-HL",  scanned: 31, analyzed: 28, productive: 18, nonProductive: 10 },
+      { satellite: "Badr 4",       band: "KU band",         pol: "KU-HH",  scanned: 25, analyzed: 22, productive: 15, nonProductive:  7 },
+      { satellite: "Arabsat 6A",   band: "KU band",         pol: "KU-VL",  scanned: 20, analyzed: 18, productive: 12, nonProductive:  6 },
+      { satellite: "Arabsat 5C",   band: "C-band",          pol: "C-EDGE", scanned: 18, analyzed: 15, productive: 10, nonProductive:  5 },
+      { satellite: "Thuraya 3",    band: "KA band",         pol: "LH-CP",  scanned: 10, analyzed:  9, productive:  7, nonProductive:  2 },
+      { satellite: "Badr 5",       band: "KU band",         pol: "KU-HL",  scanned: 22, analyzed: 20, productive: 13, nonProductive:  7 },
+      { satellite: "Arabsat 2A",   band: "C-band",          pol: "RF-CP",  scanned: 14, analyzed: 12, productive:  8, nonProductive:  4 },
+    ],
+    history: [
+      { satellite: "Badr 6",       time: "20:50", outcome: "productive"     },
+      { satellite: "Arabsat 4A",   time: "20:20", outcome: "productive"     },
+      { satellite: "Badr 3",       time: "19:50", outcome: "mixed"          },
+      { satellite: "Arabsat 3A",   time: "19:20", outcome: "productive"     },
+      { satellite: "Thuraya 2",    time: "18:50", outcome: "mixed"          },
+    ],
+  },
+  "Unit E": {
+    activeSats: [
+      { satellite: "GSAT-17",      band: "Extended C-band", pol: "CH-CV",  scanned: 29, analyzed: 29, productive: 25, nonProductive:  4 },
+      { satellite: "GSAT-12",      band: "Extended C-band", pol: "CH-CV",  scanned: 25, analyzed: 24, productive: 20, nonProductive:  4 },
+      { satellite: "INSAT-4A",     band: "Extended C-band", pol: "CH-CV",  scanned: 22, analyzed: 20, productive: 17, nonProductive:  3 },
+      { satellite: "INSAT-4B",     band: "Extended C-band", pol: "CH-CV",  scanned: 18, analyzed: 17, productive: 14, nonProductive:  3 },
+      { satellite: "GSAT-30",      band: "KU band",         pol: "KU-HH",  scanned: 30, analyzed: 28, productive: 22, nonProductive:  6 },
+      { satellite: "GSAT-15",      band: "Extended C-band", pol: "CH-CV",  scanned: 20, analyzed: 19, productive: 16, nonProductive:  3 },
+      { satellite: "MEASAT 3B",    band: "C-band",          pol: "C-EDGE", scanned: 12, analyzed: 10, productive:  4, nonProductive:  6 },
+      { satellite: "NSS-12 (E)",   band: "C-band",          pol: "RF-CP",  scanned:  8, analyzed:  6, productive:  2, nonProductive:  4 },
+    ],
+    history: [
+      { satellite: "GSAT-10",      time: "21:40", outcome: "productive"     },
+      { satellite: "GSAT-11",      time: "21:10", outcome: "productive"     },
+      { satellite: "INSAT-3DR",    time: "20:40", outcome: "productive"     },
+      { satellite: "INSAT-3E",     time: "20:10", outcome: "mixed"          },
+      { satellite: "GSAT-8",       time: "19:40", outcome: "productive"     },
+    ],
+  },
+  "Unit F": {
+    activeSats: [
+      { satellite: "Eutelsat 8WB", band: "KU band",         pol: "KU-HV",  scanned: 44, analyzed: 41, productive: 38, nonProductive:  3 },
+      { satellite: "Eutelsat 9B",  band: "KU band",         pol: "KU-HH",  scanned: 40, analyzed: 38, productive: 35, nonProductive:  3 },
+      { satellite: "Hotbird 13G",  band: "KU band",         pol: "KU-VL",  scanned: 35, analyzed: 33, productive: 30, nonProductive:  3 },
+      { satellite: "Hotbird 13E",  band: "KU band",         pol: "KU-HL",  scanned: 38, analyzed: 36, productive: 33, nonProductive:  3 },
+      { satellite: "Eutelsat 7WA", band: "KU band",         pol: "KU-HV",  scanned: 42, analyzed: 40, productive: 36, nonProductive:  4 },
+    ],
+    history: [
+      { satellite: "Eutelsat 5WB", time: "21:25", outcome: "productive"     },
+      { satellite: "Hotbird 13C",  time: "20:55", outcome: "productive"     },
+      { satellite: "Astra 1N",     time: "20:25", outcome: "productive"     },
+      { satellite: "Astra 2E",     time: "19:55", outcome: "productive"     },
+      { satellite: "Intelsat 10-02", time: "19:25", outcome: "mixed"        },
+    ],
+  },
+  "Unit G": {
+    activeSats: [
+      { satellite: "Express AM5",  band: "C-band",          pol: "RF-CP",  scanned:  3, analyzed:  2, productive:  0, nonProductive:  2 },
+      { satellite: "Express AT1",  band: "C-band",          pol: "RF-CP",  scanned:  2, analyzed:  1, productive:  0, nonProductive:  1 },
+    ],
+    history: [
+      { satellite: "Express AM6",  time: "22:00", outcome: "non-productive" },
+      { satellite: "Luch 5V",      time: "21:30", outcome: "non-productive" },
+      { satellite: "Luch 5A",      time: "21:00", outcome: "non-productive" },
+      { satellite: "Raduga-1M",    time: "20:30", outcome: "non-productive" },
+      { satellite: "Express AM3",  time: "20:00", outcome: "non-productive" },
+    ],
+  },
+  "Unit H": {
+    activeSats: [
+      { satellite: "PakSat 1R",    band: "KA band",         pol: "LH-CP",  scanned: 15, analyzed: 10, productive:  5, nonProductive:  5 },
+      { satellite: "PakSat 38E",   band: "KA band",         pol: "LH-CP",  scanned: 12, analyzed:  9, productive:  4, nonProductive:  5 },
+      { satellite: "Nilesat 201",  band: "KU band",         pol: "KU-HH",  scanned: 18, analyzed: 14, productive:  7, nonProductive:  7 },
+      { satellite: "Yahsat 1A",    band: "KA band",         pol: "LH-CP",  scanned: 10, analyzed:  8, productive:  4, nonProductive:  4 },
+    ],
+    history: [
+      { satellite: "PakSat 38",    time: "21:45", outcome: "mixed"          },
+      { satellite: "Tupac Katari", time: "21:15", outcome: "mixed"          },
+      { satellite: "NIGCOMSAT 1R", time: "20:45", outcome: "productive"     },
+      { satellite: "Nilesat 101",  time: "20:15", outcome: "mixed"          },
+      { satellite: "Yahsat 1B",    time: "19:45", outcome: "mixed"          },
+    ],
+  },
+};
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// OPTIMIZATION ENGINE — DATA
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const OPT_FACTOR_DEFS: Array<{ key: FactorKey; label: string; weight: number; abbr: string }> = [
+  { key: "resource",       label: "Resource Utilization", weight: 0.20, abbr: "R" },
+  { key: "visibility",     label: "Visibility Match",     weight: 0.20, abbr: "V" },
+  { key: "priority",       label: "Priority Alignment",   weight: 0.15, abbr: "P" },
+  { key: "eirp",           label: "EIRP Effectiveness",   weight: 0.25, abbr: "E" },
+  { key: "serviceability", label: "Serviceability",       weight: 0.10, abbr: "S" },
+  { key: "engagement",     label: "Engagement Load",      weight: 0.10, abbr: "L" },
+];
+
+// Shorthand builder: (score, severity, ...issue strings) → FactorEntry
+const fac = (score: number, severity: FactorEntry["severity"], ...issues: string[]): FactorEntry =>
+  ({ score, severity, issues });
+
+const OPT_DATA: Record<UnitLabel, UnitOptData> = {
+  "Unit A": {
+    compositeScore: 86, status: "OPTIMIZED", satelliteLoad: 8, maxCapacity: 12,
+    resource:       fac(82, "ok",       "Satellite load 8/12 — optimal utilization"),
+    visibility:     fac(90, "ok",       "Primary footprint zone for all assigned satellites"),
+    priority:       fac(88, "ok",       "High-priority satellites matched to adequate capability"),
+    eirp:           fac(85, "ok",       "Average EIRP 85 dBW — strong signal across all assignments"),
+    serviceability: fac(95, "ok",       "All equipment operational"),
+    engagement:     fac(78, "ok",       "4 active scans — 22% headroom remaining"),
+  },
+  "Unit B": {
+    compositeScore: 62, status: "SUBOPTIMAL", satelliteLoad: 6, maxCapacity: 10,
+    resource:       fac(70, "ok",       "Capacity adequate — 6/10 utilized"),
+    visibility:     fac(42, "warn",     "AsiaSat 7 — edge position of beam footprint",
+                                        "Unit D has 31% stronger visibility for the same satellite"),
+    priority:       fac(65, "ok",       "1 medium-priority satellite slightly under-matched"),
+    eirp:           fac(55, "warn",     "AsiaSat 7 EIRP at unit: 55 dBW",
+                                        "Unit D would achieve 72 dBW for the same satellite"),
+    serviceability: fac(90, "ok",       "Equipment nominal"),
+    engagement:     fac(72, "ok",       "Moderate load — room for 2 additional scans"),
+  },
+  "Unit C": {
+    compositeScore: 64, status: "SUBOPTIMAL", satelliteLoad: 5, maxCapacity: 9,
+    resource:       fac(60, "ok",       "5/9 capacity utilized — moderate load"),
+    visibility:     fac(72, "ok",       "Acceptable footprint coverage"),
+    priority:       fac(35, "critical", "3 HIGH-PRIORITY satellites on below-threshold capability unit",
+                                        "SES-12 (P1), SES-7 (P1), Asiastar 1 (P2) — all exceed unit capability profile"),
+    eirp:           fac(68, "ok",       "EIRP within acceptable range"),
+    serviceability: fac(88, "ok",       "Minor calibration drift — non-critical"),
+    engagement:     fac(65, "ok",       "3 active scans — capacity underused"),
+  },
+  "Unit D": {
+    compositeScore: 78, status: "OPTIMIZED", satelliteLoad: 7, maxCapacity: 11,
+    resource:       fac(75, "ok",       "7/11 capacity — 2 slots available for reallocation"),
+    visibility:     fac(80, "ok",       "Good footprint coverage — primary zone confirmed"),
+    priority:       fac(78, "ok",       "Priority alignment balanced across all assignments"),
+    eirp:           fac(72, "ok",       "Consistent EIRP across all assigned satellites"),
+    serviceability: fac(92, "ok",       "All systems operational"),
+    engagement:     fac(80, "ok",       "4 active scans — 20% headroom"),
+  },
+  "Unit E": {
+    compositeScore: 44, status: "MISALLOCATED", satelliteLoad: 18, maxCapacity: 12,
+    resource:       fac(22, "critical", "18 satellites vs 12 optimal capacity — 50% OVERLOADED",
+                                        "Resource saturation: antenna sharing active on 6 satellites"),
+    visibility:     fac(68, "ok",       "Footprint acceptable for current assignments"),
+    priority:       fac(55, "warn",     "4 LOW-priority satellites blocking HIGH-priority queue capacity"),
+    eirp:           fac(28, "critical", "3 satellites receiving <28 dBW — insufficient for reliable intercept",
+                                        "Unit F achieves 88 dBW for the same footprint region"),
+    serviceability: fac(85, "ok",       "Equipment operational but stressed under load"),
+    engagement:     fac(18, "critical", "6 concurrent scans — exceeds recommended max of 4",
+                                        "Queue depth: 12 pending analyses"),
+  },
+  "Unit F": {
+    compositeScore: 89, status: "OPTIMIZED", satelliteLoad: 8, maxCapacity: 12,
+    resource:       fac(88, "ok",       "8/12 capacity — optimal load balance"),
+    visibility:     fac(92, "ok",       "Best-in-class footprint coverage"),
+    priority:       fac(90, "ok",       "High-priority satellites correctly assigned"),
+    eirp:           fac(88, "ok",       "Consistently high EIRP across entire footprint"),
+    serviceability: fac(95, "ok",       "All equipment nominal — last maintenance 2 days ago"),
+    engagement:     fac(82, "ok",       "5 active scans — well-balanced load"),
+  },
+  "Unit G": {
+    compositeScore: 38, status: "MISALLOCATED", satelliteLoad: 3, maxCapacity: 8, faultDays: 23,
+    resource:       fac(30, "critical", "LNA primary chain fault — effective capacity reduced to 30%",
+                                        "3 satellites orphaned — no backup assignment active"),
+    visibility:     fac(55, "warn",     "Reduced antenna tracking accuracy due to equipment fault"),
+    priority:       fac(40, "warn",     "Fault state prevents reliable high-priority tasking"),
+    eirp:           fac(45, "warn",     "Signal quality degraded — fault impact on receive chain"),
+    serviceability: fac(12, "critical", "LNA FAULT — Day 23 → ESCALATION THRESHOLD BREACHED (>15 days)",
+                                        "No repair action logged in last 8 days",
+                                        "Fault pattern: artificially stagnant — no resolution progress",
+                                        "3 prior fault events this quarter"),
+    engagement:     fac(25, "critical", "Only 2/8 capacity operational",
+                                        "Unit effectively idle — 0% productivity confirmed"),
+  },
+  "Unit H": {
+    compositeScore: 65, status: "SUBOPTIMAL", satelliteLoad: 6, maxCapacity: 9,
+    resource:       fac(68, "ok",       "6/9 capacity — adequate"),
+    visibility:     fac(65, "ok",       "Acceptable footprint coverage"),
+    priority:       fac(70, "ok",       "Priority mix balanced"),
+    eirp:           fac(48, "warn",     "PakSat 1R EIRP at unit: 48 dBW",
+                                        "Unit D achieves 68 dBW for same satellite (42% gain possible)"),
+    serviceability: fac(88, "ok",       "Equipment nominal"),
+    engagement:     fac(72, "ok",       "Moderate load — 4 active scans"),
+  },
+};
+
+const REASSIGN_RECS: ReassignRec[] = [
+  {
+    id: "rr1",
+    recPriority: "URGENT",
+    fromUnit: "Unit G", toUnit: "Unit D",
+    satellite: "Express AM5 (HIGH Priority)",
+    reason: "Unit G LNA fault at Day 23 — escalation threshold breached. 3 satellites orphaned. Unit D has 2 open slots with optimal EIRP for same footprint.",
+    gain: "Restore HIGH-priority satellite coverage · Eliminate 3 orphaned satellites · Contain Unit G escalation",
+    steps: [
+      "Move Express AM5 from Unit G → Unit D (2 open slots confirmed)",
+      "Reassign Express AT1 → Unit F (1 open slot)",
+      "Flag Unit G for immediate maintenance priority review",
+      "Escalate Unit G fault to field team (Day 23 — past 15-day threshold)",
+    ],
+    confidence: "High",
+  },
+  {
+    id: "rr2",
+    recPriority: "EFFICIENCY",
+    fromUnit: "Unit E", toUnit: "Unit D",
+    satellite: "4× LOW-Priority satellites on Unit E",
+    reason: "Unit E at 150% load (18/12). 6 concurrent scans exceed max-4 threshold. 4 low-priority satellites are blocking the HIGH-priority queue.",
+    gain: "Reduce Unit E load to ~117% · Free 4 EIRP slots for HIGH-priority queue · Unit D absorbs 2 satellites at 78% score",
+    steps: [
+      "Swap MEASAT 3B (Low-P) and NSS-12 (Low-P) from Unit E → Unit D",
+      "Swap Intelsat 906 (Low-P) and AsiaSat 5 (Low-P) from Unit E → Unit H",
+      "Verify Unit E concurrent scan count drops to ≤4",
+      "Monitor Unit E engagement score for next session",
+    ],
+    confidence: "High",
+  },
+  {
+    id: "rr3",
+    recPriority: "EIRP",
+    fromUnit: "Unit B", toUnit: "Unit D",
+    satellite: "AsiaSat 7",
+    reason: "Unit B receives AsiaSat 7 at 55 dBW (edge-of-beam). Unit D would receive 72 dBW for the same satellite — a 31% EIRP gain.",
+    gain: "31% EIRP improvement for AsiaSat 7 · Unit B freed to absorb 1 Russia-region satellite within its optimal footprint",
+    steps: [
+      "Reassign AsiaSat 7 from Unit B → Unit D",
+      "Confirm Unit D current load (7/11) — absorption feasible",
+      "Assign 1 Russia-region satellite from queue → Unit B to optimize its footprint profile",
+    ],
+    confidence: "Medium",
+  },
+  {
+    id: "rr4",
+    recPriority: "PRIORITY",
+    fromUnit: "Unit C", toUnit: "Unit F",
+    satellite: "SES-12 (P1 — HIGH Priority)",
+    reason: "SES-12 is a P1 satellite currently on Unit C (priority alignment score: 35 — below threshold). Unit F scores 90 on priority alignment.",
+    gain: "P1 satellite elevated to high-capability unit · Unit C releases a critical tasking slot for better-matched medium-priority workload",
+    steps: [
+      "Reassign SES-12 (P1) from Unit C → Unit F",
+      "Assess SES-7 (P1) and Asiastar 1 (P2) — same misalignment pattern",
+      "Update Unit C assignment profile to medium-priority satellites only",
+    ],
+    confidence: "Medium",
+  },
+];
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function TrendChip({ trend }: { trend: MetricTrend }) {
+  if (trend === "improving") return (
+    <span className="inline-flex items-center gap-0.5 mono text-[8px] uppercase tracking-wider text-emerald-600 font-bold">
+      <TrendingUp className="h-2.5 w-2.5" /> Improving
+    </span>
+  );
+  if (trend === "degrading") return (
+    <span className="inline-flex items-center gap-0.5 mono text-[8px] uppercase tracking-wider text-destructive font-bold">
+      <TrendingDown className="h-2.5 w-2.5" /> Degrading
+    </span>
+  );
+  return (
+    <span className="inline-flex items-center gap-0.5 mono text-[8px] uppercase tracking-wider text-muted-foreground font-medium">
+      <Minus className="h-2.5 w-2.5" /> Stable
+    </span>
+  );
 }
-function priorityColor(p: "Low"|"Medium"|"High") {
-  if (p === "High")   return "text-destructive";
-  if (p === "Medium") return "text-amber-400";
-  return "text-emerald-500";
-}
-function priorityBadgeCls(p: "Low"|"Medium"|"High") {
-  if (p === "High")   return "bg-destructive/10  border-destructive/40  text-destructive";
-  if (p === "Medium") return "bg-amber-400/10   border-amber-400/40   text-amber-400";
-  return "bg-emerald-500/10 border-emerald-500/40 text-emerald-500";
+
+function catBadgeCls(cat: InsightCategory) {
+  if (cat === "Capability")  return "bg-primary/8 border-primary/25 text-primary";
+  if (cat === "Coverage")    return "bg-sky-500/10 border-sky-500/25 text-sky-600";
+  if (cat === "Output")      return "bg-amber-400/10 border-amber-400/25 text-amber-500";
+  return "bg-muted/80 border-border text-muted-foreground";
 }
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
+function sevCls(sev: Severity) {
+  if (sev === "High")   return { dot: "bg-destructive", border: "border-l-destructive/60", bg: "hover:bg-destructive/4" };
+  if (sev === "Medium") return { dot: "bg-amber-400",   border: "border-l-amber-400/60",   bg: "hover:bg-amber-400/4"   };
+  return { dot: "bg-muted-foreground/40", border: "border-l-border", bg: "hover:bg-secondary/30" };
+}
 
-function ControlCenterPage() {
-  // Panel A — Satellite Allocation
-  const [alloc, setAlloc]       = useState<Record<string,string[]>>(INIT_ALLOC);
-  const [allocOpen, setAllocOpen] = useState(false);
-  const [allocExpand, setAllocExpand] = useState(false);
-  const [aUnit, setAUnit]       = useState<string>(UNIT_LABELS[0]);
-  const [aSat,  setASat]        = useState<string>("");
+function scoreColor(n: number) {
+  if (n >= 80) return "text-emerald-600";
+  if (n >= 50) return "text-amber-500";
+  return "text-destructive";
+}
+function scorebar(n: number) {
+  if (n >= 80) return "bg-emerald-500";
+  if (n >= 50) return "bg-amber-400";
+  return "bg-destructive/80";
+}
+function formatBandPol(band: BandType, pol: PolType): string {
+  const b = band === "Extended C-band" ? "EXT-C" : band === "C-band" ? "C" : band === "KU band" ? "KU" : "KA";
+  let p = pol as string;
+  if (p.startsWith("KU-")) p = p.slice(3);
+  else if (p.startsWith("C-")) p = p.slice(2);
+  else if (p.startsWith("CH-")) p = p.slice(3);
+  return `${b} · ${p}`;
+}
+function riskLevel(data: UnitOptData): "Low" | "Medium" | "High" {
+  const hasCritical = OPT_FACTOR_DEFS.some(
+    f => (data as Record<FactorKey, FactorEntry>)[f.key].severity === "critical"
+  );
+  if (hasCritical || data.compositeScore < 45) return "High";
+  if (data.compositeScore < 70) return "Medium";
+  return "Low";
+}
 
-  // Panel B — Frequency Control
-  const [freq, setFreq]         = useState<Record<string,FreqRow[]>>(INIT_FREQ);
-  const [freqExpand, setFreqExpand] = useState(false);
-  const [ovOpen,  setOvOpen]    = useState(false);
-  const [ovTarget, setOvTarget] = useState<{unit:string; idx:number}|null>(null);
-  const [ovFreq,  setOvFreq]    = useState("");
+// ═══════════════════════════════════════════════════════════════════════════════
+// DOMAIN PANEL WRAPPER
+// ═══════════════════════════════════════════════════════════════════════════════
 
-  // Panel C — Unit Command
-  const [cUnit, setCUnit]       = useState<string>(UNIT_LABELS[0]);
-  const [cText, setCText]       = useState("");
-  const [cPri,  setCPri]        = useState<"Low"|"Medium"|"High">("Medium");
-  const [cmdLog, setCmdLog]     = useState<CmdEntry[]>([]);
+function DomainPanel({ id, label, icon: Icon, sources, summaryNode, children }: {
+  id: "A" | "B" | "C" | "D";
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  sources: string;
+  summaryNode?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="panel overflow-hidden flex flex-col">
+      <div className="flex items-start justify-between px-4 py-2.5 border-b border-border bg-secondary/20 shrink-0">
+        <div className="flex items-center gap-2">
+          <span className="mono text-[9px] font-bold text-primary bg-primary/10 border border-primary/20 px-1.5 py-0.5 rounded-sm leading-none">
+            {id}
+          </span>
+          <Icon className="h-3.5 w-3.5 text-primary" />
+          <span className="mono text-xs font-bold uppercase tracking-wide">{label}</span>
+        </div>
+        <div className="text-right">
+          {summaryNode}
+          <div className="mono text-[8px] text-muted-foreground/50 mt-0.5 leading-tight">{sources}</div>
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        {children}
+      </div>
+    </div>
+  );
+}
 
-  // Panel E derived metrics
-  const totalLinks  = useMemo(() => Object.values(alloc).reduce((n,s) => n + s.length, 0), [alloc]);
-  const activeUnits = useMemo(() => UNIT_LABELS.filter(u => (alloc[u]?.length ?? 0) > 0).length, [alloc]);
-  const freqAll   = useMemo(() => (Object.values(freq) as FreqRow[][]).flat(), [freq]);
-  const freqHealth  = useMemo(() => freqAll.length === 0 ? 100 : Math.round(freqAll.filter(f=>f.status==="Optimal").length / freqAll.length * 100), [freqAll]);
-  const interference = useMemo(() => freqAll.filter(f=>f.status==="Interference Risk").length, [freqAll]);
-  const highCmds    = cmdLog.filter(c=>c.priority==="High").length;
+// ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 1 — GLOBAL COMMAND SUMMARY BAR
+// ═══════════════════════════════════════════════════════════════════════════════
 
-  // ── Panel A handlers ────────────────────────────────────────────────────────
-  function doAssign() {
-    if (!aUnit || !aSat) return;
-    setAlloc(p => ({ ...p, [aUnit]: [...new Set([...(p[aUnit]??[]), aSat])] }));
-    toast.success(`${SAT_MAP[aSat]?.name} assigned to ${aUnit}`);
-    setAllocOpen(false); setASat("");
-  }
-  function doUnassign(unit:string, satId:string) {
-    setAlloc(p => ({ ...p, [unit]: (p[unit]??[]).filter(s=>s!==satId) }));
-    toast.success("Assignment removed");
-  }
+function SystemReadinessBar() {
+  const keys = ["readiness", "coverage", "output", "utilization"] as const;
+  return (
+    <div className="panel overflow-hidden">
+      <div className="px-4 py-2 border-b border-border bg-secondary/20">
+        <span className="label-eyebrow flex items-center gap-1.5">
+          <Zap className="h-3 w-3" /> Global Command Summary
+        </span>
+      </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 divide-x divide-border">
+        {keys.map((key, i) => {
+          const m = SYSTEM_METRICS[key];
+          const vColor = m.value >= 75 ? "text-emerald-600" : m.value >= 55 ? "text-amber-500" : "text-destructive";
+          const barColor = m.value >= 75 ? "bg-emerald-500" : m.value >= 55 ? "bg-amber-400" : "bg-destructive/80";
+          const isOdd = i % 2 !== 0;
+          return (
+            <div key={key} className={`px-5 py-3.5 flex flex-col gap-2 ${isOdd ? "lg:border-none" : ""}`}>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className={`mono text-2xl font-bold tabular-nums leading-none ${vColor}`}>
+                    {m.value}%
+                  </div>
+                  <div className="mono text-[10px] font-bold uppercase tracking-wider text-foreground/80 mt-1">
+                    {m.label}
+                  </div>
+                </div>
+                <TrendChip trend={m.trend} />
+              </div>
+              <div className="h-1 w-full rounded-full bg-border overflow-hidden">
+                <div className={`h-full rounded-full ${barColor}`} style={{ width: `${m.value}%` }} />
+              </div>
+              <div className="mono text-[8px] text-muted-foreground/50">{m.sublabel}</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
-  // ── Panel B handlers ────────────────────────────────────────────────────────
-  const FREQ_POOL = ["3.720 GHz","4.080 GHz","11.550 GHz","12.010 GHz","28.250 GHz"];
-  function doRecommend(unit:string, idx:number) {
-    const nf = FREQ_POOL[Math.floor(Math.random() * FREQ_POOL.length)];
-    setFreq(p => ({ ...p, [unit]: p[unit].map((f,i) => i===idx ? {...f, freq:nf, status:"Optimal"} : f) }));
-    toast.success(`Recommended ${nf} applied for ${unit}`);
-  }
-  function doMarkBad(unit:string, idx:number) {
-    setFreq(p => ({ ...p, [unit]: p[unit].map((f,i) => i===idx ? {...f, status:"Interference Risk"} : f) }));
-    toast.warning(`Frequency flagged as Interference Risk for ${unit}`);
-  }
-  function doOverride() {
-    if (!ovTarget || !ovFreq.trim()) return;
-    const {unit, idx} = ovTarget;
-    setFreq(p => ({ ...p, [unit]: p[unit].map((f,i) => i===idx ? {...f, freq:ovFreq.trim(), status:"Optimal"} : f) }));
-    toast.success(`Frequency overridden for ${unit}`);
-    setOvOpen(false); setOvFreq(""); setOvTarget(null);
-  }
+// ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 2A — CAPABILITY PANEL
+// ═══════════════════════════════════════════════════════════════════════════════
 
-  // ── Panel C handler ─────────────────────────────────────────────────────────
-  function doDispatch() {
-    if (!cText.trim()) return;
-    setCmdLog(p => [{
-      id:`cmd-${Date.now()}`, unit:cUnit, text:cText.trim(), priority:cPri,
-      time: new Date().toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit",second:"2-digit"}),
-    }, ...p]);
-    toast.success(`Command dispatched → ${cUnit} [${cPri} priority]`);
-    setCText("");
+function CapabilityPanel() {
+  const [expanded, setExpanded] = useState<UnitLabel | null>(null);
+  const avg = Math.round(
+    UNIT_LABELS.reduce((s, u) => s + CAPABILITY_DATA[u].score, 0) / UNIT_LABELS.length
+  );
+  const criticalCount = UNIT_LABELS.filter(u => CAPABILITY_DATA[u].score < 50).length;
+
+  return (
+    <DomainPanel id="A" label="Capability" icon={Shield}
+      sources="Resource Inventory · Serviceability State"
+      summaryNode={
+        <div className="flex items-center gap-2 justify-end">
+          <span className={`mono text-sm font-bold tabular-nums ${scoreColor(avg)}`}>{avg}% avg</span>
+          {criticalCount > 0 && (
+            <span className="px-1 py-0.5 mono text-[8px] font-bold bg-destructive/10 border border-destructive/30 text-destructive rounded-sm">
+              {criticalCount} critical
+            </span>
+          )}
+        </div>
+      }>
+      <div className="divide-y divide-border">
+        {UNIT_LABELS.map(u => {
+          const d = CAPABILITY_DATA[u];
+          const isExp = expanded === u;
+          const healthLabel = d.score >= 80 ? "OK" : d.score >= 50 ? "WARN" : "CRIT";
+          const healthCls = d.score >= 80
+            ? "text-emerald-600 border-emerald-500/30 bg-emerald-500/8"
+            : d.score >= 50 ? "text-amber-500 border-amber-400/30 bg-amber-400/8"
+            : "text-destructive border-destructive/30 bg-destructive/8";
+          return (
+            <div key={u}>
+              <button type="button" onClick={() => setExpanded(isExp ? null : u)}
+                className={`w-full px-3 py-2 flex items-center gap-2 text-left
+                             transition-colors hover:bg-secondary/20 ${isExp ? "bg-secondary/15" : ""}`}>
+                <span className="mono text-[10px] font-bold text-foreground w-10 shrink-0">{u.replace("Unit ","Unt\u00A0")}</span>
+                <div className="flex-1 h-1.5 rounded-full bg-border overflow-hidden">
+                  <div className={`h-full rounded-full ${scorebar(d.score)}`} style={{ width: `${d.score}%` }} />
+                </div>
+                <span className={`mono text-[10px] font-bold tabular-nums w-8 text-right ${scoreColor(d.score)}`}>{d.score}%</span>
+                <span className="mono text-[9px] text-muted-foreground tabular-nums w-8 text-right">{d.serviceable}/{d.total}</span>
+                <span className={`mono text-[8px] font-bold px-1 py-0.5 rounded-sm border w-10 text-center shrink-0 ${healthCls}`}>{healthLabel}</span>
+                {d.gaps.length > 0
+                  ? <ChevronDown className={`h-3 w-3 text-muted-foreground shrink-0 transition-transform ${isExp ? "rotate-180" : ""}`} />
+                  : <span className="w-3 shrink-0" />
+                }
+              </button>
+              {isExp && d.gaps.length > 0 && (
+                <div className="px-3 pb-2 pt-1 bg-destructive/3 border-t border-destructive/10">
+                  {d.gaps.map(g => (
+                    <div key={g} className="flex items-center gap-1.5 mono text-[9px] text-destructive py-0.5">
+                      <span className="h-1 w-1 rounded-full bg-destructive shrink-0" />
+                      {g}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </DomainPanel>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 2B — COVERAGE PANEL
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function CoveragePanel() {
+  const [expandedRegion, setExpandedRegion] = useState<Region | null>(null);
+  const blindCount = COVERAGE_DATA.filter(r => r.status === "blind").length;
+  const thinCount  = COVERAGE_DATA.filter(r => r.status === "thin").length;
+  const avgIntensity = Math.round(COVERAGE_DATA.reduce((s, r) => s + r.intensity, 0) / COVERAGE_DATA.length);
+
+  return (
+    <DomainPanel id="B" label="Coverage" icon={Globe}
+      sources="Satellite Visibility Matrix · Priority Allocation"
+      summaryNode={
+        <div className="flex items-center gap-1.5 justify-end flex-wrap">
+          {blindCount > 0 && (
+            <span className="px-1 py-0.5 mono text-[8px] font-bold bg-destructive/10 border border-destructive/30 text-destructive rounded-sm">
+              {blindCount} blind
+            </span>
+          )}
+          {thinCount > 0 && (
+            <span className="px-1 py-0.5 mono text-[8px] font-bold bg-amber-400/10 border border-amber-400/30 text-amber-500 rounded-sm">
+              {thinCount} thin
+            </span>
+          )}
+          <span className="mono text-sm font-bold tabular-nums text-muted-foreground">{avgIntensity}% avg</span>
+        </div>
+      }>
+      <div className="divide-y divide-border">
+        {COVERAGE_DATA.map(r => {
+          const isExp = expandedRegion === r.region;
+          const intBarCls =
+            r.status === "blind" ? "bg-destructive/60" :
+            r.status === "thin"  ? "bg-amber-400" :
+            r.status === "overlap" ? "bg-sky-500" : "bg-primary";
+          const statusBadge: Record<CoverageEntry["status"], string> = {
+            blind:    "text-destructive bg-destructive/8 border-destructive/25",
+            thin:     "text-amber-500 bg-amber-400/8 border-amber-400/25",
+            overlap:  "text-sky-600 bg-sky-500/8 border-sky-500/25",
+            adequate: "text-emerald-600 bg-emerald-500/8 border-emerald-500/25",
+            high:     "text-emerald-600 bg-emerald-500/8 border-emerald-500/25",
+          };
+          return (
+            <div key={r.region}>
+              <button type="button"
+                onClick={() => setExpandedRegion(isExp ? null : r.region)}
+                className={`w-full px-3 py-2 flex items-center gap-2 text-left transition-colors
+                             hover:bg-secondary/20 ${isExp ? "bg-secondary/15" : ""}`}>
+                <span className="mono text-[10px] text-muted-foreground w-20 shrink-0 truncate">{r.region}</span>
+                <div className="flex-1 h-1.5 rounded-full bg-border overflow-hidden">
+                  {r.intensity > 0 && <div className={`h-full rounded-full ${intBarCls}`} style={{ width: `${r.intensity}%` }} />}
+                </div>
+                <span className="mono text-[10px] font-bold tabular-nums w-7 text-right text-foreground/70">{r.intensity}%</span>
+                <span className={`mono text-[8px] font-bold px-1 py-0.5 rounded-sm border capitalize w-[52px] text-center shrink-0 ${statusBadge[r.status]}`}>
+                  {r.status}
+                </span>
+                {r.units.length > 0
+                  ? <ChevronDown className={`h-3 w-3 text-muted-foreground shrink-0 transition-transform ${isExp ? "rotate-180" : ""}`} />
+                  : <span className="w-3 shrink-0" />
+                }
+              </button>
+              {isExp && r.units.length > 0 && (
+                <div className="px-3 pb-2 pt-1 bg-secondary/10 border-t border-border">
+                  <div className="flex flex-wrap gap-1 mt-0.5">
+                    {r.units.map(u => (
+                      <span key={u} className="px-1.5 py-0.5 mono text-[8px] font-bold border border-primary/25 bg-primary/8 text-primary rounded-sm">
+                        {u}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </DomainPanel>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 2C — OUTPUT PANEL
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function OutputPanel() {
+  const totalScanned   = Object.values(INT_OUTPUT).reduce((s, d) => s + d.total, 0);
+  const totalProd      = Object.values(INT_OUTPUT).reduce((s, d) => s + d.productive, 0);
+  const sysOutputPct   = totalScanned === 0 ? 0 : Math.round(totalProd / totalScanned * 100);
+
+  return (
+    <DomainPanel id="C" label="Output" icon={Activity}
+      sources="INT Repository"
+      summaryNode={
+        <span className={`mono text-sm font-bold tabular-nums ${scoreColor(sysOutputPct)}`}>
+          {sysOutputPct}% system
+        </span>
+      }>
+      <table className="w-full mono text-[11px]">
+        <thead>
+          <tr className="border-b border-border bg-secondary/10">
+            <th className="px-3 py-1.5 text-left text-muted-foreground font-medium">Unit</th>
+            <th className="px-2 py-1.5 text-right text-muted-foreground font-medium">Scanned</th>
+            <th className="px-2 py-1.5 text-right text-muted-foreground font-medium">Prod.</th>
+            <th className="px-2 py-1.5 text-right text-muted-foreground font-medium">Rate</th>
+            <th className="px-3 py-1.5 text-left text-muted-foreground font-medium">Trend</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border">
+          {UNIT_LABELS.map(u => {
+            const d   = INT_OUTPUT[u];
+            const pct = d.total === 0 ? 0 : Math.round(d.productive / d.total * 100);
+            return (
+              <tr key={u} className="hover:bg-secondary/15 transition-colors">
+                <td className="px-3 py-1.5 font-bold text-foreground">{u}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums text-foreground/80">
+                  {d.total === 0 ? <span className="text-muted-foreground/40">—</span> : d.total}
+                </td>
+                <td className="px-2 py-1.5 text-right tabular-nums text-emerald-600">
+                  {d.total === 0 ? <span className="text-muted-foreground/40">—</span> : d.productive}
+                </td>
+                <td className="px-2 py-1.5 text-right">
+                  {d.total > 0 ? (
+                    <span className={`font-bold tabular-nums ${scoreColor(pct)}`}>{pct}%</span>
+                  ) : <span className="text-muted-foreground/40">—</span>}
+                </td>
+                <td className="px-3 py-1.5">
+                  <TrendChip trend={d.trend} />
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </DomainPanel>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 2D — UTILIZATION PANEL
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function utilStatus(n: number): "overloaded" | "high" | "optimal" | "under" | "idle" {
+  if (n > 24)  return "overloaded";
+  if (n > 20)  return "high";
+  if (n >= 11) return "optimal";
+  if (n >= 5)  return "under";
+  return "idle";
+}
+const utilStatusStyle: Record<ReturnType<typeof utilStatus>, { cls: string; bar: string; label: string }> = {
+  overloaded: { cls: "text-amber-500 bg-amber-400/8 border-amber-400/25",    bar: "bg-amber-400",   label: "OVERLOAD" },
+  high:       { cls: "text-primary/80 bg-primary/8 border-primary/22",        bar: "bg-primary",     label: "HIGH"     },
+  optimal:    { cls: "text-emerald-600 bg-emerald-500/8 border-emerald-500/25",bar: "bg-emerald-500", label: "OPTIMAL"  },
+  under:      { cls: "text-muted-foreground bg-muted/50 border-border",        bar: "bg-muted-foreground/40", label: "UNDER"  },
+  idle:       { cls: "text-destructive/70 bg-destructive/5 border-destructive/20", bar: "bg-destructive/40", label: "IDLE" },
+};
+
+function UtilizationPanel({ unitLoads }: { unitLoads: Record<string, number> }) {
+  const overloaded = UNIT_LABELS.filter(u => utilStatus(unitLoads[u] ?? 0) === "overloaded").length;
+  const idle       = UNIT_LABELS.filter(u => utilStatus(unitLoads[u] ?? 0) === "idle").length;
+  const maxLoad    = Math.max(...UNIT_LABELS.map(u => unitLoads[u] ?? 0), OPTIMAL_LOAD);
+
+  return (
+    <DomainPanel id="D" label="Utilization" icon={BarChart3}
+      sources="Engagement Status · Assignment Patterns"
+      summaryNode={
+        <div className="flex items-center gap-1.5 justify-end">
+          {overloaded > 0 && (
+            <span className="px-1 py-0.5 mono text-[8px] font-bold bg-amber-400/10 border border-amber-400/30 text-amber-500 rounded-sm">
+              {overloaded} overloaded
+            </span>
+          )}
+          {idle > 0 && (
+            <span className="px-1 py-0.5 mono text-[8px] font-bold bg-destructive/8 border border-destructive/25 text-destructive/70 rounded-sm">
+              {idle} idle
+            </span>
+          )}
+        </div>
+      }>
+      <div className="divide-y divide-border">
+        {/* Optimal load reference line header */}
+        <div className="px-3 py-1.5 flex items-center gap-2 bg-secondary/10">
+          <span className="mono text-[8px] text-muted-foreground/60 flex-1">
+            Optimal load per unit: {OPTIMAL_LOAD} satellites — {SAT_CATALOG.length} total
+          </span>
+          <span className="mono text-[8px] text-muted-foreground/60">Assigned / Optimal / Max</span>
+        </div>
+        {UNIT_LABELS.map(u => {
+          const n    = unitLoads[u] ?? 0;
+          const st   = utilStatus(n);
+          const sty  = utilStatusStyle[st];
+          const barW = `${Math.min(100, (n / maxLoad) * 100)}%`;
+          const optW = `${Math.min(100, (OPTIMAL_LOAD / maxLoad) * 100)}%`;
+          return (
+            <div key={u} className="px-3 py-2 flex items-center gap-2">
+              <span className="mono text-[10px] font-bold text-foreground w-10 shrink-0">{u.replace("Unit ","Unt\u00A0")}</span>
+              <div className="flex-1 relative h-2 rounded-full bg-border overflow-hidden">
+                <div className={`h-full rounded-full ${sty.bar}`} style={{ width: barW }} />
+                {/* Optimal marker */}
+                <div className="absolute top-0 h-full w-px bg-foreground/20" style={{ left: optW }} />
+              </div>
+              <span className="mono text-[10px] tabular-nums font-bold text-foreground/80 w-5 text-right shrink-0">
+                {n}
+              </span>
+              <span className={`mono text-[8px] font-bold px-1 py-0.5 rounded-sm border w-[60px] text-center shrink-0 ${sty.cls}`}>
+                {sty.label}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </DomainPanel>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 3 — DECISION CORE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const INSIGHT_CATS = ["All", "Capability", "Coverage", "Output", "Utilization"] as const;
+type CatFilter = typeof INSIGHT_CATS[number];
+
+function InsightCard({ insight, isOpen, onToggle }: {
+  insight: Insight; isOpen: boolean; onToggle: () => void;
+}) {
+  const sev   = sevCls(insight.severity);
+  const SevIcon = insight.severity === "Low" ? Info : AlertTriangle;
+  const sevIconCls = insight.severity === "High"
+    ? "text-destructive" : insight.severity === "Medium"
+    ? "text-amber-500" : "text-muted-foreground/60";
+  return (
+    <div className={`border-l-2 ${sev.border} transition-colors`}>
+      <button type="button" onClick={onToggle}
+        className={`w-full flex items-start gap-2.5 px-3 py-2.5 text-left ${sev.bg} transition-colors`}>
+        <SevIcon className={`h-3.5 w-3.5 mt-0.5 shrink-0 ${sevIconCls}`} />
+        <div className="flex-1 min-w-0 space-y-1">
+          <div className="mono text-[10px] font-bold text-foreground leading-snug">{insight.title}</div>
+          <div className="flex flex-wrap items-center gap-1">
+            <span className={`px-1 py-0.5 rounded-sm border mono text-[8px] font-bold ${catBadgeCls(insight.category)}`}>
+              {insight.category}
+            </span>
+            <TrendChip trend={insight.trend} />
+          </div>
+        </div>
+        <ChevronDown className={`h-3 w-3 text-muted-foreground shrink-0 mt-0.5 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+      </button>
+      {isOpen && (
+        <div className="px-4 pb-3 pt-1 bg-secondary/10 border-t border-border space-y-2">
+          <p className="mono text-[9px] text-muted-foreground leading-snug">{insight.detail}</p>
+          <div className="flex flex-wrap gap-1">
+            {insight.units?.map(u => (
+              <span key={u} className="px-1.5 py-0.5 mono text-[8px] border border-primary/25 bg-primary/8 text-primary rounded-sm font-bold">
+                {u}
+              </span>
+            ))}
+            {insight.regions?.map(r => (
+              <span key={r} className="px-1.5 py-0.5 mono text-[8px] border border-sky-500/25 bg-sky-500/8 text-sky-600 rounded-sm font-bold">
+                {r}
+              </span>
+            ))}
+          </div>
+          <div className="mono text-[8px] text-muted-foreground/40 italic">
+            Future: drill-down correlation engine →
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DecisionCore({ insights }: { insights: Insight[] }) {
+  const [catFilter, setCatFilter] = useState<CatFilter>("All");
+  const [openIds,   setOpenIds]   = useState<Set<string>>(new Set(["dc1"]));
+
+  const filtered = catFilter === "All" ? insights : insights.filter(i => i.category === catFilter);
+  const highCount = filtered.filter(i => i.severity === "High").length;
+  const medCount  = filtered.filter(i => i.severity === "Medium").length;
+
+  function toggleInsight(id: string) {
+    setOpenIds(p => {
+      const next = new Set(p);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
   }
 
   return (
-    <AppShell
-      title="Control Center"
-      subtitle="Command. Control. Optimize."
-      headerIcon={<LayoutDashboard className="h-4 w-4" />}
-    >
-      <div className="space-y-4">
-
-        {/* ─────────────────────────────────────────────────────────────────── */}
-        {/* Panel E — Operational Status Overview                               */}
-        {/* ─────────────────────────────────────────────────────────────────── */}
-        <section>
-          <div className="label-eyebrow flex items-center gap-1.5 mb-2">
-            <Signal className="h-3 w-3" /> Operational Status
+    <div className="panel overflow-hidden flex flex-col">
+      {/* Header */}
+      <div className="px-4 py-2.5 border-b border-border bg-secondary/20 shrink-0">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="mono text-[9px] font-bold text-destructive bg-destructive/10 border border-destructive/25 px-1.5 py-0.5 rounded-sm">DC</span>
+            <span className="mono text-xs font-bold uppercase tracking-wide">Decision Core</span>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-            {([
-              { label:"Active Units",        value:`${activeUnits}/8`, icon:Wifi,          ok: activeUnits >= 6 },
-              { label:"Satellite Links",     value:totalLinks,         icon:SatIcon,        ok: totalLinks > 5   },
-              { label:"Frequency Health",    value:`${freqHealth}%`,   icon:Radio,          ok: freqHealth >= 70 },
-              { label:"High-Priority Cmds",  value:highCmds,           icon:Activity,       ok: highCmds === 0   },
-              { label:"Interference Alerts", value:interference,       icon:AlertTriangle,  ok: interference === 0 },
-            ] as const).map(kpi => (
-              <div key={kpi.label} className="panel px-3 py-2.5 flex items-start gap-2.5">
-                <div className={`h-7 w-7 shrink-0 grid place-items-center rounded-sm border
-                                 ${kpi.ok ? "border-emerald-500/30 bg-emerald-500/10" : "border-destructive/30 bg-destructive/10"}`}>
-                  <kpi.icon className={`h-3.5 w-3.5 ${kpi.ok ? "text-emerald-500" : "text-destructive"}`} />
-                </div>
-                <div>
-                  <div className={`mono text-lg font-bold tabular-nums leading-none ${kpi.ok ? "text-emerald-500" : "text-destructive"}`}>
-                    {kpi.value}
-                  </div>
-                  <div className="mono text-[10px] text-muted-foreground mt-0.5 leading-tight">{kpi.label}</div>
+          <div className="flex items-center gap-1.5">
+            {highCount > 0 && (
+              <span className="px-1.5 py-0.5 mono text-[9px] font-bold bg-destructive/10 border border-destructive/30 text-destructive rounded-sm">
+                {highCount} high
+              </span>
+            )}
+            {medCount > 0 && (
+              <span className="px-1.5 py-0.5 mono text-[9px] font-bold bg-amber-400/10 border border-amber-400/30 text-amber-500 rounded-sm">
+                {medCount} med
+              </span>
+            )}
+          </div>
+        </div>
+        {/* Category filter chips */}
+        <div className="flex flex-wrap gap-1 mt-2">
+          {INSIGHT_CATS.map(cat => (
+            <button key={cat} type="button" onClick={() => setCatFilter(cat)}
+              className={`h-5 px-2 mono text-[8px] uppercase tracking-wider rounded-sm border transition-colors
+                           ${catFilter === cat
+                             ? cat === "All"
+                               ? "border-primary/40 bg-primary/10 text-primary font-bold"
+                               : catBadgeCls(cat as InsightCategory) + " font-bold"
+                             : "border-border text-muted-foreground hover:bg-secondary"}`}>
+              {cat}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Insight list — sorted High → Medium → Low */}
+      <div className="flex-1 overflow-y-auto divide-y divide-border">
+        {(["High", "Medium", "Low"] as Severity[]).flatMap(sev =>
+          filtered
+            .filter(i => i.severity === sev)
+            .map(insight => (
+              <InsightCard
+                key={insight.id}
+                insight={insight}
+                isOpen={openIds.has(insight.id)}
+                onToggle={() => toggleInsight(insight.id)}
+              />
+            ))
+        )}
+        {filtered.length === 0 && (
+          <div className="px-4 py-8 text-center mono text-[11px] text-muted-foreground">
+            No insights in this category.
+          </div>
+        )}
+      </div>
+
+      {/* Footer — future extensions placeholder */}
+      <div className="px-4 py-2 border-t border-border bg-secondary/10 shrink-0">
+        <div className="flex items-center gap-2 text-muted-foreground/40 mono text-[8px] uppercase tracking-wider">
+          <Plus className="h-2.5 w-2.5" />
+          <span>Future: Frequency correlation engine · Allocation optimizer · Drill-down</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PAGE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// UNIT ACTIVITY SNAPSHOT — TABLE COMPONENTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function outcomeColor(o: SatHistory["outcome"]) {
+  return o === "productive" ? "bg-emerald-500" : o === "mixed" ? "bg-amber-400" : "bg-destructive/70";
+}
+function outcomeLabel(o: SatHistory["outcome"]) {
+  return o === "productive" ? "text-emerald-600" : o === "mixed" ? "text-amber-500" : "text-destructive/80";
+}
+
+
+function UnitRow({ unit, data, idx }: { unit: UnitLabel; data: UnitScanData; idx: number }) {
+  const [selSat,      setSelSat     ] = useState(0);
+  const [activeDrop,  setActiveDrop ] = useState(false);
+  const [historyDrop, setHistoryDrop] = useState(false);
+
+  const sat     = data.activeSats[selSat];
+  const pending = sat.scanned - sat.analyzed;
+  const pct     = sat.analyzed > 0 ? Math.round((sat.productive / sat.analyzed) * 100) : 0;
+  const bp      = formatBandPol(sat.band, sat.pol);
+
+  return (
+    <tr className="border-b border-border/50 hover:bg-secondary/20 transition-colors align-top group">
+
+      {/* # */}
+      <td className="px-3 py-2.5 mono text-[10px] text-muted-foreground/35 w-8">{idx}</td>
+
+      {/* Unit */}
+      <td className="px-3 py-2.5 w-24">
+        <span className="mono text-[11px] font-bold text-foreground whitespace-nowrap">{unit}</span>
+      </td>
+
+      {/* Active Satellites (dropdown) */}
+      <td className="px-3 py-2.5 w-52 align-top">
+        <button
+          onClick={() => { setActiveDrop(p => !p); setHistoryDrop(false); }}
+          className="flex items-center gap-1.5 w-full text-left group/btn"
+        >
+          <span className="mono text-[10px] font-semibold text-foreground truncate max-w-[130px] group-hover/btn:text-primary transition-colors">
+            {sat.satellite}
+          </span>
+          <span className="mono text-[8px] text-primary/70 bg-primary/8 border border-primary/15 px-1 py-0.5 rounded-sm leading-none shrink-0 font-bold">
+            {data.activeSats.length}
+          </span>
+          {activeDrop ? <ChevronUp className="h-3 w-3 shrink-0 text-muted-foreground/40" /> : <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground/40" />}
+        </button>
+
+        {activeDrop && (
+          <div className="mt-1.5 border-t border-border pt-1.5">
+            <div className="mono text-[7px] uppercase tracking-[0.18em] text-muted-foreground/50 mb-1.5 font-semibold">
+              Satellites Being Scanned: {data.activeSats.length}
+            </div>
+            {data.activeSats.map((s, i) => (
+              <button key={s.satellite}
+                onClick={() => { setSelSat(i); setActiveDrop(false); }}
+                className={`flex items-center gap-1.5 w-full text-left py-0.5 px-1 rounded-sm hover:bg-secondary/50 transition-colors ${i === selSat ? "bg-primary/6" : ""}`}>
+                <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${i === selSat ? "bg-primary" : "bg-muted-foreground/20"}`} />
+                <span className={`mono text-[9px] truncate ${i === selSat ? "text-primary font-semibold" : "text-foreground/75"}`}>
+                  {s.satellite}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </td>
+
+      {/* Frequencies Scanned */}
+      <td className="px-3 py-2.5 w-20">
+        <span className="mono text-[14px] font-bold text-foreground leading-none">{sat.scanned}</span>
+        <div className="mono text-[7px] uppercase tracking-wide text-muted-foreground/40 mt-0.5">Scanned</div>
+      </td>
+
+      {/* Analyzed */}
+      <td className="px-3 py-2.5 w-20">
+        <span className="mono text-[14px] font-bold text-foreground leading-none">{sat.analyzed}</span>
+        <div className="mono text-[7px] uppercase tracking-wide text-muted-foreground/40 mt-0.5">Analyzed</div>
+      </td>
+
+      {/* Pending */}
+      <td className="px-3 py-2.5 w-20">
+        <span className={`mono text-[14px] font-bold leading-none ${pending > 0 ? "text-amber-500" : "text-muted-foreground/25"}`}>{pending}</span>
+        <div className="mono text-[7px] uppercase tracking-wide text-muted-foreground/40 mt-0.5">Pending</div>
+      </td>
+
+      {/* Band · Pol + productivity */}
+      <td className="px-3 py-2.5 w-32">
+        <span className="mono text-[9px] font-semibold text-primary/90 bg-primary/5 border border-primary/15 px-1.5 py-0.5 rounded-sm leading-none whitespace-nowrap">
+          {bp}
+        </span>
+        <div className="mt-1.5 flex items-center gap-1.5">
+          <span className="mono text-[8px] font-bold text-emerald-600">P:{sat.productive}</span>
+          <span className="mono text-[8px] text-muted-foreground/45">N:{sat.nonProductive}</span>
+          <span className={`mono text-[8px] font-bold ${scoreColor(pct)}`}>{pct}%</span>
+        </div>
+        <div className="mt-1 w-full h-1 rounded-full bg-secondary overflow-hidden">
+          <div className={`h-full rounded-full ${scorebar(pct)}`} style={{ width: `${pct}%` }} />
+        </div>
+      </td>
+
+      {/* Scan History (dropdown) */}
+      <td className="px-3 py-2.5 w-44 align-top">
+        <button
+          onClick={() => { setHistoryDrop(p => !p); setActiveDrop(false); }}
+          className="flex items-center gap-1.5 w-full text-left group/hist"
+        >
+          <span className="mono text-[9px] text-foreground/65 truncate max-w-[120px] group-hover/hist:text-primary transition-colors">
+            {data.history[0]?.satellite ?? "—"}
+          </span>
+          {historyDrop ? <ChevronUp className="h-3 w-3 shrink-0 text-muted-foreground/40" /> : <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground/40" />}
+        </button>
+
+        {historyDrop && (
+          <div className="mt-1.5 border-t border-border pt-1.5">
+            <div className="mono text-[7px] uppercase tracking-[0.18em] text-muted-foreground/50 mb-1.5 font-semibold">
+              Previously Scanned
+            </div>
+            {data.history.map((h, i) => (
+              <div key={i} className="flex items-center justify-between py-0.5 gap-1.5">
+                <span className="mono text-[8px] text-foreground/70 truncate flex-1">{h.satellite}</span>
+                <div className="flex items-center gap-1 shrink-0">
+                  <span className="mono text-[7px] text-muted-foreground/40">{h.time}</span>
+                  <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${outcomeColor(h.outcome)}`} />
                 </div>
               </div>
             ))}
           </div>
-        </section>
+        )}
+      </td>
+    </tr>
+  );
+}
 
-        {/* ─────────────────────────────────────────────────────────────────── */}
-        {/* Row 2 — Panel A + Panel B                                           */}
-        {/* ─────────────────────────────────────────────────────────────────── */}
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+function UnitActivitySnapshot() {
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? UNIT_LABELS : UNIT_LABELS.slice(0, 4);
 
-          {/* Panel A — Satellite Allocation ─────────────────────────────── */}
-          <div className="panel overflow-hidden flex flex-col">
-            <div className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-secondary/20 shrink-0">
-              <div className="flex items-center gap-2">
-                <SatIcon className="h-3.5 w-3.5 text-primary" />
-                <span className="mono text-xs font-bold uppercase tracking-wide">Satellite Allocation</span>
-              </div>
-              <div className="flex gap-1.5">
-                <Button size="sm" onClick={() => setAllocOpen(true)}
-                  className="h-7 px-2 mono text-[10px] uppercase tracking-wider">
-                  <Plus className="h-3 w-3 mr-1" /> Assign
-                </Button>
-                <button type="button" onClick={() => setAllocExpand(true)} title="Expand"
-                  className="h-7 w-7 grid place-items-center rounded-sm border border-border hover:bg-secondary text-muted-foreground transition-colors">
-                  <Maximize2 className="h-3 w-3" />
-                </button>
-              </div>
-            </div>
-            <table className="w-full text-[11px] mono">
-              <thead>
-                <tr className="border-b border-border bg-secondary/30">
-                  <th className="px-3 py-1.5 text-left text-muted-foreground font-medium w-16">Unit</th>
-                  <th className="px-3 py-1.5 text-left text-muted-foreground font-medium">Assigned Satellites</th>
-                  <th className="px-3 py-1.5 text-right text-muted-foreground font-medium w-12">#</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {UNIT_LABELS.map(u => (
-                  <tr key={u} className="hover:bg-secondary/20 transition-colors">
-                    <td className="px-3 py-1.5 font-bold text-foreground">{u}</td>
-                    <td className="px-3 py-1.5">
-                      {(alloc[u]?.length ?? 0) === 0 ? (
-                        <span className="text-muted-foreground italic text-[10px]">Unassigned</span>
-                      ) : (
-                        <div className="flex flex-wrap gap-1">
-                          {(alloc[u] ?? []).map(sid => (
-                            <span key={sid} className="inline-flex items-center gap-0.5 px-1.5 py-0.5
-                                                        bg-secondary border border-border rounded-sm text-[10px]">
-                              {SAT_MAP[sid]?.name}
-                              <button type="button" onClick={() => doUnassign(u, sid)}
-                                className="ml-0.5 hover:text-destructive transition-colors">
-                                <X className="h-2.5 w-2.5" />
-                              </button>
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-3 py-1.5 text-right">
-                      <span className={`font-bold tabular-nums ${(alloc[u]?.length ?? 0) > 0 ? "text-primary" : "text-muted-foreground"}`}>
-                        {alloc[u]?.length ?? 0}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+  return (
+    <div className="panel overflow-hidden">
 
-          {/* Panel B — Frequency Control ────────────────────────────────── */}
-          <div className="panel overflow-hidden flex flex-col">
-            <div className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-secondary/20 shrink-0">
-              <div className="flex items-center gap-2">
-                <Radio className="h-3.5 w-3.5 text-primary" />
-                <span className="mono text-xs font-bold uppercase tracking-wide">Frequency Control</span>
-              </div>
-              <button type="button" onClick={() => setFreqExpand(true)} title="Expand"
-                className="h-7 w-7 grid place-items-center rounded-sm border border-border hover:bg-secondary text-muted-foreground transition-colors">
-                <Maximize2 className="h-3 w-3" />
-              </button>
-            </div>
-            <div className="overflow-y-auto">
-              <table className="w-full text-[11px] mono">
-                <thead>
-                  <tr className="border-b border-border bg-secondary/30">
-                    <th className="px-3 py-1.5 text-left text-muted-foreground font-medium">Unit</th>
-                    <th className="px-3 py-1.5 text-left text-muted-foreground font-medium">Band</th>
-                    <th className="px-3 py-1.5 text-left text-muted-foreground font-medium">Frequency</th>
-                    <th className="px-3 py-1.5 text-left text-muted-foreground font-medium">Status</th>
-                    <th className="px-3 py-1.5 text-right text-muted-foreground font-medium">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {UNIT_LABELS.flatMap(u =>
-                    (freq[u] ?? []).map((row, idx) => (
-                      <tr key={`${u}-${idx}`} className="hover:bg-secondary/20 transition-colors">
-                        <td className="px-3 py-1.5 font-bold text-foreground">{idx === 0 ? u : ""}</td>
-                        <td className="px-3 py-1.5 text-muted-foreground">{row.band}</td>
-                        <td className="px-3 py-1.5 font-bold tabular-nums">{row.freq}</td>
-                        <td className="px-3 py-1.5"><span className={freqBadge(row.status)}>{row.status}</span></td>
-                        <td className="px-3 py-1.5">
-                          <div className="flex justify-end gap-1">
-                            <button type="button" onClick={() => doRecommend(u, idx)} title="Auto-recommend optimal frequency"
-                              className="h-5 px-1.5 rounded-sm border border-border hover:bg-secondary transition-colors text-[9px] mono uppercase text-muted-foreground hover:text-foreground">
-                              Rec
-                            </button>
-                            <button type="button" onClick={() => doMarkBad(u, idx)} title="Flag as interference risk"
-                              className="h-5 px-1.5 rounded-sm border border-destructive/40 hover:bg-destructive/10 transition-colors text-[9px] mono uppercase text-destructive/60 hover:text-destructive">
-                              Bad
-                            </button>
-                            <button type="button" onClick={() => { setOvTarget({unit:u, idx}); setOvOpen(true); }} title="Override manually"
-                              className="h-5 px-1.5 rounded-sm border border-primary/40 hover:bg-primary/10 transition-colors text-[9px] mono uppercase text-primary/60 hover:text-primary">
-                              Ovr
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
+      {/* Panel header */}
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-secondary/20">
+        <div className="flex items-center gap-2.5">
+          <Activity className="h-3.5 w-3.5 text-primary" />
+          <span className="mono text-[11px] font-bold uppercase tracking-wider text-foreground">
+            Unit Activity Snapshot
+          </span>
+          <span className="mono text-[8px] uppercase tracking-[0.18em] text-primary/70 bg-primary/8 border border-primary/20 px-1.5 py-0.5 rounded-sm leading-none">
+            Real-Time · Multi-Satellite
+          </span>
+        </div>
+        <span className="mono text-[8px] uppercase tracking-[0.15em] text-muted-foreground/40">
+          {UNIT_LABELS.length} Units
+        </span>
+      </div>
+
+      {/* Table */}
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-border bg-secondary/25">
+              <th className="px-3 py-2 text-left mono text-[8px] uppercase tracking-wider text-foreground w-8">#</th>
+              <th className="px-3 py-2 text-left mono text-[8px] uppercase tracking-wider text-foreground">Unit</th>
+              <th className="px-3 py-2 text-left mono text-[8px] uppercase tracking-wider text-foreground">
+                Active Satellites
+                <span className="ml-1.5 text-muted-foreground/45 normal-case tracking-normal font-normal">(click ▾)</span>
+              </th>
+              <th className="px-3 py-2 text-left mono text-[8px] uppercase tracking-wider text-foreground">Scanned</th>
+              <th className="px-3 py-2 text-left mono text-[8px] uppercase tracking-wider text-foreground">Analyzed</th>
+              <th className="px-3 py-2 text-left mono text-[8px] uppercase tracking-wider text-foreground">Pending</th>
+              <th className="px-3 py-2 text-left mono text-[8px] uppercase tracking-wider text-foreground">Band · Pol</th>
+              <th className="px-3 py-2 text-left mono text-[8px] uppercase tracking-wider text-foreground">
+                Scan History
+                <span className="ml-1.5 text-muted-foreground/45 normal-case tracking-normal font-normal">(click ▾)</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {visible.map((unit, idx) => (
+              <UnitRow key={unit} unit={unit} data={UNIT_SCAN_DATA[unit]} idx={idx + 1} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Expand / collapse toggle */}
+      <button
+        onClick={() => setExpanded(e => !e)}
+        className="w-full flex items-center justify-center gap-1.5 py-2 border-t border-border bg-secondary/10 hover:bg-secondary/25 transition-colors"
+      >
+        <span className="mono text-[8px] uppercase tracking-wider text-muted-foreground/50">
+          {expanded ? "Show less" : `Show all ${UNIT_LABELS.length} units`}
+        </span>
+        {expanded
+          ? <ChevronUp className="h-3 w-3 text-muted-foreground/40" />
+          : <ChevronDown className="h-3 w-3 text-muted-foreground/40" />}
+      </button>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// OPTIMIZATION ENGINE — COMPONENTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function UnitOptCard({
+  unit, data, expanded, onToggle,
+}: {
+  unit: UnitLabel;
+  data: UnitOptData;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const unitShort = unit.replace("Unit ", "");
+
+  const borderCls =
+    data.status === "OPTIMIZED"   ? "border-l-emerald-500/60" :
+    data.status === "SUBOPTIMAL"  ? "border-l-amber-400/60"   :
+                                    "border-l-destructive/60";
+  const statusBadgeCls =
+    data.status === "OPTIMIZED"   ? "text-emerald-600 bg-emerald-500/8 border-emerald-500/20" :
+    data.status === "SUBOPTIMAL"  ? "text-amber-500 bg-amber-400/8 border-amber-400/20"       :
+                                    "text-destructive bg-destructive/8 border-destructive/20";
+
+  const entries = OPT_FACTOR_DEFS.map(f => ({
+    ...f,
+    entry: (data as Record<FactorKey, FactorEntry>)[f.key],
+  }));
+
+  const hasCritical = entries.some(e => e.entry.severity === "critical");
+  const hasWarn     = entries.some(e => e.entry.severity === "warn");
+
+  return (
+    <div className={`panel overflow-hidden border-l-[3px] ${borderCls} flex flex-col`}>
+
+      {/* ── Clickable summary ────────────────────────────────────────────── */}
+      <button
+        onClick={onToggle}
+        className="w-full text-left px-3 pt-2.5 pb-2.5 hover:bg-secondary/25 transition-colors focus:outline-none"
+      >
+        {/* Row 1: Unit badge + alert dots + chevron */}
+        <div className="flex items-center justify-between mb-1.5">
+          <span className="mono text-[10px] font-bold text-primary bg-primary/10 border border-primary/20 px-1.5 py-0.5 rounded-sm leading-none">
+            UNIT {unitShort}
+          </span>
+          <div className="flex items-center gap-1.5">
+            {hasCritical && (
+              <span className="h-1.5 w-1.5 rounded-full bg-destructive animate-pulse" />
+            )}
+            {!hasCritical && hasWarn && (
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+            )}
+            {expanded
+              ? <ChevronUp className="h-3 w-3 text-muted-foreground/40" />
+              : <ChevronDown className="h-3 w-3 text-muted-foreground/40" />}
           </div>
         </div>
 
-        {/* ─────────────────────────────────────────────────────────────────── */}
-        {/* Row 3 — Panel C + Panel D                                           */}
-        {/* ─────────────────────────────────────────────────────────────────── */}
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        {/* Composite score */}
+        <div className="flex items-end gap-1 mb-1.5">
+          <span className={`mono text-[26px] font-bold leading-none ${scoreColor(data.compositeScore)}`}>
+            {data.compositeScore}
+          </span>
+          <span className="mono text-[9px] text-muted-foreground/35 mb-0.5 leading-none">/100</span>
+        </div>
 
-          {/* Panel C — Unit Command Dispatch ────────────────────────────── */}
-          <div className="panel overflow-hidden flex flex-col">
-            <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border bg-secondary/20 shrink-0">
-              <Send className="h-3.5 w-3.5 text-primary" />
-              <span className="mono text-xs font-bold uppercase tracking-wide">Unit Command Dispatch</span>
+        {/* Status badge */}
+        <span className={`inline-block mono text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-sm border leading-none mb-2 ${statusBadgeCls}`}>
+          {data.status}
+        </span>
+
+        {/* Score bar */}
+        <div className="w-full h-1 rounded-full bg-secondary overflow-hidden mb-2">
+          <div
+            className={`h-full rounded-full ${scorebar(data.compositeScore)}`}
+            style={{ width: `${data.compositeScore}%` }}
+          />
+        </div>
+
+        {/* Factor severity dots (R · V · P · E · S · L) */}
+        <div className="flex items-center gap-1">
+          {entries.map(({ key, abbr, entry }) => (
+            <div
+              key={key}
+              title={`${abbr}: ${entry.score}/100`}
+              className={`h-1.5 w-1.5 rounded-full ${
+                entry.severity === "ok"       ? "bg-emerald-500/60" :
+                entry.severity === "warn"     ? "bg-amber-400"      :
+                                                "bg-destructive animate-pulse"
+              }`}
+            />
+          ))}
+          <span className="mono text-[7px] text-muted-foreground/25 ml-1 tracking-wide">
+            {entries.map(e => e.abbr).join("·")}
+          </span>
+        </div>
+      </button>
+
+      {/* ── Expanded: factor breakdown ───────────────────────────────────── */}
+      {expanded && (
+        <div className="border-t border-border bg-secondary/20 px-3 py-2 space-y-2.5">
+
+          {/* Fault persistence alert */}
+          {data.faultDays !== undefined && data.faultDays >= 7 && (
+            <div className={`flex items-center gap-1.5 rounded-sm px-2 py-1.5 ${
+              data.faultDays >= 15
+                ? "bg-destructive/8 border border-destructive/20"
+                : "bg-amber-400/8 border border-amber-400/20"
+            }`}>
+              <AlertTriangle className={`h-3 w-3 shrink-0 ${data.faultDays >= 15 ? "text-destructive" : "text-amber-400"}`} />
+              <span className={`mono text-[8px] font-bold ${data.faultDays >= 15 ? "text-destructive" : "text-amber-500"}`}>
+                FAULT {data.faultDays >= 30 ? "ESCALATION" : data.faultDays >= 15 ? "CRITICAL" : "WARNING"} — Day {data.faultDays}
+              </span>
             </div>
+          )}
 
-            <div className="p-4 space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label className="label-eyebrow">Target Unit</Label>
-                  <Select value={cUnit} onValueChange={v => setCUnit(v)}>
-                    <SelectTrigger className="mt-1 h-8 mono text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {UNIT_LABELS.map(u => (
-                        <SelectItem key={u} value={u} className="mono text-xs">{u}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label className="label-eyebrow">Priority</Label>
-                  <div className="flex gap-1 mt-1">
-                    {(["Low","Medium","High"] as const).map(p => (
-                      <button key={p} type="button" onClick={() => setCPri(p)}
-                        className={`flex-1 h-8 mono text-[10px] uppercase tracking-wider rounded-sm border transition-colors
-                                    ${cPri === p ? priorityBadgeCls(p) : "border-border text-muted-foreground hover:bg-secondary"}`}>
-                        {p}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <div className="label-eyebrow mb-1.5">Quick Templates</div>
-                <div className="flex flex-wrap gap-1">
-                  {CMD_TEMPLATES.map(t => (
-                    <button key={t} type="button" onClick={() => setCText(t)}
-                      className="px-1.5 py-0.5 mono text-[10px] border border-border rounded-sm
-                                 hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground">
-                      {t}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <Label className="label-eyebrow">Command / Instruction</Label>
-                <Textarea
-                  className="mt-1 mono text-xs resize-none"
-                  rows={2}
-                  value={cText}
-                  onChange={e => setCText(e.target.value)}
-                  placeholder="Enter operational instruction…"
-                />
-              </div>
-
-              <Button type="button" onClick={doDispatch} disabled={!cText.trim()}
-                className="w-full h-8 mono text-[11px] uppercase tracking-wider">
-                <Send className="h-3.5 w-3.5 mr-1.5" /> Dispatch Command
-              </Button>
+          {/* Load bar */}
+          <div>
+            <div className="flex items-center justify-between mb-0.5">
+              <span className="mono text-[7px] uppercase tracking-wider text-muted-foreground/40">Satellite Load</span>
+              <span className={`mono text-[8px] font-bold ${data.satelliteLoad > data.maxCapacity ? "text-destructive" : "text-muted-foreground/70"}`}>
+                {data.satelliteLoad}/{data.maxCapacity}
+              </span>
             </div>
-
-            {cmdLog.length > 0 && (
-              <div className="border-t border-border flex-1">
-                <div className="px-4 py-1.5 bg-secondary/20 label-eyebrow flex items-center gap-1.5">
-                  <Activity className="h-2.5 w-2.5" /> Recent Dispatches
-                </div>
-                <ul className="divide-y divide-border max-h-44 overflow-y-auto">
-                  {cmdLog.slice(0, 8).map(c => (
-                    <li key={c.id} className="px-4 py-1.5 flex items-start gap-2 text-[10px] mono">
-                      <span className={`shrink-0 mt-0.5 font-bold uppercase ${priorityColor(c.priority)}`}>{c.priority[0]}</span>
-                      <span className="shrink-0 text-muted-foreground tabular-nums">{c.time}</span>
-                      <span className="shrink-0 font-bold text-foreground">{c.unit}</span>
-                      <span className="text-muted-foreground truncate">{c.text}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            <div className="w-full h-1 rounded-full bg-secondary overflow-hidden">
+              <div
+                className={`h-full rounded-full ${data.satelliteLoad > data.maxCapacity ? "bg-destructive/80" : scorebar(Math.round((data.satelliteLoad / data.maxCapacity) * 100))}`}
+                style={{ width: `${Math.min(100, Math.round((data.satelliteLoad / data.maxCapacity) * 100))}%` }}
+              />
+            </div>
           </div>
 
-          {/* Panel D — Resource Optimization ────────────────────────────── */}
-          <div className="panel overflow-hidden flex flex-col">
-            <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border bg-secondary/20 shrink-0">
-              <Link2 className="h-3.5 w-3.5 text-primary" />
-              <span className="mono text-xs font-bold uppercase tracking-wide">Resource Optimization</span>
-            </div>
-
-            {/* Per-unit utilization bars */}
-            <div className="divide-y divide-border">
-              {UNIT_LABELS.map(u => {
-                const sCount = alloc[u]?.length ?? 0;
-                const fRows  = freq[u] ?? [];
-                const hasRisk = fRows.some(f => f.status === "Interference Risk");
-                const hasSub  = fRows.some(f => f.status === "Suboptimal");
-                const util    = Math.min(100, sCount * 40 + fRows.length * 15);
-                const barCls  = util >= 70 ? "bg-emerald-500" : util >= 35 ? "bg-amber-400" : "bg-border";
-                const badge   = hasRisk ? "text-destructive" : hasSub ? "text-amber-400" : sCount === 0 ? "text-muted-foreground/50" : "text-emerald-500";
-                const label   = hasRisk ? "RISK" : hasSub ? "SUB" : sCount === 0 ? "IDLE" : "OK";
-                return (
-                  <div key={u} className="px-4 py-2 flex items-center gap-3">
-                    <div className="mono text-[11px] font-bold text-foreground w-12 shrink-0">{u}</div>
-                    <div className="flex-1">
-                      <div className="h-1.5 w-full rounded-full bg-border overflow-hidden">
-                        <div className={`h-full rounded-full transition-all duration-300 ${barCls}`}
-                          style={{ width:`${util}%` }} />
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2.5 shrink-0 text-[10px] mono">
-                      <span className="text-muted-foreground flex items-center gap-0.5">
-                        <SatIcon className="h-2.5 w-2.5" />{sCount}
-                      </span>
-                      <span className="text-muted-foreground flex items-center gap-0.5">
-                        <Radio className="h-2.5 w-2.5" />{fRows.length}
-                      </span>
-                      <span className={`font-bold w-8 text-right ${badge}`}>{label}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Satellite load distribution mini-chart */}
-            <div className="border-t border-border px-4 py-3 mt-auto">
-              <div className="label-eyebrow mb-2">Satellite Load Distribution</div>
-              <div className="flex items-end justify-between gap-1 h-14">
-                {SATELLITES.map(sat => {
-                  const load = Object.values(alloc).filter(arr => arr.includes(sat.id)).length;
-                  const maxLoad = 3;
-                  const heightPct = load === 0 ? 8 : Math.round((load / maxLoad) * 100);
-                  const barColor = load > 2 ? "bg-destructive" : load > 0 ? "bg-primary" : "bg-border";
-                  return (
-                    <div key={sat.id} className="flex flex-col items-center gap-0.5 flex-1" title={`${sat.name}: ${load} unit(s)`}>
-                      <span className="mono text-[9px] text-muted-foreground tabular-nums">{load}</span>
-                      <div className={`w-full rounded-t-sm ${barColor} transition-all`} style={{ height:`${heightPct}%` }} />
-                      <span className="mono text-[8px] text-muted-foreground truncate w-full text-center leading-tight">
-                        {sat.name.split(" ").at(-1)}
-                      </span>
-                    </div>
-                  );
-                })}
+          {/* Factor details */}
+          {entries.map(({ key, label, entry }) => (
+            <div key={key}>
+              <div className="flex items-center justify-between mb-0.5">
+                <span className={`mono text-[8px] font-semibold uppercase tracking-wide ${
+                  entry.severity === "ok" ? "text-muted-foreground/55" :
+                  entry.severity === "warn" ? "text-amber-500" : "text-destructive"
+                }`}>
+                  {label}
+                </span>
+                <span className={`mono text-[9px] font-bold ${scoreColor(entry.score)}`}>{entry.score}</span>
               </div>
+              <div className="w-full h-0.5 bg-secondary rounded-full mb-1 overflow-hidden">
+                <div className={`h-full ${scorebar(entry.score)}`} style={{ width: `${entry.score}%` }} />
+              </div>
+              {entry.issues.map((issue, i) => (
+                <div key={i} className="flex items-start gap-1 mt-0.5">
+                  <span className={`mt-[3px] h-1 w-1 rounded-full shrink-0 ${
+                    entry.severity === "ok" ? "bg-muted-foreground/25" :
+                    entry.severity === "warn" ? "bg-amber-400" : "bg-destructive"
+                  }`} />
+                  <span className="mono text-[7.5px] text-muted-foreground/55 leading-tight">{issue}</span>
+                </div>
+              ))}
             </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RecommendationCard({
+  rec, active, onToggle,
+}: {
+  rec: ReassignRec;
+  active: boolean;
+  onToggle: () => void;
+}) {
+  const p = rec.recPriority;
+  const borderCls =
+    p === "URGENT"     ? "border-l-destructive/60" :
+    p === "EFFICIENCY" ? "border-l-primary/60"     :
+    p === "EIRP"       ? "border-l-sky-500/60"     :
+                         "border-l-amber-400/60";
+  const badgeCls =
+    p === "URGENT"     ? "text-destructive bg-destructive/8 border-destructive/20" :
+    p === "EFFICIENCY" ? "text-primary bg-primary/8 border-primary/20"             :
+    p === "EIRP"       ? "text-sky-600 bg-sky-500/8 border-sky-500/20"             :
+                         "text-amber-500 bg-amber-400/8 border-amber-400/20";
+
+  return (
+    <div className={`panel overflow-hidden border-l-[3px] ${borderCls}`}>
+      <button
+        onClick={onToggle}
+        className="w-full text-left px-3 py-2 hover:bg-secondary/25 transition-colors focus:outline-none"
+      >
+        <div className="flex items-start justify-between gap-2 mb-1">
+          <span className={`mono text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-sm border leading-none shrink-0 ${badgeCls}`}>
+            {p}
+          </span>
+          <div className="flex items-center gap-1 shrink-0 text-muted-foreground/40">
+            <span className="mono text-[8px]">{rec.fromUnit} → {rec.toUnit}</span>
+            {active ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </div>
+        </div>
+        <div className="mono text-[9px] font-semibold text-foreground/90 leading-snug mb-0.5">
+          {rec.satellite}
+        </div>
+        <div className="mono text-[8px] text-muted-foreground/55 leading-snug">
+          {rec.reason}
+        </div>
+      </button>
+
+      {active && (
+        <div className="border-t border-border bg-secondary/20 px-3 py-2">
+          <div className="mono text-[7px] uppercase tracking-[0.2em] text-emerald-600 font-bold mb-0.5">Expected Gain</div>
+          <div className="mono text-[8px] text-emerald-600/80 leading-snug mb-2.5">{rec.gain}</div>
+
+          <div className="mono text-[7px] uppercase tracking-[0.2em] text-muted-foreground/45 font-semibold mb-1">Recommended Actions</div>
+          <div className="space-y-1">
+            {rec.steps.map((step, i) => (
+              <div key={i} className="flex items-start gap-1.5">
+                <span className="mono text-[8px] text-primary/50 font-bold shrink-0 mt-px">{i + 1}.</span>
+                <span className="mono text-[8px] text-foreground/65 leading-snug">{step}</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-2 pt-1.5 border-t border-border/40 mono text-[7px] uppercase tracking-widest text-muted-foreground/25 text-center">
+            Recommendation only — no auto-execution
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Table sort-header helper ─────────────────────────────────────────────────
+function SortThOpt({
+  col, sortKey, sortDir, onSort, children,
+}: {
+  col: string; sortKey: string; sortDir: "asc" | "desc";
+  onSort: (col: string) => void; children: React.ReactNode;
+}) {
+  const active = sortKey === col;
+  return (
+    <th className="px-3 py-2 text-left cursor-pointer select-none hover:bg-secondary/40 transition-colors" onClick={() => onSort(col)}>
+      <div className="flex items-center gap-1 mono text-[8px] uppercase tracking-wider text-foreground">
+        {children}
+        {active
+          ? (sortDir === "asc" ? <ChevronUp className="h-3 w-3 text-primary" /> : <ChevronDown className="h-3 w-3 text-primary" />)
+          : <span className="mono text-[8px] text-muted-foreground/25">↕</span>}
+      </div>
+    </th>
+  );
+}
+
+// ── Radial gauge (SVG-based circular progress) ───────────────────────────────
+function RadialGauge({ score, label, size = 88 }: { score: number; label: string; size?: number }) {
+  const sw = 9, r = (size - sw) / 2, c = 2 * Math.PI * r, cx = size / 2;
+  const stroke = score >= 70 ? "#10b981" : score >= 45 ? "#f59e0b" : "#ef4444";
+  return (
+    <div className="flex flex-col items-center gap-1.5">
+      <div className="relative" style={{ width: size, height: size }}>
+        <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
+          <circle cx={cx} cy={cx} r={r} fill="none" stroke="currentColor" strokeWidth={sw} className="text-secondary" />
+          <circle cx={cx} cy={cx} r={r} fill="none" stroke={stroke} strokeWidth={sw}
+            strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - score / 100)} />
+        </svg>
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className={`mono text-[15px] font-bold leading-none ${scoreColor(score)}`}>{score}</span>
+        </div>
+      </div>
+      <div className="text-center space-y-0.5">
+        <div className="mono text-[7.5px] uppercase tracking-wide text-muted-foreground/55 leading-tight">{label}</div>
+        <div className={`mono text-[8px] font-bold ${scoreColor(score)}`}>
+          {score >= 70 ? "Good" : score >= 45 ? "Average" : "Poor"}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Unit drill-down detail view ──────────────────────────────────────────────
+function UnitDetailView({ unit, onBack }: { unit: UnitLabel; onBack: () => void }) {
+  const data = OPT_DATA[unit];
+  const entries = OPT_FACTOR_DEFS.map(f => ({
+    ...f, entry: (data as Record<FactorKey, FactorEntry>)[f.key],
+  }));
+  const unitRecs = REASSIGN_RECS.filter(r => r.fromUnit === unit || r.toUnit === unit);
+  const [activeRec, setActiveRec] = useState<string | null>(null);
+  const risk = riskLevel(data);
+
+  const statusBadgeCls =
+    data.status === "OPTIMIZED"  ? "text-emerald-600 bg-emerald-500/8 border-emerald-500/20" :
+    data.status === "SUBOPTIMAL" ? "text-amber-500 bg-amber-400/8 border-amber-400/20"       :
+                                   "text-destructive bg-destructive/8 border-destructive/20";
+
+  return (
+    <div className="space-y-3">
+
+      {/* Header ─────────────────────────────────────────────────────────── */}
+      <div className="panel overflow-hidden">
+        <div className="px-4 py-2.5 border-b border-border bg-secondary/20 flex items-center gap-3">
+          <button onClick={onBack}
+            className="flex items-center gap-1.5 mono text-[9px] uppercase tracking-wide text-muted-foreground/60 hover:text-foreground transition-colors">
+            <ChevronLeft className="h-3.5 w-3.5" /> Optimization Table
+          </button>
+          <span className="text-muted-foreground/30">·</span>
+          <Zap className="h-3.5 w-3.5 text-primary" />
+          <span className="mono text-[11px] font-bold uppercase tracking-wider text-foreground">{unit} — Optimization Detail</span>
+        </div>
+
+        <div className="px-4 py-4 flex flex-col sm:flex-row items-start sm:items-center gap-5">
+          {/* Large composite score gauge */}
+          {(() => {
+            const sz = 120, sw = 12, r = (sz - sw) / 2, c = 2 * Math.PI * r, cx = sz / 2;
+            const stroke = data.compositeScore >= 70 ? "#10b981" : data.compositeScore >= 45 ? "#f59e0b" : "#ef4444";
+            return (
+              <div className="flex flex-col items-center shrink-0">
+                <div className="relative" style={{ width: sz, height: sz }}>
+                  <svg width={sz} height={sz} style={{ transform: "rotate(-90deg)" }}>
+                    <circle cx={cx} cy={cx} r={r} fill="none" stroke="currentColor" strokeWidth={sw} className="text-secondary" />
+                    <circle cx={cx} cy={cx} r={r} fill="none" stroke={stroke} strokeWidth={sw}
+                      strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - data.compositeScore / 100)} />
+                  </svg>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center">
+                    <span className={`mono text-[28px] font-bold leading-none ${scoreColor(data.compositeScore)}`}>{data.compositeScore}</span>
+                    <span className="mono text-[9px] text-muted-foreground/40">/100</span>
+                  </div>
+                </div>
+                <span className={`inline-block mt-2 mono text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-sm border ${statusBadgeCls}`}>
+                  {data.status}
+                </span>
+              </div>
+            );
+          })()}
+
+          {/* Meta cards + fault alert */}
+          <div className="flex-1 space-y-2.5 w-full">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {([
+                { label: "Satellite Load",   value: `${data.satelliteLoad}/${data.maxCapacity}`, warn: data.satelliteLoad > data.maxCapacity },
+                { label: "Risk Level",        value: risk,                                        warn: risk === "High" },
+                { label: "Recommendations",   value: `${unitRecs.length} active`,                 warn: unitRecs.length > 0 },
+                { label: "Fault Persistence", value: data.faultDays ? `Day ${data.faultDays}` : "None", warn: (data.faultDays ?? 0) >= 7 },
+              ] as const).map(m => (
+                <div key={m.label} className="bg-secondary/30 rounded-sm border border-border px-3 py-2">
+                  <div className={`mono text-[13px] font-bold leading-none ${m.warn ? "text-destructive" : "text-foreground"}`}>{m.value}</div>
+                  <div className="mono text-[7px] uppercase tracking-wider text-muted-foreground/50 mt-0.5">{m.label}</div>
+                </div>
+              ))}
+            </div>
+            {data.faultDays !== undefined && data.faultDays >= 7 && (
+              <div className={`flex items-center gap-2 rounded-sm px-3 py-2 ${
+                data.faultDays >= 15 ? "bg-destructive/8 border border-destructive/20" : "bg-amber-400/8 border border-amber-400/20"
+              }`}>
+                <AlertTriangle className={`h-3.5 w-3.5 shrink-0 ${data.faultDays >= 15 ? "text-destructive" : "text-amber-400"}`} />
+                <span className={`mono text-[9px] font-bold ${data.faultDays >= 15 ? "text-destructive" : "text-amber-500"}`}>
+                  FAULT {data.faultDays >= 30 ? "ESCALATION" : data.faultDays >= 15 ? "CRITICAL" : "WARNING"} — Day {data.faultDays}
+                  {data.faultDays >= 15 ? " · Escalation threshold breached" : " · Approaching critical threshold"}
+                </span>
+              </div>
+            )}
           </div>
         </div>
       </div>
 
-      {/* ── Assign Satellite Dialog ─────────────────────────────────────────── */}
-      <Dialog open={allocOpen} onOpenChange={o => { setAllocOpen(o); if (!o) setASat(""); }}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="mono uppercase tracking-wider text-sm flex items-center gap-2">
-              <SatIcon className="h-4 w-4 text-primary" /> Assign Satellite → Unit
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <Label className="label-eyebrow">Target Unit</Label>
-              <Select value={aUnit} onValueChange={v => setAUnit(v)}>
-                <SelectTrigger className="mt-1 mono text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {UNIT_LABELS.map(u => <SelectItem key={u} value={u} className="mono text-xs">{u}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label className="label-eyebrow">Satellite</Label>
-              <Select value={aSat} onValueChange={v => setASat(v)}>
-                <SelectTrigger className="mt-1 mono text-xs">
-                  <SelectValue placeholder="Select satellite…" />
-                </SelectTrigger>
-                <SelectContent>
-                  {SATELLITES.map(s => (
-                    <SelectItem key={s.id} value={s.id} className="mono text-xs">
-                      {s.name} ({s.pos}) — {s.bands}
-                      {s.status === "standby" && " · STANDBY"}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex gap-2 pt-1">
-              <Button variant="outline" size="sm" className="flex-1 mono uppercase tracking-wider" onClick={() => setAllocOpen(false)}>Cancel</Button>
-              <Button size="sm" className="flex-1 mono uppercase tracking-wider" disabled={!aSat} onClick={doAssign}>Assign</Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {/* Score Breakdown ─────────────────────────────────────────────────── */}
+      <div className="panel overflow-hidden">
+        <div className="px-4 py-2.5 border-b border-border bg-secondary/20 flex items-center gap-3">
+          <span className="mono text-[10px] font-bold uppercase tracking-wider text-foreground">Score Breakdown</span>
+          <span className="mono text-[8px] text-muted-foreground/45">Weighted contribution to composite score</span>
+        </div>
 
-      {/* ── Frequency Override Dialog ────────────────────────────────────────── */}
-      <Dialog open={ovOpen} onOpenChange={o => { setOvOpen(o); if (!o) { setOvFreq(""); setOvTarget(null); } }}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="mono uppercase tracking-wider text-sm flex items-center gap-2">
-              <Radio className="h-4 w-4 text-primary" /> Override Frequency
-            </DialogTitle>
-          </DialogHeader>
-          {ovTarget && (
-            <div className="space-y-3">
-              <div className="panel px-3 py-2 text-[11px] mono grid grid-cols-2 gap-y-1">
-                <span className="text-muted-foreground">Unit</span>
-                <span className="font-bold">{ovTarget.unit}</span>
-                <span className="text-muted-foreground">Band</span>
-                <span className="font-bold">{freq[ovTarget.unit]?.[ovTarget.idx]?.band}</span>
-                <span className="text-muted-foreground">Current</span>
-                <span className="font-bold">{freq[ovTarget.unit]?.[ovTarget.idx]?.freq}</span>
-              </div>
-              <div>
-                <Label className="label-eyebrow">New Frequency</Label>
-                <Input className="mt-1 mono text-xs" value={ovFreq}
-                  onChange={e => setOvFreq(e.target.value)} placeholder="e.g. 11.650 GHz" />
-              </div>
-              <p className="mono text-[10px] text-amber-500 border border-amber-400/30 bg-amber-400/5 px-3 py-2 rounded-sm leading-snug">
-                ⚠ Manual override marks this frequency as Optimal. Confirm this is an authorised change.
-              </p>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" className="flex-1 mono uppercase tracking-wider" onClick={() => setOvOpen(false)}>Cancel</Button>
-                <Button size="sm" className="flex-1 mono uppercase tracking-wider" disabled={!ovFreq.trim()} onClick={doOverride}>Override</Button>
-              </div>
+        <div className="px-4 pt-4 pb-3 grid grid-cols-3 sm:grid-cols-6 gap-4 border-b border-border">
+          {entries.map(({ key, label, weight, entry }) => (
+            <div key={key} className="flex flex-col items-center gap-0.5">
+              <RadialGauge score={entry.score} label={
+                label.replace(" Utilization","").replace(" Match","").replace(" Alignment","")
+                     .replace(" Effectiveness","").replace(" Health","").replace(" Load","")
+              } />
+              <span className="mono text-[7px] text-muted-foreground/40">{Math.round(weight * 100)}% wt</span>
+              {entry.severity !== "ok" && (
+                <div className={`flex items-center gap-0.5 mono text-[7px] font-bold uppercase ${entry.severity === "critical" ? "text-destructive" : "text-amber-500"}`}>
+                  <AlertTriangle className="h-2.5 w-2.5" />
+                  {entry.severity === "critical" ? "Critical" : "Warn"}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div className="px-4 py-3">
+          <div className="mono text-[8px] uppercase tracking-[0.18em] text-muted-foreground/50 font-semibold mb-2">Detected Issues</div>
+          {entries.filter(e => e.entry.severity !== "ok").length === 0 ? (
+            <p className="mono text-[9px] text-emerald-600 py-1">All factors within optimal thresholds</p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {entries.filter(e => e.entry.severity !== "ok").map(({ label, entry }) => (
+                <div key={label} className={`rounded-sm border px-3 py-2 ${
+                  entry.severity === "critical" ? "border-destructive/20 bg-destructive/4" : "border-amber-400/20 bg-amber-400/4"
+                }`}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className={`mono text-[8px] font-bold uppercase tracking-wide ${entry.severity === "critical" ? "text-destructive" : "text-amber-500"}`}>{label}</span>
+                    <span className={`mono text-[9px] font-bold ${scoreColor(entry.score)}`}>{entry.score}/100</span>
+                  </div>
+                  {entry.issues.map((iss, i) => (
+                    <div key={i} className="mono text-[7.5px] text-muted-foreground/60 leading-snug">· {iss}</div>
+                  ))}
+                </div>
+              ))}
             </div>
           )}
-        </DialogContent>
-      </Dialog>
+        </div>
+      </div>
 
-      {/* ── Allocation Expand Dialog ─────────────────────────────────────────── */}
-      <Dialog open={allocExpand} onOpenChange={setAllocExpand}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="mono uppercase tracking-wider text-sm flex items-center gap-2">
-              <SatIcon className="h-4 w-4 text-primary" /> Full Satellite Allocation Matrix
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-1.5">
-            {UNIT_LABELS.map(u => (
-              <div key={u} className="panel px-4 py-2.5 flex items-start gap-4">
-                <div className="mono text-xs font-bold text-foreground w-14 shrink-0 pt-0.5">{u}</div>
-                <div className="flex flex-wrap gap-1.5 flex-1">
-                  {(alloc[u]?.length ?? 0) === 0
-                    ? <span className="mono text-[11px] text-muted-foreground italic">No satellites assigned</span>
-                    : (alloc[u] ?? []).map(sid => {
-                        const s = SAT_MAP[sid];
-                        return (
-                          <div key={sid} className="border border-border bg-secondary rounded-sm px-2 py-1 mono text-[10px]">
-                            <div className="font-bold text-foreground">{s?.name}</div>
-                            <div className="text-muted-foreground">{s?.pos} · {s?.bands}</div>
-                          </div>
-                        );
-                      })
-                  }
-                </div>
-                <span className={`mono text-xs font-bold shrink-0 tabular-nums ${(alloc[u]?.length ?? 0) > 0 ? "text-primary" : "text-muted-foreground"}`}>
-                  {alloc[u]?.length ?? 0} sat{(alloc[u]?.length ?? 0) !== 1 ? "s" : ""}
-                </span>
-              </div>
-            ))}
+      {/* Recommendations ─────────────────────────────────────────────────── */}
+      {unitRecs.length > 0 && (
+        <div className="panel overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-border bg-secondary/20 flex items-center gap-3">
+            <span className="mono text-[10px] font-bold uppercase tracking-wider text-foreground">Optimization Recommendations</span>
+            <span className="mono text-[8px] text-muted-foreground/45">Read-only · no auto-execution</span>
           </div>
-        </DialogContent>
-      </Dialog>
+          <div className="p-3 space-y-2">
+            {unitRecs.map(rec => {
+              const p = rec.recPriority;
+              const bl = p==="URGENT"?"border-l-destructive/60":p==="EFFICIENCY"?"border-l-primary/60":p==="EIRP"?"border-l-sky-500/60":"border-l-amber-400/60";
+              const bb = p==="URGENT"?"text-destructive bg-destructive/8 border-destructive/20":p==="EFFICIENCY"?"text-primary bg-primary/8 border-primary/20":p==="EIRP"?"text-sky-600 bg-sky-500/8 border-sky-500/20":"text-amber-500 bg-amber-400/8 border-amber-400/20";
+              const cc = rec.confidence==="High"?"text-emerald-600":rec.confidence==="Medium"?"text-amber-500":"text-muted-foreground/55";
+              const open = activeRec === rec.id;
+              return (
+                <div key={rec.id} className={`panel overflow-hidden border-l-[3px] ${bl}`}>
+                  <button onClick={() => setActiveRec(x => x===rec.id?null:rec.id)}
+                    className="w-full text-left px-3 py-2 hover:bg-secondary/25 transition-colors focus:outline-none">
+                    <div className="flex items-start justify-between gap-2 mb-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`mono text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-sm border leading-none ${bb}`}>{p}</span>
+                        <span className={`mono text-[8px] font-semibold ${cc}`}>{rec.confidence} Confidence</span>
+                        <span className="mono text-[8px] text-muted-foreground/40">{rec.fromUnit} → {rec.toUnit}</span>
+                      </div>
+                      {open ? <ChevronUp className="h-3 w-3 text-muted-foreground/40 shrink-0"/> : <ChevronDown className="h-3 w-3 text-muted-foreground/40 shrink-0"/>}
+                    </div>
+                    <div className="mono text-[9px] font-semibold text-foreground/90 leading-snug mb-0.5">{rec.satellite}</div>
+                    <div className="mono text-[8px] text-muted-foreground/55 leading-snug">{rec.reason}</div>
+                  </button>
+                  {open && (
+                    <div className="border-t border-border bg-secondary/20 px-3 py-2">
+                      <div className="mono text-[7px] uppercase tracking-[0.18em] text-emerald-600 font-bold mb-0.5">Expected Gain</div>
+                      <div className="mono text-[8px] text-emerald-600/80 leading-snug mb-2.5">{rec.gain}</div>
+                      <div className="mono text-[7px] uppercase tracking-[0.18em] text-muted-foreground/45 font-semibold mb-1">Recommended Actions</div>
+                      <div className="space-y-1">
+                        {rec.steps.map((step, i) => (
+                          <div key={i} className="flex items-start gap-1.5">
+                            <span className="mono text-[8px] text-primary/50 font-bold shrink-0 mt-px">{i+1}.</span>
+                            <span className="mono text-[8px] text-foreground/65 leading-snug">{step}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
-      {/* ── Frequency Expand Dialog ──────────────────────────────────────────── */}
-      <Dialog open={freqExpand} onOpenChange={setFreqExpand}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="mono uppercase tracking-wider text-sm flex items-center gap-2">
-              <Radio className="h-4 w-4 text-primary" /> Full Frequency Assignment Table
-            </DialogTitle>
-          </DialogHeader>
-          <table className="w-full text-[11px] mono border-collapse">
-            <thead>
-              <tr className="border-b border-border bg-secondary/40">
-                <th className="px-3 py-2 text-left text-muted-foreground font-medium">Unit</th>
-                <th className="px-3 py-2 text-left text-muted-foreground font-medium">Band</th>
-                <th className="px-3 py-2 text-left text-muted-foreground font-medium">Frequency</th>
-                <th className="px-3 py-2 text-left text-muted-foreground font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {UNIT_LABELS.flatMap(u =>
-                (freq[u] ?? []).map((row, i) => (
-                  <tr key={`${u}-${i}`} className="hover:bg-secondary/20">
-                    <td className="px-3 py-2 font-bold text-foreground">{i === 0 ? u : ""}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{row.band}</td>
-                    <td className="px-3 py-2 font-bold tabular-nums">{row.freq}</td>
-                    <td className="px-3 py-2"><span className={freqBadge(row.status)}>{row.status}</span></td>
-                  </tr>
-                ))
+// ── Main optimization table ──────────────────────────────────────────────────
+function OptimizationEngine() {
+  const navigate = Route.useNavigate();
+  const { unit: selectedUnitKey } = Route.useSearch();
+  const [sortKey, setSortKey] = useState<"unit"|"score"|"status"|"risk">("score");
+  const [sortDir, setSortDir] = useState<"asc"|"desc">("desc");
+  const [filterStatus, setFilterStatus] = useState<OptStatus|"ALL">("ALL");
+  const [tableExpanded, setTableExpanded] = useState(false);
+
+  const handleSort = (col: string) => {
+    const k = col as typeof sortKey;
+    if (sortKey === k) setSortDir(d => d==="asc"?"desc":"asc");
+    else { setSortKey(k); setSortDir("desc"); }
+  };
+
+  if (selectedUnitKey) {
+    const unitLabel = `Unit ${selectedUnitKey}` as UnitLabel;
+    if ((UNIT_LABELS as readonly string[]).includes(unitLabel)) {
+      return <UnitDetailView unit={unitLabel} onBack={() => navigate({ search: {} })} />;
+    }
+  }
+
+  const statusOrder: Record<OptStatus, number> = { MISALLOCATED: 0, SUBOPTIMAL: 1, OPTIMIZED: 2 };
+  const riskOrder: Record<"High"|"Medium"|"Low", number> = { High: 0, Medium: 1, Low: 2 };
+
+  const rows = UNIT_LABELS
+    .filter(u => filterStatus === "ALL" || OPT_DATA[u].status === filterStatus)
+    .slice()
+    .sort((a, b) => {
+      const da = OPT_DATA[a], db = OPT_DATA[b];
+      let diff = 0;
+      if (sortKey === "score")  diff = da.compositeScore - db.compositeScore;
+      if (sortKey === "unit")   diff = a.localeCompare(b);
+      if (sortKey === "status") diff = statusOrder[da.status] - statusOrder[db.status];
+      if (sortKey === "risk")   diff = riskOrder[riskLevel(da)] - riskOrder[riskLevel(db)];
+      return sortDir === "asc" ? diff : -diff;
+    });
+
+  return (
+    <div className="panel overflow-hidden">
+
+      {/* Panel header + filters ─────────────────────────────────────────── */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-4 py-2.5 border-b border-border bg-secondary/20">
+        <div className="flex items-center gap-2.5">
+          <Zap className="h-3.5 w-3.5 text-primary shrink-0" />
+          <span className="mono text-[11px] font-bold uppercase tracking-wider text-foreground">Optimization Engine</span>
+          <span className="mono text-[8px] text-muted-foreground/50 bg-secondary border border-border px-1.5 py-0.5 rounded-sm leading-none uppercase tracking-[0.15em]">
+            Unit Ranking
+          </span>
+        </div>
+        <div className="flex items-center gap-1 flex-wrap">
+          {(["ALL","OPTIMIZED","SUBOPTIMAL","MISALLOCATED"] as const).map(s => {
+            const on = filterStatus === s;
+            return (
+              <button key={s} onClick={() => setFilterStatus(s)}
+                className={`mono text-[8px] uppercase tracking-wide px-2 py-1 rounded-sm border transition-colors ${
+                  on
+                    ? s==="OPTIMIZED"?"bg-emerald-500/15 border-emerald-500/40 text-emerald-700"
+                    : s==="SUBOPTIMAL"?"bg-amber-400/15 border-amber-400/40 text-amber-600"
+                    : s==="MISALLOCATED"?"bg-destructive/12 border-destructive/30 text-destructive"
+                    : "bg-secondary border-border text-foreground"
+                    : "border-border text-foreground hover:bg-secondary/40"
+                }`}>
+                {s==="ALL" ? "All" : s.charAt(0)+s.slice(1).toLowerCase()}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Table ─────────────────────────────────────────────────────────── */}
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-border bg-secondary/25">
+              <th className="px-4 py-2 text-left mono text-[8px] uppercase tracking-wider text-foreground w-10">#</th>
+              <SortThOpt col="unit"   sortKey={sortKey} sortDir={sortDir} onSort={handleSort}>Unit</SortThOpt>
+              <SortThOpt col="score"  sortKey={sortKey} sortDir={sortDir} onSort={handleSort}>Opt. Score</SortThOpt>
+              <SortThOpt col="status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort}>Status</SortThOpt>
+              <SortThOpt col="risk"   sortKey={sortKey} sortDir={sortDir} onSort={handleSort}>Risk Level</SortThOpt>
+              <th className="px-3 py-2 w-8" />
+            </tr>
+          </thead>
+          <tbody>
+            {(tableExpanded ? rows : rows.slice(0, 4)).map((unit, idx) => {
+              const d = OPT_DATA[unit];
+              const risk = riskLevel(d);
+              const sb = d.status==="OPTIMIZED"?"text-emerald-700 bg-emerald-500/10 border-emerald-500/25":d.status==="SUBOPTIMAL"?"text-amber-600 bg-amber-400/10 border-amber-400/25":"text-destructive bg-destructive/10 border-destructive/25";
+              const rb = risk==="Low"?"text-emerald-700 bg-emerald-500/8 border-emerald-500/20":risk==="Medium"?"text-amber-600 bg-amber-400/8 border-amber-400/20":"text-destructive bg-destructive/8 border-destructive/20";
+              return (
+                <tr key={unit}
+                  onClick={() => navigate({ search: { unit: unit.replace("Unit ","") } })}
+                  className="border-b border-border/50 hover:bg-secondary/30 cursor-pointer transition-colors group">
+                  <td className="px-4 py-3"><span className="mono text-[10px] text-muted-foreground/40">{idx+1}</span></td>
+                  <td className="px-3 py-3"><span className="mono text-[12px] font-bold text-foreground whitespace-nowrap">{unit}</span></td>
+                  <td className="px-3 py-3">
+                    <div className="flex items-center gap-2.5">
+                      <span className={`mono text-[15px] font-bold ${scoreColor(d.compositeScore)}`}>{d.compositeScore}</span>
+                      <div className="w-20 h-1.5 rounded-full bg-secondary overflow-hidden">
+                        <div className={`h-full rounded-full ${scorebar(d.compositeScore)}`} style={{ width: `${d.compositeScore}%` }} />
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-3 py-3">
+                    <span className={`inline-block mono text-[8px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-sm border ${sb}`}>{d.status}</span>
+                  </td>
+                  <td className="px-3 py-3">
+                    <span className={`inline-block mono text-[8px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-sm border ${rb}`}>{risk}</span>
+                  </td>
+                  <td className="px-3 py-3 text-right">
+                    <ChevronRight className="h-4 w-4 text-muted-foreground/30 group-hover:text-primary transition-colors ml-auto" />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {rows.length === 0 && (
+          <div className="py-10 text-center mono text-[9px] uppercase tracking-wider text-muted-foreground/40">
+            No units match the selected filter
+          </div>
+        )}
+      </div>
+
+      {/* Expand / collapse toggle */}
+      {rows.length > 4 && (
+        <button
+          onClick={() => setTableExpanded(e => !e)}
+          className="w-full flex items-center justify-center gap-1.5 py-2 border-t border-border bg-secondary/10 hover:bg-secondary/25 transition-colors"
+        >
+          <span className="mono text-[8px] uppercase tracking-wider text-muted-foreground/50">
+            {tableExpanded ? "Show less" : `Show all ${rows.length} units`}
+          </span>
+          {tableExpanded
+            ? <ChevronUp className="h-3 w-3 text-muted-foreground/40" />
+            : <ChevronDown className="h-3 w-3 text-muted-foreground/40" />}
+        </button>
+      )}
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CONTROL CENTER COMMAND BAR — 4 operational quick-access links
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const CC_COMMAND_LINKS = [
+  { to: "/engagement", label: "Live Engagement Status",          icon: Activity      },
+  { to: "/intel",      label: "INT Repository",                  icon: Archive       },
+  { to: "/important",  label: "Important Frequencies",           icon: Star          },
+  { to: "/priority",   label: "Satellite Priority & Allocation", icon: ListOrdered   },
+] as const;
+
+function ControlCenterCommandBar() {
+  const pathname = useRouterState({ select: s => s.location.pathname });
+  return (
+    <nav className="border-b border-border bg-sidebar">
+      <div className="flex items-center justify-center flex-nowrap px-2 py-1 gap-0 overflow-hidden">
+        {CC_COMMAND_LINKS.map(({ to, label }, i) => {
+          const active = pathname === to;
+          return (
+            <div key={to} className="flex items-center shrink-0">
+              {i > 0 && (
+                <span className="text-muted-foreground/30 text-[9px] px-1 select-none leading-none">•</span>
               )}
-            </tbody>
-          </table>
-        </DialogContent>
-      </Dialog>
+              <Link
+                to={to}
+                className={`inline-flex items-center px-1.5 py-1 mono text-[9px] rounded-sm whitespace-nowrap transition-colors tracking-[0.04em] uppercase ${
+                  active
+                    ? "bg-secondary text-foreground font-semibold"
+                    : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
+                }`}
+              >
+                {label}
+              </Link>
+            </div>
+          );
+        })}
+      </div>
+    </nav>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PAGE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function ControlCenterPage() {
+  return (
+    <AppShell
+      title="Control Center"
+      subtitle="Live Operations Layer"
+      headerIcon={<LayoutDashboard className="h-4 w-4" />}
+      showBack={false}
+      sidebarVariant="home"
+      horizontalNav={<ControlCenterCommandBar />}
+    >
+      <div className="space-y-4 pb-6">
+
+        {/* ── Module 1: Unit Activity Snapshot ───────────────────────────── */}
+        <UnitActivitySnapshot />
+
+        {/* ── Module 2: Optimization Engine ──────────────────────────────── */}
+        <OptimizationEngine />
+
+      </div>
     </AppShell>
   );
 }

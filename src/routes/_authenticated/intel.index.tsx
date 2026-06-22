@@ -21,7 +21,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Archive, Plus, Search, Settings2, X } from "lucide-react";
+import { Archive, ChevronRight, Plus, Search, Settings2, X } from "lucide-react";
 import { listUnits } from "@/lib/queries";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -190,17 +190,8 @@ function IntelRepositoryHome() {
       subtitle="Centralized Intelligence Collection Archive"
       headerIcon={<Archive className="h-4 w-4 shrink-0" />}
     >
-      <div className="panel p-3 mb-4">
-        <div className="label-eyebrow">Mission Intelligence Archive</div>
-        <p className="mono text-[11px] text-muted-foreground mt-1 leading-relaxed">
-          Master repository of satellite intelligence collected and analysed by all operational units.
-          Select a unit to review exploitation summaries and access detailed collection records.
-        </p>
-      </div>
-
       {/* Global repository search */}
       <div className="panel p-3 mb-4">
-        <div className="label-eyebrow mb-2">Global Repository Search</div>
         <div className="relative">
           <Search className="h-3.5 w-3.5 absolute left-2 top-2.5 text-muted-foreground" />
           <Input
@@ -240,11 +231,64 @@ function IntelRepositoryHome() {
         )}
       </div>
 
-      <div className="label-eyebrow mb-3">Operational Units</div>
+      {/* ── All Units aggregate entry ────────────────────────────────────── */}
+      {(() => {
+        const totals = Array.from(unitStatsMap.values()).reduce(
+          (acc, s) => ({
+            satellites: acc.satellites + s.satellitesProfiled,
+            scanned:    acc.scanned    + s.totalScanned,
+            productive: acc.productive + s.productive,
+            nonProd:    acc.nonProd    + s.nonProductive,
+          }),
+          { satellites: 0, scanned: 0, productive: 0, nonProd: 0 },
+        );
+        const pct = totals.scanned > 0
+          ? Math.round((totals.productive / totals.scanned) * 100)
+          : 0;
+        return (
+          <div className="mb-3 rounded-md border border-border bg-card shadow-sm hover:shadow-md hover:border-primary/40 hover:bg-secondary/20 transition-all duration-200 cursor-default">
+            <div className="px-4 py-3 flex items-center justify-between">
+              <div>
+                <div className="mono text-[11px] font-bold uppercase tracking-wide text-foreground">
+                  All Units Overview
+                </div>
+                <div className="mono text-[8px] uppercase tracking-[0.15em] text-muted-foreground/50 mt-0.5">
+                  {localUnits.length} Operational Units · Aggregate Intelligence
+                </div>
+              </div>
+              <div className="flex items-center gap-5">
+                <AggregateStat label="Satellites" value={totals.satellites} />
+                <AggregateStat label="Scanned"    value={totals.scanned.toLocaleString()} />
+                <AggregateStat label="Productive" value={totals.productive.toLocaleString()} color="emerald" />
+                <AggregateStat label="Non-Prod"   value={totals.nonProd.toLocaleString()} />
+                <div className="flex flex-col items-end gap-1">
+                  <span className={`mono text-[13px] font-bold ${pct >= 60 ? "text-emerald-600" : pct >= 30 ? "text-amber-500" : "text-destructive/80"}`}>
+                    {pct}%
+                  </span>
+                  <div className="w-24 h-1 rounded-full bg-secondary overflow-hidden">
+                    <div
+                      className={`h-full rounded-full ${pct >= 60 ? "bg-emerald-500" : pct >= 30 ? "bg-amber-400" : "bg-destructive/60"}`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* ── Individual unit tiles ─────────────────────────────────────────── */}
+      <div className="mono text-[8px] uppercase tracking-[0.18em] text-muted-foreground/50 mb-2 font-semibold">
+        Operational Units
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
         {localUnits.map((unit) => {
           const stats = unitStatsMap.get(unit.id);
+          const pct = stats && stats.totalScanned > 0
+            ? Math.round((stats.productive / stats.totalScanned) * 100)
+            : 0;
           return (
             <div key={unit.id} className="relative group/tile">
               {deleteMode && (
@@ -262,28 +306,58 @@ function IntelRepositoryHome() {
               <button
                 type="button"
                 onClick={() => !deleteMode && navigate({ to: "/intel/$unitId", params: { unitId: unit.id } })}
-                className={`w-full text-left rounded-md border border-border bg-card shadow-md
-                            hover:shadow-lg transition-all duration-200 p-4
-                            focus:outline-none focus:ring-2 focus:ring-primary/50
-                            ${deleteMode ? "cursor-default opacity-80" : "hover:border-primary/60 hover:scale-[1.01]"}`}
+                className={`w-full text-left rounded-md border border-border bg-card shadow-sm p-3
+                            focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all duration-200
+                            ${deleteMode
+                              ? "cursor-default opacity-70"
+                              : "hover:border-primary/50 hover:shadow-md hover:bg-secondary/15 cursor-pointer"
+                            }`}
               >
-                <div className="mono text-sm font-bold uppercase tracking-tight leading-tight">
-                  {unit.name}
-                </div>
-                <div className="text-[10px] text-muted-foreground mono mt-0.5 truncate">
-                  {unit.location}
+                {/* Header row */}
+                <div className="flex items-start justify-between mb-2">
+                  <div className="min-w-0">
+                    <div className="mono text-[11px] font-bold uppercase tracking-tight text-foreground leading-tight">
+                      Unit {unit.code}
+                    </div>
+                    <div className="mono text-[8px] text-muted-foreground/55 mt-0.5 truncate">
+                      {unit.location}
+                    </div>
+                  </div>
+                  <div className={`h-2 w-2 rounded-full mt-0.5 shrink-0 ${pct >= 60 ? "bg-emerald-500" : pct >= 30 ? "bg-amber-400" : "bg-destructive/50"}`} />
                 </div>
 
-                {stats && (
-                  <div className="mt-3 space-y-1 border-t border-border/60 pt-2">
-                    <StatLine label="Satellites Profiled" value={String(stats.satellitesProfiled)} />
-                    <StatLine label="Total Frequencies Scanned" value={stats.totalScanned.toLocaleString()} />
-                    <StatLine label="Productive Frequencies" value={stats.productive.toLocaleString()} highlight="emerald" />
-                    <StatLine label="Non-Productive Frequencies" value={stats.nonProductive.toLocaleString()} />
-                    <StatLine
-                      label="Last Upload"
-                      value={stats.lastUpload ? formatDisplayDate(stats.lastUpload) : "—"}
-                    />
+                {/* Stats block */}
+                {stats ? (
+                  <div className="space-y-1 border-t border-border/60 pt-2">
+                    <StatRow label="Satellites"  value={String(stats.satellitesProfiled)} />
+                    <StatRow label="Productive"  value={stats.productive.toLocaleString()}   color="emerald" />
+                    <StatRow label="Non-Prod"    value={stats.nonProductive.toLocaleString()} />
+                    <StatRow label="Last Upload" value={stats.lastUpload ? formatDisplayDate(stats.lastUpload) : "—"} />
+                  </div>
+                ) : (
+                  <div className="mono text-[8px] text-muted-foreground/35 pt-1">No data</div>
+                )}
+
+                {/* Productivity bar */}
+                {stats && stats.totalScanned > 0 && (
+                  <div className="mt-2 flex items-center gap-1.5">
+                    <div className="flex-1 h-1 rounded-full bg-secondary overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${pct >= 60 ? "bg-emerald-500" : pct >= 30 ? "bg-amber-400" : "bg-destructive/60"}`}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <span className={`mono text-[8px] font-bold shrink-0 ${pct >= 60 ? "text-emerald-600" : pct >= 30 ? "text-amber-500" : "text-destructive/80"}`}>
+                      {pct}%
+                    </span>
+                  </div>
+                )}
+
+                {/* Click affordance */}
+                {!deleteMode && (
+                  <div className="mt-2 pt-1.5 border-t border-border/40 flex items-center justify-between">
+                    <span className="mono text-[7px] uppercase tracking-wider text-muted-foreground/35">View Records</span>
+                    <ChevronRight className="h-3 w-3 text-muted-foreground/30 group-hover/tile:text-primary transition-colors" />
                   </div>
                 )}
               </button>
@@ -386,6 +460,46 @@ function StatLine({
       <span className="text-muted-foreground shrink-0">{label}:</span>
       <span className={highlight === "emerald" ? "text-emerald-400 font-bold" : "text-foreground font-medium"}>
         {value}
+      </span>
+    </div>
+  );
+}
+
+function StatRow({
+  label,
+  value,
+  color,
+}: {
+  label: string;
+  value: string;
+  color?: "emerald";
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-2">
+      <span className="mono text-[8px] text-muted-foreground/55 shrink-0">{label}</span>
+      <span className={`mono text-[9px] font-semibold ${color === "emerald" ? "text-emerald-600" : "text-foreground"}`}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function AggregateStat({
+  label,
+  value,
+  color,
+}: {
+  label: string;
+  value: string | number;
+  color?: "emerald";
+}) {
+  return (
+    <div className="flex flex-col items-center gap-0.5">
+      <span className={`mono text-[13px] font-bold leading-none ${color === "emerald" ? "text-emerald-600" : "text-foreground"}`}>
+        {value}
+      </span>
+      <span className="mono text-[7px] uppercase tracking-[0.15em] text-muted-foreground/45 leading-none">
+        {label}
       </span>
     </div>
   );
