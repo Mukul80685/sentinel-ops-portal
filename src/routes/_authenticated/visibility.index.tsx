@@ -19,12 +19,13 @@ import {
 import { Button } from "@/components/ui/button";
 import {
   ArrowLeft,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock,
   Compass,
   Download,
-  Eye,
+  Filter,
   Globe,
   ImageIcon,
   Map,
@@ -33,9 +34,14 @@ import {
   Plus,
   Radio,
   Satellite as SatIcon,
+  Settings2,
+  Trash2,
   TrendingUp,
   Upload,
+  X,
 } from "lucide-react";
+import { validateImportFile, buildCsv, downloadCsv, toggleSelection, allSelected } from "@/lib/dataTableUtils";
+import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -401,11 +407,20 @@ export const Route = createFileRoute("/_authenticated/visibility/")({
 
 function VisibilityPage() {
   // Three-level hierarchy: unit → region → satellite
+  const [localUnits, setLocalUnits] = useState<VisibilityUnit[]>(VISIBILITY_UNITS);
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
   const [activeRegionId, setActiveRegionId] = useState<string | null>(null);
   const [activeSat, setActiveSat]  = useState<GeoSatellite | null>(null);
 
-  const selectedUnit = VISIBILITY_UNITS.find((u) => u.id === selectedUnitId) ?? null;
+  const selectedUnit = localUnits.find((u) => u.id === selectedUnitId) ?? null;
+
+  function handleAddUnit(u: VisibilityUnit) {
+    setLocalUnits((prev) => [...prev, u]);
+  }
+  function handleDeleteUnit(id: string) {
+    setLocalUnits((prev) => prev.filter((u) => u.id !== id));
+    if (selectedUnitId === id) setSelectedUnitId(null);
+  }
 
   // User-added satellites keyed by region.id
   const [addedSats, setAddedSats]   = useState<Record<string, GeoSatellite[]>>({});
@@ -482,8 +497,10 @@ function VisibilityPage() {
       {/* ── Level 1: Unit selection ──────────────────────────────────────── */}
       {!selectedUnitId && (
         <UnitGrid
-          units={VISIBILITY_UNITS}
+          units={localUnits}
           onSelect={(u) => setSelectedUnitId(u.id)}
+          onAddUnit={handleAddUnit}
+          onDeleteUnit={handleDeleteUnit}
         />
       )}
 
@@ -672,32 +689,175 @@ function VisibilityPage() {
 function UnitGrid({
   units,
   onSelect,
+  onAddUnit,
+  onDeleteUnit,
 }: {
   units: VisibilityUnit[];
   onSelect: (u: VisibilityUnit) => void;
+  onAddUnit: (u: VisibilityUnit) => void;
+  onDeleteUnit: (id: string) => void;
 }) {
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [deleteMode,   setDeleteMode]   = useState(false);
+  const [addOpen,      setAddOpen]      = useState(false);
+  const [newName,      setNewName]      = useState("");
+  const [newLoc,       setNewLoc]       = useState("");
+
+  function handleAdd(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newName.trim()) return;
+    const code = newName.trim().split(" ").pop()?.charAt(0).toUpperCase() ?? "X";
+    onAddUnit({
+      id:       `unit-${Date.now()}`,
+      code,
+      name:     newName.trim(),
+      location: newLoc.trim() || "Unassigned Sector",
+    });
+    setNewName("");
+    setNewLoc("");
+    setAddOpen(false);
+  }
+
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <div className="label-eyebrow">Select Unit</div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+
+      {/* Tile grid — 2 columns mobile, 4 desktop, full-width balanced */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {units.map((u) => (
-          <button
-            key={u.id}
-            type="button"
-            onClick={() => onSelect(u)}
-            className="panel text-left group hover:bg-secondary/60 transition-all duration-150
-                       hover:scale-[1.02] hover:shadow-md focus:outline-none focus:ring-1 focus:ring-primary p-3"
-          >
-            <div className="mono text-sm font-bold uppercase tracking-tight leading-tight">
-              {u.name}
-            </div>
-            <div className="flex items-center gap-1 mt-1 mono text-[10px] text-muted-foreground">
-              <MapPin className="h-3 w-3 shrink-0" />
-              <span>{u.location}</span>
-            </div>
-          </button>
+          <div key={u.id} className="relative group/tile">
+            {/* Delete overlay button (delete mode only) */}
+            {deleteMode && (
+              <button
+                type="button"
+                title="Delete this unit"
+                onClick={() => onDeleteUnit(u.id)}
+                className="absolute -top-1.5 -right-1.5 z-10 h-5 w-5 rounded-full border border-border
+                           bg-card text-muted-foreground hover:bg-destructive hover:text-destructive-foreground
+                           flex items-center justify-center transition-colors"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => !deleteMode && onSelect(u)}
+              className={`w-full text-left rounded-md border border-border
+                          bg-card shadow-md hover:shadow-lg
+                          transition-all duration-200
+                          focus:outline-none focus:ring-2 focus:ring-primary/50
+                          p-4
+                          ${deleteMode
+                            ? "cursor-default opacity-80"
+                            : "hover:-translate-y-0.5 hover:border-primary/40 hover:bg-secondary/40"}`}
+            >
+              {/* Accent bar */}
+              <div className="h-0.5 w-8 rounded-full bg-primary mb-3 opacity-60" />
+
+              <div className="mono text-sm font-bold uppercase tracking-tight leading-tight text-foreground">
+                {u.name}
+              </div>
+              <div className="flex items-center gap-1 mt-1.5 mono text-[10px] text-muted-foreground">
+                <MapPin className="h-3 w-3 shrink-0" />
+                <span>{u.location}</span>
+              </div>
+            </button>
+          </div>
         ))}
       </div>
+
+      {/* ── Advanced Features — bottom-right (mirrors Resource Inventory) ── */}
+      <div className="mt-4 flex items-center justify-end gap-2">
+        {deleteMode && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="text-muted-foreground"
+            onClick={() => setDeleteMode(false)}
+          >
+            Exit delete mode
+          </Button>
+        )}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => setAdvancedOpen(true)}
+          className="gap-1.5"
+        >
+          <Settings2 className="h-4 w-4" />
+          Advanced Features
+        </Button>
+      </div>
+
+      {/* Advanced Features dialog */}
+      <Dialog open={advancedOpen} onOpenChange={setAdvancedOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Advanced Features</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="justify-start"
+              onClick={() => { setAdvancedOpen(false); setAddOpen(true); }}
+            >
+              <Plus className="h-4 w-4 mr-2" /> Add Unit
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="justify-start text-destructive hover:text-destructive"
+              onClick={() => { setAdvancedOpen(false); setDeleteMode(true); }}
+              disabled={units.length === 0}
+            >
+              <X className="h-4 w-4 mr-2" /> Delete Unit
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Unit dialog */}
+      <Dialog open={addOpen} onOpenChange={(o) => { setAddOpen(o); if (!o) { setNewName(""); setNewLoc(""); } }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="mono uppercase tracking-wider text-sm flex items-center gap-2">
+              <Plus className="h-4 w-4 text-primary" /> Add Unit
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleAdd} className="space-y-3">
+            <div>
+              <Label className="label-eyebrow">Unit Name *</Label>
+              <Input
+                required
+                className="mt-1"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="e.g. Unit India"
+              />
+            </div>
+            <div>
+              <Label className="label-eyebrow">Location</Label>
+              <Input
+                className="mt-1"
+                value={newLoc}
+                onChange={(e) => setNewLoc(e.target.value)}
+                placeholder="e.g. Mountain Sector"
+              />
+            </div>
+            <div className="flex gap-2 pt-1">
+              <Button type="button" variant="outline" size="sm" className="flex-1 mono uppercase tracking-wider" onClick={() => setAddOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" size="sm" className="flex-1 mono uppercase tracking-wider">
+                Add Unit
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -807,171 +967,392 @@ function RegionDetail({
   unitId: string;
 }) {
   return (
-    <div className="space-y-4">
-      {/* Header row */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-3">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={onBack}
-            className="mono text-[11px] h-8 uppercase tracking-wider"
-          >
-            <ArrowLeft className="h-3.5 w-3.5 mr-1" /> All Regions
-          </Button>
-          <div className="flex items-center gap-1.5 text-[12px] mono text-muted-foreground">
-            <Globe className="h-3.5 w-3.5" />
-            {unitName && <><span>{unitName}</span><span>/</span></>}
-            <span>Target Satellites</span>
-            <span>/</span>
-            <span className="text-foreground font-bold uppercase">{region.label}</span>
-          </div>
-        </div>
-
-        {/* Action buttons: Import CSV + Add New Satellite */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <CsvImportButton regionId={region.id} onImport={onAddSat} />
-          <AddSatelliteDialog regionId={region.id} onAdd={onAddSat} />
+    <div className="space-y-3">
+      {/* Compact breadcrumb only */}
+      <div className="flex items-center gap-3">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={onBack}
+          className="mono text-[11px] h-8 uppercase tracking-wider"
+        >
+          <ArrowLeft className="h-3.5 w-3.5 mr-1" /> All Regions
+        </Button>
+        <div className="flex items-center gap-1.5 text-[11px] mono text-muted-foreground">
+          <Globe className="h-3 w-3" />
+          {unitName && <><span>{unitName}</span><span>/</span></>}
+          <span>Target Satellites</span>
+          <span>/</span>
+          <span className="text-foreground font-semibold uppercase">{region.label}</span>
         </div>
       </div>
 
-      <div className="label-eyebrow flex items-center gap-1.5">
-        <SatIcon className="h-3 w-3" />
-        {region.label} — Satellite Database ({region.satellites.length} records)
-      </div>
-
-      {/* Satellite database table */}
+      {/* Satellite table — header bar contains title, scroll arrows, and all actions */}
       <SatelliteTable
         satellites={region.satellites}
         regionId={region.id}
+        regionLabel={region.label}
         unitId={unitId}
-        onViewSat={onSelectSat}
+        onAddSat={onAddSat}
         onEditSat={onEditSat}
       />
     </div>
   );
 }
 
+// ─── Satellite filter type ────────────────────────────────────────────────────
+
+type SatFilter = {
+  name:          string;
+  orbit:         string;   // "" | "GEO" | "MEO" | "LEO"
+  position:      string;
+  launchYearFrom: string;
+  launchYearTo:   string;
+  coverage:      string;
+};
+const EMPTY_SAT_FILTER: SatFilter = {
+  name: "", orbit: "", position: "", launchYearFrom: "", launchYearTo: "", coverage: "",
+};
+
 // ─── Satellite database table ──────────────────────────────────────────────────
 
 function SatelliteTable({
   satellites,
   regionId,
+  regionLabel,
   unitId,
-  onViewSat,
+  onAddSat,
   onEditSat,
 }: {
   satellites: GeoSatellite[];
   regionId: string;
+  regionLabel: string;
   unitId: string;
-  onViewSat: (s: GeoSatellite) => void;
+  onAddSat: (s: GeoSatellite) => void;
   onEditSat: (s: GeoSatellite) => void;
 }) {
-  const [editingSat,   setEditingSat]   = useState<GeoSatellite | null>(null);
-  const [footprintSat, setFootprintSat] = useState<GeoSatellite | null>(null);
+  const [editingSat,  setEditingSat]  = useState<GeoSatellite | null>(null);
+  const [filterOpen,  setFilterOpen]  = useState(false);
+  const [filter,      setFilter]      = useState<SatFilter>(EMPTY_SAT_FILTER);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // ── Derived: filtered satellite list ────────────────────────────────────────
+  const filteredSats = useMemo(() => {
+    return satellites.filter((s) => {
+      const f = filter;
+      if (f.name && !s.name.toLowerCase().includes(f.name.toLowerCase())) return false;
+      if (f.orbit && (s.orbitType ?? "GEO").toUpperCase() !== f.orbit.toUpperCase()) return false;
+      if (f.position && !s.position.toLowerCase().includes(f.position.toLowerCase())) return false;
+      if (f.coverage && !s.beamCoverage.toLowerCase().includes(f.coverage.toLowerCase())) return false;
+      const year = parseInt(s.launchDate.slice(0, 4)) || 0;
+      if (f.launchYearFrom && year < parseInt(f.launchYearFrom)) return false;
+      if (f.launchYearTo   && year > parseInt(f.launchYearTo))   return false;
+      return true;
+    });
+  }, [satellites, filter]);
+
+  const isFiltered = filteredSats.length !== satellites.length;
+  const visibleIds = filteredSats.map((s) => s.id);
+  const selectAll  = allSelected(visibleIds, selectedIds);
+
+  function toggleId(id: string)    { setSelectedIds((s) => toggleSelection(s, id)); }
+  function clearSelection()        { setSelectedIds(new Set()); }
+  function handleSelectAll()       { setSelectedIds(selectAll ? new Set() : new Set(visibleIds)); }
+  function clearFilter()           { setFilter(EMPTY_SAT_FILTER); setSelectedIds(new Set()); }
+  function setF<K extends keyof SatFilter>(k: K, v: string) { setFilter((f) => ({ ...f, [k]: v })); }
+
+  // ── Export helpers ───────────────────────────────────────────────────────────
+  function exportSats(list: GeoSatellite[], label: string) {
+    if (list.length === 0) { toast.error("No records to export."); return; }
+    const csv = buildCsv(
+      ["Satellite Name", "Orbital Position", "Launch Date", "Orbit Type",
+       "C-band Transponders", "Ku-band Transponders", "Beam Coverage", "Visibility Notes"],
+      list.map((s) => [
+        s.name, s.position, s.launchDate, s.orbitType ?? "GEO",
+        s.cBandTransponders ?? "", s.kuBandTransponders ?? "",
+        s.beamCoverage, s.visibilityNotes ?? "",
+      ]),
+    );
+    downloadCsv(`${regionLabel.toLowerCase().replace(/\s+/g, "_")}_${label}.csv`, csv);
+    toast.success(`${list.length} record${list.length !== 1 ? "s" : ""} exported.`);
+  }
 
   function scrollTable(dir: "left" | "right") {
     scrollRef.current?.scrollBy({ left: dir === "left" ? -320 : 320, behavior: "smooth" });
   }
 
-  if (satellites.length === 0) {
-    return (
-      <div className="panel p-8 flex flex-col items-center gap-2 text-center">
-        <SatIcon className="h-8 w-8 text-muted-foreground opacity-40" />
-        <div className="mono text-sm font-bold uppercase tracking-wide text-muted-foreground">
-          No satellites recorded
+  function scrollTable(dir: "left" | "right") {
+    scrollRef.current?.scrollBy({ left: dir === "left" ? -320 : 320, behavior: "smooth" });
+  }
+
+  // ── Header bar (never scrolls) ──────────────────────────────────────────────
+  const headerBar = (
+    <div className="flex items-start gap-3 px-3 py-2 border-b border-border bg-background shrink-0">
+      {/* LEFT — title */}
+      <div className="flex items-center gap-1.5 flex-1 min-w-0 pt-0.5">
+        <SatIcon className="h-3 w-3 shrink-0 text-muted-foreground" />
+        <span className="mono text-[11px] font-bold uppercase tracking-wide text-foreground">
+          {regionLabel} — Satellite Database
+        </span>
+      </div>
+      {/* RIGHT — stacked actions */}
+      <div className="flex flex-col items-end gap-1 shrink-0">
+        {/* Row 1: Import + Export All + Export Filtered */}
+        <div className="flex items-center gap-1.5">
+          <ImportCsvButton regionId={regionId} onImport={onAddSat} />
+          <button
+            type="button"
+            onClick={() => exportSats(satellites, "all")}
+            title="Export all satellites"
+            className="h-8 px-2 inline-flex items-center gap-1 rounded-sm border border-border
+                       mono text-[11px] uppercase tracking-wider hover:bg-secondary transition-colors"
+          >
+            <Download className="h-3.5 w-3.5" /> Export All
+          </button>
+          {isFiltered && (
+            <button
+              type="button"
+              onClick={() => exportSats(filteredSats, "filtered")}
+              title="Export filtered results"
+              className="h-8 px-2 inline-flex items-center gap-1 rounded-sm border border-primary/40
+                         mono text-[11px] uppercase tracking-wider text-primary hover:bg-primary/10 transition-colors"
+            >
+              <Download className="h-3.5 w-3.5" /> Export Filtered ({filteredSats.length})
+            </button>
+          )}
         </div>
-        <div className="mono text-[11px] text-muted-foreground">
-          Use "Add New Satellite" or "Import CSV" to populate data.
+        {/* Row 2: scroll + filter + add */}
+        <div className="flex items-center gap-1.5">
+          {satellites.length > 0 && (
+            <>
+              <button type="button" onClick={() => scrollTable("left")} title="Scroll left"
+                className="h-7 w-7 grid place-items-center rounded-sm border border-border hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground">
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </button>
+              <button type="button" onClick={() => scrollTable("right")} title="Scroll right"
+                className="h-7 w-7 grid place-items-center rounded-sm border border-border hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground">
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </>
+          )}
+          <button
+            type="button"
+            onClick={() => setFilterOpen((v) => !v)}
+            className={`h-7 px-2 inline-flex items-center gap-1 rounded-sm border mono text-[11px] uppercase tracking-wider transition-colors
+                        ${filterOpen ? "border-primary/50 bg-primary/10 text-primary" : "border-border hover:bg-secondary text-muted-foreground hover:text-foreground"}`}
+          >
+            <Filter className="h-3 w-3" /> Filter
+          </button>
+          <AddSatelliteDialog regionId={regionId} onAdd={onAddSat} />
         </div>
       </div>
+    </div>
+  );
+
+  // ── Record counts bar ────────────────────────────────────────────────────────
+  const countsBar = (
+    <div className="px-3 py-1 border-b border-border bg-secondary/20 flex items-center gap-3 shrink-0 mono text-[10px] text-muted-foreground">
+      <span>Total: <span className="text-foreground font-bold">{satellites.length}</span></span>
+      {isFiltered && (
+        <span>Filtered: <span className="text-primary font-bold">{filteredSats.length}</span></span>
+      )}
+      {selectedIds.size > 0 && (
+        <span>Selected: <span className="text-primary font-bold">{selectedIds.size}</span></span>
+      )}
+    </div>
+  );
+
+  // ── Filter panel ─────────────────────────────────────────────────────────────
+  const filterPanel = filterOpen && (
+    <div className="px-3 py-2 border-b border-border bg-secondary/10 shrink-0 space-y-2">
+      <div className="grid grid-cols-3 gap-2">
+        <input
+          className="h-7 px-2 rounded-sm border border-border bg-background mono text-[11px] placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+          placeholder="Satellite name…"
+          value={filter.name}
+          onChange={(e) => setF("name", e.target.value)}
+        />
+        <select
+          className="h-7 px-2 rounded-sm border border-border bg-background mono text-[11px] text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+          value={filter.orbit}
+          onChange={(e) => setF("orbit", e.target.value)}
+        >
+          <option value="">Orbit type — all</option>
+          <option value="GEO">GEO</option>
+          <option value="MEO">MEO</option>
+          <option value="LEO">LEO</option>
+        </select>
+        <input
+          className="h-7 px-2 rounded-sm border border-border bg-background mono text-[11px] placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+          placeholder="Orbital position…"
+          value={filter.position}
+          onChange={(e) => setF("position", e.target.value)}
+        />
+        <input
+          className="h-7 px-2 rounded-sm border border-border bg-background mono text-[11px] placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+          placeholder="Launch year from (e.g. 2010)"
+          value={filter.launchYearFrom}
+          onChange={(e) => setF("launchYearFrom", e.target.value)}
+        />
+        <input
+          className="h-7 px-2 rounded-sm border border-border bg-background mono text-[11px] placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+          placeholder="Launch year to (e.g. 2020)"
+          value={filter.launchYearTo}
+          onChange={(e) => setF("launchYearTo", e.target.value)}
+        />
+        <input
+          className="h-7 px-2 rounded-sm border border-border bg-background mono text-[11px] placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+          placeholder="Beam coverage…"
+          value={filter.coverage}
+          onChange={(e) => setF("coverage", e.target.value)}
+        />
+      </div>
+      {isFiltered && (
+        <button
+          type="button"
+          onClick={clearFilter}
+          className="mono text-[10px] uppercase tracking-wider text-muted-foreground hover:text-destructive transition-colors"
+        >
+          × Clear Filters
+        </button>
+      )}
+    </div>
+  );
+
+  // ── Bulk operations bar (shows only when items are selected) ─────────────────
+  const bulkBar = selectedIds.size > 0 && (
+    <div className="px-3 py-1.5 border-b border-border bg-primary/5 flex items-center gap-2 shrink-0 mono text-[11px]">
+      <span className="text-primary font-bold">
+        {selectedIds.size} record{selectedIds.size !== 1 ? "s" : ""} selected
+      </span>
+      <span className="text-muted-foreground/40">·</span>
+      <button
+        type="button"
+        onClick={() => exportSats(filteredSats.filter((s) => selectedIds.has(s.id)), "selected")}
+        className="inline-flex items-center gap-1 text-primary hover:text-primary/80 transition-colors"
+      >
+        <Download className="h-3 w-3" /> Export Selected
+      </button>
+      <span className="text-muted-foreground/40">·</span>
+      <button
+        type="button"
+        onClick={() => setSelectedIds(new Set(visibleIds))}
+        className="text-muted-foreground hover:text-foreground transition-colors"
+      >
+        Select All Visible ({filteredSats.length})
+      </button>
+      <span className="text-muted-foreground/40">·</span>
+      <button type="button" onClick={clearSelection} className="text-muted-foreground hover:text-destructive transition-colors">
+        Clear
+      </button>
+    </div>
+  );
+
+  if (satellites.length === 0) {
+    return (
+      <>
+        <div className="rounded-md border border-border overflow-hidden flex flex-col">
+          {headerBar}
+          {countsBar}
+          <div className="p-8 flex flex-col items-center gap-2 text-center">
+            <SatIcon className="h-8 w-8 text-muted-foreground opacity-40" />
+            <div className="mono text-sm font-bold uppercase tracking-wide text-muted-foreground">No satellites recorded</div>
+            <div className="mono text-[11px] text-muted-foreground">Use "Add New Satellite" or "Import CSV" to populate data.</div>
+          </div>
+        </div>
+        <SatelliteEditDialog
+          satellite={editingSat}
+          onClose={() => setEditingSat(null)}
+          onSave={(updated) => { onEditSat(updated); setEditingSat(null); }}
+        />
+      </>
     );
   }
 
   return (
     <>
-      <div className="panel overflow-hidden">
-        {/* Scroll controls — always visible at the top, no vertical scrolling required */}
-        <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-secondary/30">
-          <span className="mono text-[10px] text-muted-foreground uppercase tracking-wider">
-            Satellite Records — scroll horizontally to view all columns
-          </span>
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={() => scrollTable("left")}
-              title="Scroll left"
-              className="h-6 w-6 grid place-items-center rounded-sm border border-border hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => scrollTable("right")}
-              title="Scroll right"
-              className="h-6 w-6 grid place-items-center rounded-sm border border-border hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
-            >
-              <ChevronRight className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        </div>
-        <div ref={scrollRef} className="overflow-x-auto">
-          <table className="w-full text-[11px] mono border-collapse">
+      <div className="rounded-md border border-border overflow-hidden flex flex-col" style={{ maxHeight: "70vh" }}>
+        {/* Fixed bars — never scroll */}
+        {headerBar}
+        {countsBar}
+        {filterPanel}
+        {bulkBar}
+
+        {/* Combined H + V scroll — sticky <th> elements handle column label visibility */}
+        <div ref={scrollRef} className="overflow-x-auto overflow-y-auto flex-1">
+          <table className="min-w-max text-[11px] mono border-collapse">
             <thead>
-              <tr className="border-b border-border bg-secondary/50">
-                <th className="px-3 py-2 text-left text-muted-foreground font-medium w-8">#</th>
-                <th className="px-3 py-2 text-left text-muted-foreground font-medium min-w-[140px]">Satellite Name</th>
-                <th className="px-3 py-2 text-left text-muted-foreground font-medium w-24">Orbital Pos.</th>
-                <th className="px-3 py-2 text-left text-muted-foreground font-medium w-16">Launch</th>
-                <th className="px-3 py-2 text-left text-muted-foreground font-medium min-w-[110px]">Transponders</th>
-                <th className="px-3 py-2 text-left text-muted-foreground font-medium min-w-[130px]">Beams</th>
-                <th className="px-3 py-2 text-left text-muted-foreground font-medium min-w-[200px]">Visible Beams</th>
-                <th className="px-3 py-2 text-left text-muted-foreground font-medium w-20">Actions</th>
+              <tr>
+                {/* Checkbox column */}
+                <th className="sticky top-0 z-10 bg-secondary px-2 py-1.5 w-8 border-b border-border">
+                  <input
+                    type="checkbox"
+                    checked={selectAll}
+                    onChange={handleSelectAll}
+                    title="Select / deselect all visible"
+                    className="cursor-pointer accent-primary"
+                  />
+                </th>
+                {[
+                  { label: "#",                cls: "w-7"            },
+                  { label: "Satellite",        cls: "min-w-[130px]"  },
+                  { label: "Orbital Position", cls: "min-w-[110px]"  },
+                  { label: "Launch",           cls: "w-14"           },
+                  { label: "Transponders",     cls: "min-w-[100px]"  },
+                  { label: "Beams",            cls: "min-w-[120px]"  },
+                  { label: "Visible Beams",    cls: "min-w-[180px]"  },
+                  { label: "Edit",             cls: "w-12"           },
+                ].map((col) => (
+                  <th key={col.label}
+                    className={`sticky top-0 z-10 bg-secondary px-2 py-1.5 text-left
+                                text-muted-foreground font-medium border-b border-border ${col.cls}`}>
+                    {col.label}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {satellites.map((sat, idx) => {
-                const tp             = parseTransponders(sat);
+              {filteredSats.map((sat, idx) => {
+                const tp = parseTransponders(sat);
                 const { total: bt, beams } = getBeamBreakdown(sat);
-                const visibleBeams   = getVisibleBeams(unitId, sat.id, regionId);
-                const hasFootprint   = !!(sat.footprintImageUrl || sat.beamCoverageImageUrl);
+                const visibleBeams = getVisibleBeams(unitId, sat.id, regionId);
+                const checked = selectedIds.has(sat.id);
 
                 return (
-                  <tr key={sat.id} className="hover:bg-secondary/30 transition-colors align-top">
-                    {/* S.No */}
-                    <td className="px-3 py-2.5 text-muted-foreground">{idx + 1}</td>
+                  <tr key={sat.id}
+                    className={`transition-colors align-top ${checked ? "bg-primary/8" : "hover:bg-secondary/30"}`}>
 
-                    {/* Satellite Name */}
-                    <td className="px-3 py-2.5">
+                    <td className="px-2 py-1.5">
+                      <input type="checkbox" checked={checked} onChange={() => toggleId(sat.id)}
+                        className="cursor-pointer accent-primary" />
+                    </td>
+
+                    <td className="px-2 py-1.5 text-muted-foreground">{idx + 1}</td>
+
+                    <td className="px-2 py-1.5">
                       <div className="font-bold text-foreground uppercase tracking-tight leading-tight">{sat.name}</div>
-                      <div className="text-muted-foreground text-[10px] mt-0.5">{sat.orbitType ?? "GEO"}</div>
+                      <div className="text-muted-foreground text-[10px]">{sat.orbitType ?? "GEO"}</div>
                     </td>
 
-                    {/* Orbital Position */}
-                    <td className="px-3 py-2.5 text-foreground font-bold">{sat.position}</td>
+                    <td className="px-2 py-1.5 text-foreground font-bold">{sat.position}</td>
+                    <td className="px-2 py-1.5 text-foreground">{sat.launchDate.slice(0, 4)}</td>
 
-                    {/* Launch Date (year only for compactness) */}
-                    <td className="px-3 py-2.5 text-foreground">{sat.launchDate.slice(0, 4)}</td>
-
-                    {/* Transponders */}
-                    <td className="px-3 py-2.5">
+                    <td className="px-2 py-1.5">
                       <div className="font-bold text-foreground">{tp.total}</div>
-                      {tp.cBand  && <div className="text-[10px] text-muted-foreground">· {tp.cBand} C-band</div>}
-                      {tp.kuBand && <div className="text-[10px] text-muted-foreground">· {tp.kuBand} Ku-band</div>}
+                      {tp.cBand  && <div className="text-[10px] text-muted-foreground">· {tp.cBand} C</div>}
+                      {tp.kuBand && <div className="text-[10px] text-muted-foreground">· {tp.kuBand} Ku</div>}
                     </td>
 
-                    {/* Beams */}
-                    <td className="px-3 py-2.5">
+                    <td className="px-2 py-1.5">
                       <div className="font-bold text-foreground">{bt}</div>
                       {beams.map((b, i) => (
                         <div key={i} className="text-[10px] text-muted-foreground">· {b}</div>
                       ))}
                     </td>
 
-                    {/* Visibility — beams visible to selected unit */}
-                    <td className="px-3 py-2.5">
+                    <td className="px-2 py-1.5">
                       {visibleBeams.length > 0 ? (
                         <div className="space-y-0.5">
                           {visibleBeams.map((b, i) => (
@@ -982,44 +1363,16 @@ function SatelliteTable({
                           ))}
                         </div>
                       ) : (
-                        <span className="text-muted-foreground italic text-[10px]">No visible beams</span>
+                        <span className="text-muted-foreground italic text-[10px]">—</span>
                       )}
                     </td>
 
-                    {/* Actions */}
-                    <td className="px-3 py-2.5">
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          title="Edit satellite data"
-                          onClick={() => setEditingSat(sat)}
-                          className="h-6 w-6 grid place-items-center rounded-sm border border-border
-                                     hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
-                        >
-                          <Pencil className="h-3 w-3" />
-                        </button>
-                        <button
-                          type="button"
-                          title={hasFootprint ? "View footprint image" : "No footprint uploaded"}
-                          onClick={() => hasFootprint && setFootprintSat(sat)}
-                          className={`h-6 w-6 grid place-items-center rounded-sm border border-border
-                                      transition-colors
-                                      ${hasFootprint
-                                        ? "text-primary hover:bg-secondary cursor-pointer"
-                                        : "text-muted-foreground/30 cursor-not-allowed"}`}
-                        >
-                          <Eye className="h-3 w-3" />
-                        </button>
-                        <button
-                          type="button"
-                          title="View visibility details"
-                          onClick={() => onViewSat(sat)}
-                          className="h-6 w-6 grid place-items-center rounded-sm border border-border
-                                     hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
-                        >
-                          <TrendingUp className="h-3 w-3" />
-                        </button>
-                      </div>
+                    <td className="px-2 py-1.5">
+                      <button type="button" title="Edit satellite data" onClick={() => setEditingSat(sat)}
+                        className="h-6 w-6 grid place-items-center rounded-sm border border-border
+                                   hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground">
+                        <Pencil className="h-3 w-3" />
+                      </button>
                     </td>
                   </tr>
                 );
@@ -1029,17 +1382,10 @@ function SatelliteTable({
         </div>
       </div>
 
-      {/* Edit dialog */}
       <SatelliteEditDialog
         satellite={editingSat}
         onClose={() => setEditingSat(null)}
         onSave={(updated) => { onEditSat(updated); setEditingSat(null); }}
-      />
-
-      {/* Footprint image modal */}
-      <FootprintModal
-        satellite={footprintSat}
-        onClose={() => setFootprintSat(null)}
       />
     </>
   );
@@ -1226,7 +1572,7 @@ function FootprintModal({
 
 // ─── CSV import button ─────────────────────────────────────────────────────────
 
-function CsvImportButton({
+function ImportCsvButton({
   regionId,
   onImport,
 }: {
@@ -1251,54 +1597,52 @@ function CsvImportButton({
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+    e.target.value = "";
+
+    const check = validateImportFile(file);
+    if (!check.ok) { toast.error(check.error); return; }
+    if (!file.name.toLowerCase().endsWith(".csv")) {
+      toast.error("Excel file detected. Please export to CSV format (.csv) first, then re-import.");
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = (ev) => {
       const text = ev.target?.result as string;
       const lines = text.split(/\r?\n/).filter((l) => l.trim());
-      if (lines.length < 2) return;
+      if (lines.length < 2) { toast.error("File appears empty or has no data rows."); return; }
+      let added = 0;
       lines.slice(1).forEach((line, i) => {
-        const [name, position, launchDate, cBand, kuBand, beamCoverage, visNotes] = parseCsvLine(line);
-        if (!name?.trim()) return;
+        const [satName, position, launchDate, cBand, kuBand, beamCoverage, visNotes] = parseCsvLine(line);
+        if (!satName?.trim()) return;
         const cNum  = parseInt(cBand  ?? "0") || 0;
         const kuNum = parseInt(kuBand ?? "0") || 0;
         const sat: GeoSatellite = {
-          id:                  `${regionId}-csv-${Date.now()}-${i}`,
-          name:                name.trim(),
-          position:            position?.trim() || "—",
-          launchDate:          launchDate?.trim() || "—",
-          transponders:
-            [cNum  > 0 ? `${cNum} C-band`  : "",
-             kuNum > 0 ? `${kuNum} Ku-band` : ""]
-              .filter(Boolean).join(" / ") || "—",
-          cBandTransponders:   cBand?.trim()  || undefined,
-          kuBandTransponders:  kuBand?.trim() || undefined,
-          beamCoverage:        beamCoverage?.trim() || "—",
-          visibilityNotes:     visNotes?.trim() || undefined,
+          id:                 `${regionId}-csv-${Date.now()}-${i}`,
+          name:               satName.trim(),
+          position:           position?.trim() || "—",
+          launchDate:         launchDate?.trim() || "—",
+          transponders:       [cNum  > 0 ? `${cNum} C-band` : "", kuNum > 0 ? `${kuNum} Ku-band` : ""]
+                                .filter(Boolean).join(" / ") || "—",
+          cBandTransponders:  cBand?.trim()  || undefined,
+          kuBandTransponders: kuBand?.trim() || undefined,
+          beamCoverage:       beamCoverage?.trim() || "—",
+          visibilityNotes:    visNotes?.trim() || undefined,
         };
         onImport(sat);
+        added++;
       });
+      if (added > 0) toast.success(`${added} satellite${added > 1 ? "s" : ""} imported successfully.`);
     };
     reader.readAsText(file);
-    e.target.value = "";
-  }
-
-  function downloadTemplate() {
-    const header = "Satellite Name,Orbital Position,Launch Date,C-band Transponders,Ku-band Transponders,Beam Coverage,Visibility Notes";
-    const sample = 'Example Sat 1,105.5°E,2020-06-15,20,18,"Asia / Pacific","East Asia Beam"';
-    const blob   = new Blob([header + "\n" + sample], { type: "text/csv" });
-    const a      = document.createElement("a");
-    a.href     = URL.createObjectURL(blob);
-    a.download = "satellite_import_template.csv";
-    a.click();
-    URL.revokeObjectURL(a.href);
   }
 
   return (
-    <div className="flex items-center gap-1">
+    <>
       <input
         ref={fileRef}
         type="file"
-        accept=".csv,text/csv"
+        accept=".csv,.xlsx,.xls,text/csv"
         className="hidden"
         onChange={handleFile}
       />
@@ -1308,20 +1652,14 @@ function CsvImportButton({
         size="sm"
         className="h-8 mono text-[11px] uppercase tracking-wider"
         onClick={() => fileRef.current?.click()}
+        title="Import satellite data from CSV file"
       >
         <Upload className="h-3.5 w-3.5 mr-1" /> Import CSV
       </Button>
-      <button
-        type="button"
-        onClick={downloadTemplate}
-        title="Download CSV template"
-        className="h-8 w-8 grid place-items-center rounded-sm border border-border hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
-      >
-        <Download className="h-3.5 w-3.5" />
-      </button>
-    </div>
+    </>
   );
 }
+
 
 // ─── Add Satellite dialog ──────────────────────────────────────────────────────
 

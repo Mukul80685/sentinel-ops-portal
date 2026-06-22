@@ -144,7 +144,7 @@ function navActive(pathname: string, to: string, exact?: boolean) {
 
 /** Shared style for Settings + Sign Out — identical font/size/weight */
 const secondaryCtrlCls =
-  "flex w-full items-center gap-2.5 px-3 py-2 mono text-[12px] uppercase tracking-wider text-muted-foreground rounded-sm hover:bg-secondary/50 hover:text-foreground transition-colors";
+  "flex w-full items-center gap-2 px-2 py-1.5 mono text-[11px] uppercase tracking-wider text-muted-foreground rounded-sm hover:bg-secondary/50 hover:text-foreground transition-colors";
 
 function SidebarLink({
   to,
@@ -162,7 +162,7 @@ function SidebarLink({
   return (
     <Link
       to={to}
-      className={`flex items-center gap-2.5 px-3 py-2 mono text-[13px] uppercase tracking-wider rounded-sm transition-colors ${
+      className={`flex items-center gap-2 px-2 py-1.5 mono text-[11px] uppercase tracking-wider rounded-sm transition-colors leading-snug ${
         bold ? "font-bold" : ""
       } ${
         active
@@ -170,7 +170,7 @@ function SidebarLink({
           : "text-sidebar-foreground hover:bg-secondary/50 hover:text-foreground"
       }`}
     >
-      <Icon className="h-3.5 w-3.5 shrink-0" />
+      <Icon className="h-3 w-3 shrink-0" />
       {label}
     </Link>
   );
@@ -417,12 +417,12 @@ function HomeSidebar({
   return (
     <div className="flex flex-col">
       {/* ── A. USER SECTION: toggle + live clock ── */}
-      <div className="px-3 pt-3 pb-2 border-b border-border">
+      <div className="px-2 pt-2 pb-1.5 border-b border-border">
         <button
           type="button"
           onClick={() => setMode((m) => (m === "admin" ? "user" : "admin"))}
           disabled={!isAdmin}
-          className={`flex w-full items-center gap-2.5 px-3 py-2 mono text-[12px] uppercase tracking-wider rounded-sm transition-colors ${
+          className={`flex w-full items-center gap-2 px-2 py-1.5 mono text-[11px] uppercase tracking-wider rounded-sm transition-colors ${
             mode === "admin" && isAdmin
               ? "bg-secondary text-foreground"
               : "text-sidebar-foreground hover:bg-secondary/50"
@@ -430,9 +430,9 @@ function HomeSidebar({
           title={isAdmin ? "Toggle admin / user mode" : "User mode"}
         >
           {mode === "admin" && isAdmin ? (
-            <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
+            <ShieldCheck className="h-3 w-3 shrink-0" />
           ) : (
-            <User className="h-3.5 w-3.5 shrink-0" />
+            <User className="h-3 w-3 shrink-0" />
           )}
           <span>{mode === "admin" && isAdmin ? "Admin" : "User"}</span>
         </button>
@@ -441,15 +441,15 @@ function HomeSidebar({
           type="button"
           onClick={onClockClick}
           title="Open Date / Time Control Panel"
-          className="w-full text-left px-3 pt-1.5 mono text-[11px] text-muted-foreground leading-snug hover:text-foreground transition-colors rounded-sm"
+          className="w-full text-left px-2 pt-1 mono text-[10px] text-muted-foreground leading-snug hover:text-foreground transition-colors rounded-sm"
         >
           {stamp || "\u00A0"}
         </button>
       </div>
 
       {/* ── B. MAIN NAVIGATION ── */}
-      <nav className="py-2">
-        <ul className="space-y-0.5 px-2">
+      <nav className="py-1.5">
+        <ul className="space-y-0.5 px-1.5">
           {standardNavItems.map((item) => {
             const to = resolveSecondaryTo(item);
             return (
@@ -467,17 +467,17 @@ function HomeSidebar({
       </nav>
 
       {/* ── C. SYSTEM CONTROLS: Settings + Sign Out ── */}
-      <div className="border-t border-border px-3 py-2 space-y-0.5">
+      <div className="border-t border-border px-2 py-1.5 space-y-0.5">
         <Link
           to={isAdmin ? "/admin/users" : "/"}
           className={secondaryCtrlCls}
           title="Settings"
         >
-          <Settings className="h-3.5 w-3.5 shrink-0" />
+          <Settings className="h-3 w-3 shrink-0" />
           Settings
         </Link>
         <button type="button" onClick={() => signOut()} className={secondaryCtrlCls}>
-          <Power className="h-3.5 w-3.5 shrink-0" />
+          <Power className="h-3 w-3 shrink-0" />
           Sign Out
         </button>
       </div>
@@ -509,8 +509,8 @@ function ModuleSidebar({
   return (
     <>
       {/* Module nav — natural height, no flex-1 gap */}
-      <nav className="py-3">
-        <ul className="space-y-0.5 px-2">
+      <nav className="py-2">
+        <ul className="space-y-0.5 px-1.5">
           {visibleModuleItems.map((item) => (
             <li key={item.to}>
               <SidebarLink
@@ -526,24 +526,24 @@ function ModuleSidebar({
       </nav>
 
       {/* Settings + Sign Out + Clock — compact cluster, no spacer */}
-      <div className="border-t border-border px-3 pt-2 pb-2 space-y-0.5">
+      <div className="border-t border-border px-2 pt-1.5 pb-1.5 space-y-0.5">
         <Link
           to={isAdmin ? "/admin/users" : "/"}
           className={secondaryCtrlCls}
           title="Settings"
         >
-          <Settings className="h-3.5 w-3.5 shrink-0" />
+          <Settings className="h-3 w-3 shrink-0" />
           Settings
         </Link>
         <button type="button" onClick={() => signOut()} className={secondaryCtrlCls}>
-          <Power className="h-3.5 w-3.5 shrink-0" />
+          <Power className="h-3 w-3 shrink-0" />
           Sign Out
         </button>
         <button
           type="button"
           onClick={onClockClick}
           title="Open Date / Time Control Panel"
-          className="w-full text-left px-3 pt-1 mono text-[11px] text-muted-foreground leading-snug hover:text-foreground transition-colors rounded-sm"
+          className="w-full text-left px-2 pt-1 mono text-[10px] text-muted-foreground leading-snug hover:text-foreground transition-colors rounded-sm"
         >
           {stamp || "\u00A0"}
         </button>
@@ -578,12 +578,12 @@ function SecondarySidebar({
   return (
     <>
       {/* TOP — User toggle + 4 nav items, evenly distributed vertically */}
-      <nav className="flex-1 flex flex-col justify-between px-2 py-4">
+      <nav className="flex-1 flex flex-col justify-between px-1.5 py-3">
         <button
           type="button"
           onClick={() => setMode((m) => (m === "admin" ? "user" : "admin"))}
           disabled={!isAdmin}
-          className={`flex w-full items-center gap-2.5 px-3 py-2.5 mono text-[13px] uppercase tracking-wider rounded-sm transition-colors ${
+          className={`flex w-full items-center gap-2 px-2 py-1.5 mono text-[11px] uppercase tracking-wider rounded-sm transition-colors ${
             mode === "admin" && isAdmin
               ? "bg-secondary text-foreground font-bold"
               : "text-sidebar-foreground hover:bg-secondary/50"
@@ -591,9 +591,9 @@ function SecondarySidebar({
           title={isAdmin ? "Toggle admin / user mode" : "User mode"}
         >
           {mode === "admin" && isAdmin ? (
-            <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
+            <ShieldCheck className="h-3 w-3 shrink-0" />
           ) : (
-            <User className="h-3.5 w-3.5 shrink-0" />
+            <User className="h-3 w-3 shrink-0" />
           )}
           <span>{mode === "admin" && isAdmin ? "Admin" : "User"}</span>
         </button>
@@ -613,29 +613,29 @@ function SecondarySidebar({
       </nav>
 
       {/* MIDDLE — Settings */}
-      <div className="border-t border-border px-3 py-2">
+      <div className="border-t border-border px-2 py-1.5">
         <Link
           to={isAdmin ? "/admin/users" : "/"}
           className={secondaryCtrlCls}
           title="Settings"
         >
-          <Settings className="h-3.5 w-3.5 shrink-0" />
+          <Settings className="h-3 w-3 shrink-0" />
           Settings
         </Link>
       </div>
 
       {/* BOTTOM — Clock (live) + Sign Out */}
-      <div className="border-t border-border px-3 py-2 space-y-0.5">
+      <div className="border-t border-border px-2 py-1.5 space-y-0.5">
         <button
           type="button"
           onClick={onClockClick}
           title="Open Date / Time Control Panel"
-          className="w-full text-left px-3 py-1.5 mono text-[11px] text-muted-foreground leading-snug hover:text-foreground transition-colors rounded-sm"
+          className="w-full text-left px-2 py-1 mono text-[10px] text-muted-foreground leading-snug hover:text-foreground transition-colors rounded-sm"
         >
           {stamp || "\u00A0"}
         </button>
         <button type="button" onClick={() => signOut()} className={secondaryCtrlCls}>
-          <Power className="h-3.5 w-3.5 shrink-0" />
+          <Power className="h-3 w-3 shrink-0" />
           Sign Out
         </button>
       </div>
@@ -687,7 +687,7 @@ export function AppShell({
     <div className="flex h-screen overflow-hidden text-foreground">
       <aside
         className={`${hideSidebar ? "hidden" : "hidden md:flex"} shrink-0 flex-col border-r border-border bg-sidebar ${
-          isHome ? "w-56" : "w-60"
+          isHome ? "w-44" : "w-48"
         }`}
       >
         {isHome ? (
