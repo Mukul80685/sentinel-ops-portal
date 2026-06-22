@@ -94,6 +94,7 @@ interface GeoSatellite {
   beams?: string[];                // beam breakdown e.g. ["8 Ku Spot Beams","6 Regional Beams"]
   footprintImageUrl?: string;      // primary footprint/coverage image
   visibilityNotes?: string;        // free-text notes about unit visibility
+  beamEirp?: Record<string, number>; // beam_name → EIRP value in dBW (user-entered or auto-generated)
 }
 
 interface Region {
@@ -372,6 +373,23 @@ function getVisibleBeams(unitId: string, satId: string, regionId: string): strin
     [idxs[i], idxs[j]] = [idxs[j], idxs[i]];
   }
   return idxs.slice(0, count).map((i) => pool[i]);
+}
+
+// Deterministic EIRP lookup / generation for a single beam.
+// Priority: 1) sat.beamEirp[beam]  2) per-band seeded range  3) fallback 42 dBW
+function getBeamEirp(beam: string, satId: string, stored?: Record<string, number>): number {
+  if (stored && stored[beam] !== undefined) return stored[beam];
+  const rand = seedRand(satId + beam + "eirp");
+  const bl = beam.toLowerCase();
+  // Ka beams: highest EIRP (52–60)
+  if (bl.includes("ka"))           return 52 + Math.floor(rand() * 9);
+  // Ku Spot: high (48–57)
+  if (bl.includes("ku spot") || bl.includes("ku s")) return 48 + Math.floor(rand() * 10);
+  // Ku Regional / Wide: moderate (44–52)
+  if (bl.includes("ku"))           return 44 + Math.floor(rand() * 9);
+  // C-band: lower (38–49)
+  if (bl.includes("c-band") || bl.includes("c band")) return 38 + Math.floor(rand() * 12);
+  return 42 + Math.floor(rand() * 10); // fallback
 }
 
 // Parse transponder counts from a GeoSatellite into structured numbers
@@ -1302,7 +1320,7 @@ function SatelliteTable({
                   { label: "Launch",           cls: "w-14"           },
                   { label: "Transponders",     cls: "min-w-[100px]"  },
                   { label: "Beams",            cls: "min-w-[120px]"  },
-                  { label: "Visible Beams",    cls: "min-w-[180px]"  },
+                  { label: "Visible Beams",    cls: "min-w-[220px]"  },
                   { label: "Edit",             cls: "w-12"           },
                 ].map((col) => (
                   <th key={col.label}
@@ -1355,12 +1373,18 @@ function SatelliteTable({
                     <td className="px-2 py-1.5">
                       {visibleBeams.length > 0 ? (
                         <div className="space-y-0.5">
-                          {visibleBeams.map((b, i) => (
-                            <div key={i} className="flex items-center gap-1 text-[10px]">
-                              <span className="inline-block w-1.5 h-1.5 rounded-full bg-primary shrink-0" />
-                              <span className="text-foreground">{b}</span>
-                            </div>
-                          ))}
+                          {visibleBeams.map((b, i) => {
+                            const eirp = getBeamEirp(b, sat.id, sat.beamEirp);
+                            return (
+                              <div key={i} className="flex items-start gap-1 text-[10px] leading-snug">
+                                <span className="inline-block w-1.5 h-1.5 rounded-full bg-primary shrink-0 mt-[3px]" />
+                                <span>
+                                  <span className="text-foreground">{b}</span>
+                                  <span className="text-muted-foreground"> (EIRP {eirp} dBW)</span>
+                                </span>
+                              </div>
+                            );
+                          })}
                         </div>
                       ) : (
                         <span className="text-muted-foreground italic text-[10px]">—</span>
@@ -1384,6 +1408,7 @@ function SatelliteTable({
 
       <SatelliteEditDialog
         satellite={editingSat}
+        regionId={regionId}
         onClose={() => setEditingSat(null)}
         onSave={(updated) => { onEditSat(updated); setEditingSat(null); }}
       />
@@ -1395,10 +1420,12 @@ function SatelliteTable({
 
 function SatelliteEditDialog({
   satellite,
+  regionId,
   onClose,
   onSave,
 }: {
   satellite: GeoSatellite | null;
+  regionId: string;
   onClose: () => void;
   onSave: (sat: GeoSatellite) => void;
 }) {
@@ -1407,6 +1434,8 @@ function SatelliteEditDialog({
     cBand: "", kuBand: "", beamCoverage: "", visibilityNotes: "",
   });
   const [fpPreview, setFpPreview] = useState("");
+  // Per-beam EIRP entries: {beam: label, eirp: string value}
+  const [beamEirpEntries, setBeamEirpEntries] = useState<{ beam: string; eirp: string }[]>([]);
 
   useEffect(() => {
     if (satellite) {
@@ -1421,8 +1450,29 @@ function SatelliteEditDialog({
         visibilityNotes: satellite.visibilityNotes ?? "",
       });
       setFpPreview(satellite.footprintImageUrl || satellite.beamCoverageImageUrl || "");
+      // Populate EIRP entries from the region beam pool, pre-filling stored or generated values
+      const pool = REGION_BEAMS[regionId] ?? [];
+      setBeamEirpEntries(
+        pool.map((b) => ({
+          beam: b,
+          eirp: String(getBeamEirp(b, satellite.id, satellite.beamEirp)),
+        }))
+      );
     }
   }, [satellite?.id]);
+
+  function setEirp(idx: number, val: string) {
+    setBeamEirpEntries((prev) => prev.map((e, i) => (i === idx ? { ...e, eirp: val } : e)));
+  }
+
+  function buildBeamEirpRecord(): Record<string, number> {
+    const rec: Record<string, number> = {};
+    for (const { beam, eirp } of beamEirpEntries) {
+      const n = parseInt(eirp);
+      if (!isNaN(n)) rec[beam] = n;
+    }
+    return rec;
+  }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -1444,6 +1494,7 @@ function SatelliteEditDialog({
       beamCoverage:       form.beamCoverage.trim(),
       visibilityNotes:    form.visibilityNotes.trim() || undefined,
       footprintImageUrl:  fpPreview || undefined,
+      beamEirp:           buildBeamEirpRecord(),
     });
   }
 
@@ -1495,6 +1546,41 @@ function SatelliteEditDialog({
           <SatField label="Visibility Notes">
             <Input value={form.visibilityNotes} onChange={(e) => setForm({ ...form, visibilityNotes: e.target.value })} placeholder="e.g. Ku Spot Beam 08 visible from this unit" />
           </SatField>
+
+          {/* Per-beam EIRP values */}
+          {beamEirpEntries.length > 0 && (
+            <div className="space-y-2">
+              <div className="label-eyebrow">Visible Beam EIRP Values (dBW)</div>
+              <div className="rounded-sm border border-border overflow-hidden">
+                <table className="w-full text-[11px]">
+                  <thead>
+                    <tr className="bg-secondary border-b border-border">
+                      <th className="px-2 py-1 text-left text-muted-foreground font-medium">Beam</th>
+                      <th className="px-2 py-1 text-left text-muted-foreground font-medium w-20">EIRP (dBW)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {beamEirpEntries.map((entry, idx) => (
+                      <tr key={entry.beam} className="hover:bg-secondary/30">
+                        <td className="px-2 py-1 text-foreground">{entry.beam}</td>
+                        <td className="px-2 py-1">
+                          <Input
+                            type="number"
+                            min={0}
+                            max={80}
+                            value={entry.eirp}
+                            onChange={(e) => setEirp(idx, e.target.value)}
+                            className="h-6 text-[11px] px-1.5 w-16"
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-[10px] text-muted-foreground">Typical range: 30–60 dBW. Values are stored per beam.</p>
+            </div>
+          )}
 
           <SatField label="Footprint / Coverage Map">
             <label className="flex flex-col items-center justify-center w-full h-28 border-2 border-dashed border-border rounded-sm cursor-pointer hover:border-primary transition-colors bg-secondary/30">
@@ -1686,6 +1772,24 @@ function AddSatelliteDialog({
   const [form, setForm] = useState(EMPTY_SAT_FORM);
   const [coverageFile, setCoverageFile] = useState<File | null>(null);
   const [coveragePreview, setCoveragePreview] = useState<string>("");
+  // Per-beam EIRP entries initialised from the region's beam pool
+  const regionPool = REGION_BEAMS[regionId] ?? [];
+  const [beamEirpEntries, setBeamEirpEntries] = useState<{ beam: string; eirp: string }[]>(
+    regionPool.map((b) => ({ beam: b, eirp: "" }))
+  );
+
+  function setEirp(idx: number, val: string) {
+    setBeamEirpEntries((prev) => prev.map((e, i) => (i === idx ? { ...e, eirp: val } : e)));
+  }
+
+  function buildBeamEirpRecord(): Record<string, number> {
+    const rec: Record<string, number> = {};
+    for (const { beam, eirp } of beamEirpEntries) {
+      const n = parseInt(eirp);
+      if (!isNaN(n)) rec[beam] = n;
+    }
+    return rec;
+  }
 
   function handleImageFile(file: File) {
     setCoverageFile(file);
@@ -1698,6 +1802,7 @@ function AddSatelliteDialog({
     setForm(EMPTY_SAT_FORM);
     setCoverageFile(null);
     setCoveragePreview("");
+    setBeamEirpEntries(regionPool.map((b) => ({ beam: b, eirp: "" })));
   }
 
   function buildTranspondersLabel() {
@@ -1722,6 +1827,7 @@ function AddSatelliteDialog({
       kuBandTransponders: form.kuBand.trim() || undefined,
       beamCoverage: form.beamCoverage.trim() || "—",
       beamCoverageImageUrl: coveragePreview || undefined,
+      beamEirp: buildBeamEirpRecord(),
     };
     onAdd(sat);
     setOpen(false);
@@ -1817,6 +1923,42 @@ function AddSatelliteDialog({
               placeholder="e.g. Asia / Pacific"
             />
           </SatField>
+
+          {/* Per-beam EIRP values */}
+          {beamEirpEntries.length > 0 && (
+            <div className="space-y-2">
+              <div className="label-eyebrow">Visible Beam EIRP Values (dBW)</div>
+              <div className="rounded-sm border border-border overflow-hidden">
+                <table className="w-full text-[11px]">
+                  <thead>
+                    <tr className="bg-secondary border-b border-border">
+                      <th className="px-2 py-1 text-left text-muted-foreground font-medium">Beam</th>
+                      <th className="px-2 py-1 text-left text-muted-foreground font-medium w-20">EIRP (dBW)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {beamEirpEntries.map((entry, idx) => (
+                      <tr key={entry.beam} className="hover:bg-secondary/30">
+                        <td className="px-2 py-1 text-foreground">{entry.beam}</td>
+                        <td className="px-2 py-1">
+                          <Input
+                            type="number"
+                            min={0}
+                            max={80}
+                            value={entry.eirp}
+                            onChange={(e) => setEirp(idx, e.target.value)}
+                            placeholder="e.g. 52"
+                            className="h-6 text-[11px] px-1.5 w-16"
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-[10px] text-muted-foreground">Leave blank to auto-generate. Typical range: 30–60 dBW.</p>
+            </div>
+          )}
 
           {/* Beam Coverage Image upload */}
           <SatField label="Beam Coverage Map (optional)">

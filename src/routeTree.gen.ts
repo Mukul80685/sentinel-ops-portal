@@ -30,6 +30,7 @@ import { Route as AuthenticatedAdminUsersRouteImport } from './routes/_authentic
 import { Route as AuthenticatedAdminUnitsRouteImport } from './routes/_authenticated/admin/units'
 import { Route as AuthenticatedAdminSatellitesRouteImport } from './routes/_authenticated/admin/satellites'
 import { Route as AuthenticatedInventoryUnitIdIndexRouteImport } from './routes/_authenticated/inventory/$unitId/index'
+import { Route as AuthenticatedIntelUnitIdSatelliteKeyRouteImport } from './routes/_authenticated/intel.$unitId.$satelliteKey'
 import { Route as AuthenticatedInventoryUnitIdCategoryIdIndexRouteImport } from './routes/_authenticated/inventory/$unitId/$categoryId/index'
 import { Route as AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRouteImport } from './routes/_authenticated/inventory/$unitId/$categoryId/$equipmentId'
 
@@ -149,6 +150,12 @@ const AuthenticatedInventoryUnitIdIndexRoute =
     path: '/inventory/$unitId/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedIntelUnitIdSatelliteKeyRoute =
+  AuthenticatedIntelUnitIdSatelliteKeyRouteImport.update({
+    id: '/$satelliteKey',
+    path: '/$satelliteKey',
+    getParentRoute: () => AuthenticatedIntelUnitIdRoute,
+  } as any)
 const AuthenticatedInventoryUnitIdCategoryIdIndexRoute =
   AuthenticatedInventoryUnitIdCategoryIdIndexRouteImport.update({
     id: '/inventory/$unitId/$categoryId/',
@@ -174,7 +181,7 @@ export interface FileRoutesByFullPath {
   '/admin/users': typeof AuthenticatedAdminUsersRoute
   '/allocate/$intelId': typeof AuthenticatedAllocateIntelIdRoute
   '/engagement/$unitId': typeof AuthenticatedEngagementUnitIdRoute
-  '/intel/$unitId': typeof AuthenticatedIntelUnitIdRoute
+  '/intel/$unitId': typeof AuthenticatedIntelUnitIdRouteWithChildren
   '/priority/$unitId': typeof AuthenticatedPriorityUnitIdRoute
   '/engagement/': typeof AuthenticatedEngagementIndexRoute
   '/intel/': typeof AuthenticatedIntelIndexRoute
@@ -182,6 +189,7 @@ export interface FileRoutesByFullPath {
   '/priority/': typeof AuthenticatedPriorityIndexRoute
   '/serviceability/': typeof AuthenticatedServiceabilityIndexRoute
   '/visibility/': typeof AuthenticatedVisibilityIndexRoute
+  '/intel/$unitId/$satelliteKey': typeof AuthenticatedIntelUnitIdSatelliteKeyRoute
   '/inventory/$unitId/': typeof AuthenticatedInventoryUnitIdIndexRoute
   '/inventory/$unitId/$categoryId/$equipmentId': typeof AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRoute
   '/inventory/$unitId/$categoryId/': typeof AuthenticatedInventoryUnitIdCategoryIdIndexRoute
@@ -198,7 +206,7 @@ export interface FileRoutesByTo {
   '/admin/users': typeof AuthenticatedAdminUsersRoute
   '/allocate/$intelId': typeof AuthenticatedAllocateIntelIdRoute
   '/engagement/$unitId': typeof AuthenticatedEngagementUnitIdRoute
-  '/intel/$unitId': typeof AuthenticatedIntelUnitIdRoute
+  '/intel/$unitId': typeof AuthenticatedIntelUnitIdRouteWithChildren
   '/priority/$unitId': typeof AuthenticatedPriorityUnitIdRoute
   '/engagement': typeof AuthenticatedEngagementIndexRoute
   '/intel': typeof AuthenticatedIntelIndexRoute
@@ -206,6 +214,7 @@ export interface FileRoutesByTo {
   '/priority': typeof AuthenticatedPriorityIndexRoute
   '/serviceability': typeof AuthenticatedServiceabilityIndexRoute
   '/visibility': typeof AuthenticatedVisibilityIndexRoute
+  '/intel/$unitId/$satelliteKey': typeof AuthenticatedIntelUnitIdSatelliteKeyRoute
   '/inventory/$unitId': typeof AuthenticatedInventoryUnitIdIndexRoute
   '/inventory/$unitId/$categoryId/$equipmentId': typeof AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRoute
   '/inventory/$unitId/$categoryId': typeof AuthenticatedInventoryUnitIdCategoryIdIndexRoute
@@ -224,7 +233,7 @@ export interface FileRoutesById {
   '/_authenticated/admin/users': typeof AuthenticatedAdminUsersRoute
   '/_authenticated/allocate/$intelId': typeof AuthenticatedAllocateIntelIdRoute
   '/_authenticated/engagement/$unitId': typeof AuthenticatedEngagementUnitIdRoute
-  '/_authenticated/intel/$unitId': typeof AuthenticatedIntelUnitIdRoute
+  '/_authenticated/intel/$unitId': typeof AuthenticatedIntelUnitIdRouteWithChildren
   '/_authenticated/priority/$unitId': typeof AuthenticatedPriorityUnitIdRoute
   '/_authenticated/engagement/': typeof AuthenticatedEngagementIndexRoute
   '/_authenticated/intel/': typeof AuthenticatedIntelIndexRoute
@@ -232,6 +241,7 @@ export interface FileRoutesById {
   '/_authenticated/priority/': typeof AuthenticatedPriorityIndexRoute
   '/_authenticated/serviceability/': typeof AuthenticatedServiceabilityIndexRoute
   '/_authenticated/visibility/': typeof AuthenticatedVisibilityIndexRoute
+  '/_authenticated/intel/$unitId/$satelliteKey': typeof AuthenticatedIntelUnitIdSatelliteKeyRoute
   '/_authenticated/inventory/$unitId/': typeof AuthenticatedInventoryUnitIdIndexRoute
   '/_authenticated/inventory/$unitId/$categoryId/$equipmentId': typeof AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRoute
   '/_authenticated/inventory/$unitId/$categoryId/': typeof AuthenticatedInventoryUnitIdCategoryIdIndexRoute
@@ -258,6 +268,7 @@ export interface FileRouteTypes {
     | '/priority/'
     | '/serviceability/'
     | '/visibility/'
+    | '/intel/$unitId/$satelliteKey'
     | '/inventory/$unitId/'
     | '/inventory/$unitId/$categoryId/$equipmentId'
     | '/inventory/$unitId/$categoryId/'
@@ -282,6 +293,7 @@ export interface FileRouteTypes {
     | '/priority'
     | '/serviceability'
     | '/visibility'
+    | '/intel/$unitId/$satelliteKey'
     | '/inventory/$unitId'
     | '/inventory/$unitId/$categoryId/$equipmentId'
     | '/inventory/$unitId/$categoryId'
@@ -307,6 +319,7 @@ export interface FileRouteTypes {
     | '/_authenticated/priority/'
     | '/_authenticated/serviceability/'
     | '/_authenticated/visibility/'
+    | '/_authenticated/intel/$unitId/$satelliteKey'
     | '/_authenticated/inventory/$unitId/'
     | '/_authenticated/inventory/$unitId/$categoryId/$equipmentId'
     | '/_authenticated/inventory/$unitId/$categoryId/'
@@ -466,6 +479,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedInventoryUnitIdIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/intel/$unitId/$satelliteKey': {
+      id: '/_authenticated/intel/$unitId/$satelliteKey'
+      path: '/$satelliteKey'
+      fullPath: '/intel/$unitId/$satelliteKey'
+      preLoaderRoute: typeof AuthenticatedIntelUnitIdSatelliteKeyRouteImport
+      parentRoute: typeof AuthenticatedIntelUnitIdRoute
+    }
     '/_authenticated/inventory/$unitId/$categoryId/': {
       id: '/_authenticated/inventory/$unitId/$categoryId/'
       path: '/inventory/$unitId/$categoryId'
@@ -483,6 +503,21 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface AuthenticatedIntelUnitIdRouteChildren {
+  AuthenticatedIntelUnitIdSatelliteKeyRoute: typeof AuthenticatedIntelUnitIdSatelliteKeyRoute
+}
+
+const AuthenticatedIntelUnitIdRouteChildren: AuthenticatedIntelUnitIdRouteChildren =
+  {
+    AuthenticatedIntelUnitIdSatelliteKeyRoute:
+      AuthenticatedIntelUnitIdSatelliteKeyRoute,
+  }
+
+const AuthenticatedIntelUnitIdRouteWithChildren =
+  AuthenticatedIntelUnitIdRoute._addFileChildren(
+    AuthenticatedIntelUnitIdRouteChildren,
+  )
+
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedControlCenterRoute: typeof AuthenticatedControlCenterRoute
   AuthenticatedImportantRoute: typeof AuthenticatedImportantRoute
@@ -494,7 +529,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedAdminUsersRoute: typeof AuthenticatedAdminUsersRoute
   AuthenticatedAllocateIntelIdRoute: typeof AuthenticatedAllocateIntelIdRoute
   AuthenticatedEngagementUnitIdRoute: typeof AuthenticatedEngagementUnitIdRoute
-  AuthenticatedIntelUnitIdRoute: typeof AuthenticatedIntelUnitIdRoute
+  AuthenticatedIntelUnitIdRoute: typeof AuthenticatedIntelUnitIdRouteWithChildren
   AuthenticatedPriorityUnitIdRoute: typeof AuthenticatedPriorityUnitIdRoute
   AuthenticatedEngagementIndexRoute: typeof AuthenticatedEngagementIndexRoute
   AuthenticatedIntelIndexRoute: typeof AuthenticatedIntelIndexRoute
@@ -518,7 +553,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedAdminUsersRoute: AuthenticatedAdminUsersRoute,
   AuthenticatedAllocateIntelIdRoute: AuthenticatedAllocateIntelIdRoute,
   AuthenticatedEngagementUnitIdRoute: AuthenticatedEngagementUnitIdRoute,
-  AuthenticatedIntelUnitIdRoute: AuthenticatedIntelUnitIdRoute,
+  AuthenticatedIntelUnitIdRoute: AuthenticatedIntelUnitIdRouteWithChildren,
   AuthenticatedPriorityUnitIdRoute: AuthenticatedPriorityUnitIdRoute,
   AuthenticatedEngagementIndexRoute: AuthenticatedEngagementIndexRoute,
   AuthenticatedIntelIndexRoute: AuthenticatedIntelIndexRoute,

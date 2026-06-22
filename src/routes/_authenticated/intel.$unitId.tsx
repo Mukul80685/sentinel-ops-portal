@@ -1,536 +1,181 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
 import { Empty } from "@/components/Empty";
-import { listSatellites, listUnits, exportCsv } from "@/lib/queries";
+import { listUnits } from "@/lib/queries";
 import { supabase } from "@/integrations/supabase/client";
-import { useCanEdit } from "@/lib/auth";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { ArrowLeft, Satellite } from "lucide-react";
 import {
-  Plus,
-  Trash2,
-  Search,
-  Download,
-  FileText,
-  Paperclip,
-  MoreHorizontal,
-  Star,
-  Target,
-  X,
-  TrendingUp,
-  TrendingDown,
-  Eye,
-  ShieldAlert,
-} from "lucide-react";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { useMemo, useState } from "react";
-import { toast } from "sonner";
-import { signedUrl, uploadFile } from "@/lib/storage";
+  INT_UNITS,
+  mergeRecords,
+  normalizeDbRow,
+  groupBySatellite,
+  formatDisplayDate,
+  productivityColor,
+} from "@/lib/intelRepository";
 
-export const Route = createFileRoute("/_authenticated/intel/$unitId")({ component: IntelRepository });
+export const Route = createFileRoute("/_authenticated/intel/$unitId")({
+  component: IntelUnitView,
+});
 
-function IntelRepository() {
+function IntelUnitView() {
   const { unitId } = Route.useParams();
-  const canEdit = useCanEdit();
-  const qc = useQueryClient();
   const navigate = useNavigate();
-  const [q, setQ] = useState("");
-  const [satFilter, setSatFilter] = useState("");
-  const unitFilter = unitId;
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
-  const [productivity, setProductivity] = useState<"all" | "productive" | "non">("all");
-  const [dropTarget, setDropTarget] = useState<any | null>(null);
-  const [typeFilter, setTypeFilter] = useState<string>("ALL");
-  const [detailRecord, setDetailRecord] = useState<any | null>(null);
 
-  const { data: sats = [] } = useQuery({ queryKey: ["sats"], queryFn: listSatellites });
-  const { data: units = [] } = useQuery({ queryKey: ["units"], queryFn: listUnits });
-  const scopedUnit = units.find((u) => u.id === unitId);
-  const { data: rows = [] } = useQuery({
+  const { data: dbUnits = [] } = useQuery({ queryKey: ["units"], queryFn: listUnits });
+
+  const unit = useMemo(() => {
+    const local = INT_UNITS.find((u) => u.id === unitId);
+    if (local) return local;
+    const db = dbUnits.find((u) => u.id === unitId);
+    if (db) return { id: db.id, code: db.code, name: db.name, location: db.location ?? "—" };
+    return null;
+  }, [unitId, dbUnits]);
+
+  const { data: dbRows = [], isLoading } = useQuery({
     queryKey: ["intel", unitId],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("intel_records")
         .select("*, satellites:satellite_id(name), units:unit_id(code)")
-        .eq("unit_id", unitId)
-        .order("observation_date", { ascending: false });
+        .eq("unit_id", unitId);
       if (error) throw error;
       return data ?? [];
     },
+    enabled: !!unitId,
   });
 
-  const isProductive = (r: any) => {
-    if (r.is_productive !== null && r.is_productive !== undefined) return r.is_productive;
-    // Default rule: presence of frequency + meaningful summary/analysis
-    return Boolean(r.frequency && (r.summary || r.analysis_report));
-  };
+  const records = useMemo(() => {
+    if (!unit) return [];
+    const normalized = dbRows.map((r) =>
+      normalizeDbRow(r as Record<string, unknown>, unit.name),
+    );
+    return mergeRecords(normalized, unitId, unit.name);
+  }, [dbRows, unitId, unit]);
 
-  const filtered = useMemo(() => rows.filter((r: any) => {
-    if (satFilter && r.satellite_id !== satFilter) return false;
-    if (unitFilter && r.unit_id !== unitFilter) return false;
-    if (typeFilter !== "ALL" && (r.intel_type ?? "SIGINT") !== typeFilter) return false;
-    if (dateFrom && r.observation_date < dateFrom) return false;
-    if (dateTo && r.observation_date > dateTo) return false;
-    if (productivity === "productive" && !isProductive(r)) return false;
-    if (productivity === "non" && isProductive(r)) return false;
-    if (q) {
-      const hay = `${r.satellites?.name ?? ""} ${r.units?.code ?? ""} ${r.frequency ?? ""} ${r.band ?? ""} ${r.summary ?? ""} ${r.analysis_report ?? ""} ${r.intel_type ?? ""} ${r.report_number ?? ""}`.toLowerCase();
-      if (!hay.includes(q.toLowerCase())) return false;
-    }
-    return true;
-  }), [rows, q, satFilter, unitFilter, dateFrom, dateTo, productivity, typeFilter]);
+  const satelliteSummaries = useMemo(() => groupBySatellite(records), [records]);
 
-  const productive = useMemo(() => filtered.filter(isProductive), [filtered]);
-  const nonProductive = useMemo(() => filtered.filter((r: any) => !isProductive(r)), [filtered]);
-
-  async function confirmDrop(id: string) {
-    const { error } = await supabase.from("intel_records").delete().eq("id", id);
-    if (error) return toast.error(error.message);
-    toast.success("Frequency dropped from repository");
-    setDropTarget(null);
-    qc.invalidateQueries({ queryKey: ["intel"] });
-  }
-
-  async function addToImportant(r: any) {
-    if (!r.satellite_id) return toast.error("Record has no satellite assigned");
-    const { error } = await supabase.from("important_frequencies").insert({
-      satellite_id: r.satellite_id,
-      intel_record_id: r.id,
-      frequency: r.frequency ?? "—",
-      band: r.band ?? null,
-      label: r.summary ? r.summary.slice(0, 80) : null,
-    });
-    if (error) return toast.error(error.message);
-    toast.success("Added to Important Frequencies");
-  }
-
-  function allot(r: any) {
-    navigate({ to: "/allocate/$intelId", params: { intelId: r.id } });
-  }
-
-  function exportData() {
-    exportCsv(filtered.map((r: any) => ({
-      Date: r.observation_date,
-      Satellite: r.satellites?.name,
-      Agency: r.units?.code,
-      Frequency: r.frequency,
-      Band: r.band,
-      Summary: r.summary,
-      Analysis: r.analysis_report,
-    })), "intel-records.csv");
-  }
-
-  if (units.length > 0 && !scopedUnit) {
+  if (!unit) {
     return (
       <AppShell title="INT Repository" showBack>
-        <Empty title="No agent registered for this unit" />
+        <Empty title="Unit not found" hint="Return to the repository home and select a valid unit." />
       </AppShell>
     );
   }
 
   return (
     <AppShell
-      title={scopedUnit ? `INT Repository — ${scopedUnit.code}` : "INT Repository"}
-      subtitle="Historical Archive"
+      title={`INT Repository — ${unit.name}`}
+      subtitle="Satellite Exploitation Summaries"
       showBack
-      actions={
-        <div className="flex gap-2">
-          <Link
-            to="/important"
-            className="mono text-[11px] uppercase tracking-wider h-8 px-3 inline-flex items-center border border-border rounded-sm hover:border-primary hover:text-primary"
-          >
-            <Star className="h-3.5 w-3.5 mr-1" /> Important
-          </Link>
-          <Button variant="outline" size="sm" onClick={exportData} className="mono text-[11px] uppercase tracking-wider h-8"><Download className="h-3.5 w-3.5 mr-1" /> CSV</Button>
-          {canEdit && <NewIntelDialog onSaved={() => qc.invalidateQueries({ queryKey: ["intel"] })} />}
-        </div>
-      }
+      headerIcon={<Satellite className="h-4 w-4 shrink-0" />}
     >
-      <div className="panel p-2 mb-3 flex flex-wrap items-center gap-1">
-        <span className="label-eyebrow mr-2">Intel Type</span>
-        {["ALL", "SIGINT", "COMINT", "ELINT", "OSINT", "TECHINT"].map((t) => {
-          const count = t === "ALL" ? rows.length : rows.filter((r: any) => (r.intel_type ?? "SIGINT") === t).length;
-          const active = typeFilter === t;
-          return (
-            <button
-              key={t}
-              onClick={() => setTypeFilter(t)}
-              className={`mono text-[11px] uppercase tracking-wider px-2.5 py-1 rounded-sm border ${
-                active ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:text-foreground hover:border-primary"
-              }`}
-            >
-              {t} <span className="opacity-70">({count})</span>
-            </button>
-          );
-        })}
-      </div>
-      <div className="panel p-3 mb-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2">
-        <div className="relative lg:col-span-2">
-          <Search className="h-3.5 w-3.5 absolute left-2 top-2.5 text-muted-foreground" />
-          <Input placeholder="Search keyword, frequency, summary…" value={q} onChange={(e) => setQ(e.target.value)} className="pl-7 mono" />
-        </div>
-        <select className="bg-input border border-border rounded-sm px-2 py-1.5 text-sm mono" value={satFilter} onChange={(e) => setSatFilter(e.target.value)}>
-          <option value="">All satellites</option>
-          {sats.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>
-        <select
-          className="bg-input border border-border rounded-sm px-2 py-1.5 text-sm mono"
-          value={productivity}
-          onChange={(e) => setProductivity(e.target.value as any)}
+      <div className="flex items-center gap-2 mb-4">
+        <button
+          type="button"
+          onClick={() => navigate({ to: "/intel" })}
+          className="mono text-[11px] uppercase tracking-wider flex items-center gap-1
+                     text-muted-foreground hover:text-primary transition-colors"
         >
-          <option value="all">All frequencies</option>
-          <option value="productive">Productive only</option>
-          <option value="non">Non-productive only</option>
-        </select>
-        <div className="mono text-xs px-2 py-1.5 border border-border rounded-sm bg-secondary/40 truncate flex items-center">
-          Unit: <span className="text-primary font-bold ml-1">{scopedUnit?.code ?? "—"}</span>
-        </div>
-        <div className="grid grid-cols-2 gap-1">
-          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="mono text-xs" />
-          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="mono text-xs" />
-        </div>
+          <ArrowLeft className="h-3.5 w-3.5" /> All Units
+        </button>
+        <span className="text-muted-foreground/40">·</span>
+        <span className="mono text-[11px] text-muted-foreground">
+          {satelliteSummaries.length} satellite profile{satelliteSummaries.length !== 1 ? "s" : ""}
+        </span>
       </div>
 
-      {filtered.length === 0 ? (
-        <Empty title="No records match" hint={rows.length === 0 ? "No intelligence records archived yet." : "Try adjusting your filters."} />
+      <div className="panel p-3 mb-4">
+        <div className="label-eyebrow">Unit Intelligence Overview</div>
+        <p className="mono text-[11px] text-muted-foreground mt-1 leading-relaxed">
+          Longitudinal exploitation summaries for satellites collected by {unit.name}.
+          Select a satellite profile to access the full intelligence repository.
+        </p>
+      </div>
+
+      {isLoading ? (
+        <div className="panel p-6 text-center mono text-[11px] text-muted-foreground">Loading collection data…</div>
+      ) : satelliteSummaries.length === 0 ? (
+        <Empty
+          title="No satellite profiles"
+          hint="Import collection data via CSV or Excel to begin building the intelligence archive."
+        />
       ) : (
-        <div className="space-y-5">
-          <Section
-            title="Productive Frequencies"
-            icon={<TrendingUp className="h-3.5 w-3.5 text-emerald-400" />}
-            records={productive}
-            canEdit={canEdit}
-            onAllot={allot}
-            onDrop={(r) => setDropTarget(r)}
-            onImportant={addToImportant}
-            onView={(r) => setDetailRecord(r)}
-          />
-          <Section
-            title="Non-Productive Frequencies"
-            icon={<TrendingDown className="h-3.5 w-3.5 text-muted-foreground" />}
-            records={nonProductive}
-            canEdit={canEdit}
-            onAllot={allot}
-            onDrop={(r) => setDropTarget(r)}
-            onImportant={addToImportant}
-            onView={(r) => setDetailRecord(r)}
-          />
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {satelliteSummaries.map((summary) => (
+            <button
+              key={summary.key}
+              type="button"
+              onClick={() =>
+                navigate({
+                  to: "/intel/$unitId/$satelliteKey",
+                  params: { unitId, satelliteKey: summary.key },
+                })
+              }
+              className="panel text-left p-4 hover:border-primary/60 hover:shadow-md
+                         transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary/50"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="mono text-sm font-bold uppercase tracking-tight text-foreground leading-tight">
+                  {summary.satellite}
+                </div>
+                <Satellite className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+              </div>
+
+              <div className="mt-3 space-y-1.5 text-[10px] mono">
+                <CardRow label="Polarization" value={summary.polarization} />
+                <CardRow label="Total Frequencies Scanned" value={summary.totalScanned.toLocaleString()} />
+                <CardRow
+                  label="Productive"
+                  value={summary.productive.toLocaleString()}
+                  className="text-emerald-400"
+                />
+                <CardRow label="Non-Productive" value={summary.nonProductive.toLocaleString()} />
+                {summary.partiallyProductive > 0 && (
+                  <CardRow
+                    label="Partially Productive"
+                    value={summary.partiallyProductive.toLocaleString()}
+                    className="text-amber-400"
+                  />
+                )}
+                <CardRow
+                  label="Latest Update"
+                  value={summary.latestUpdate ? formatDisplayDate(summary.latestUpdate) : "—"}
+                />
+              </div>
+
+              <div className="mt-3 pt-2 border-t border-border/60 flex items-center justify-between">
+                <span className="text-[10px] mono text-muted-foreground">{summary.country}</span>
+                <span className={`text-[10px] mono font-medium ${productivityColor(
+                  summary.productive > summary.nonProductive ? "productive" : "non-productive",
+                )}`}>
+                  {summary.totalScanned > 0
+                    ? `${Math.round((summary.productive / summary.totalScanned) * 100)}% success`
+                    : "—"}
+                </span>
+              </div>
+            </button>
+          ))}
         </div>
       )}
-
-      <AlertDialog open={!!dropTarget} onOpenChange={(o) => !o && setDropTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle className="mono uppercase tracking-wider flex items-center gap-2">
-              <X className="h-4 w-4 text-destructive" /> Drop Frequency
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              Do you really want to delete this frequency from the repository?
-              <span className="block mt-2 mono text-foreground">
-                {dropTarget?.frequency ?? "—"} · {dropTarget?.satellites?.name ?? "—"}
-              </span>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>No</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => dropTarget && confirmDrop(dropTarget.id)}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Yes, Drop
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <Dialog open={!!detailRecord} onOpenChange={(o) => !o && setDetailRecord(null)}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="mono uppercase tracking-wider flex items-center gap-2">
-              <FileText className="h-4 w-4 text-primary" /> {detailRecord?.report_number ?? "Report"} — {detailRecord?.intel_type ?? "SIGINT"}
-            </DialogTitle>
-          </DialogHeader>
-          {detailRecord && (
-            <div className="space-y-3 text-sm">
-              <div className="flex items-center gap-2">
-                <span className="inline-flex items-center gap-1 mono text-[10px] uppercase tracking-wider px-2 py-1 rounded-sm bg-destructive/15 text-destructive border border-destructive/40">
-                  <ShieldAlert className="h-3 w-3" /> {detailRecord.classification ?? "CONFIDENTIAL"}
-                </span>
-                <span className="mono text-[10px] uppercase tracking-wider px-2 py-1 rounded-sm bg-secondary border border-border">
-                  {detailRecord.intel_type ?? "SIGINT"}
-                </span>
-              </div>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-[11px] mono">
-                <DInfo label="Report No." value={detailRecord.report_number ?? "—"} />
-                <DInfo label="Date" value={detailRecord.observation_date ?? "—"} />
-                <DInfo label="Source" value={detailRecord.source ?? "—"} />
-                <DInfo label="Satellite" value={detailRecord.satellites?.name ?? "—"} />
-                <DInfo label="Frequency" value={detailRecord.frequency ?? "—"} />
-                <DInfo label="Band" value={detailRecord.band ?? "—"} />
-                <DInfo label="Unit" value={detailRecord.units?.code ?? "—"} />
-                <DInfo label="Activity" value={detailRecord.activity_level ?? "—"} />
-                <DInfo label="Productive" value={detailRecord.is_productive ? "Yes" : "No"} />
-              </div>
-              <div>
-                <div className="label-eyebrow">Summary</div>
-                <p className="text-foreground/90 mt-1">{detailRecord.summary ?? "—"}</p>
-              </div>
-              <div>
-                <div className="label-eyebrow">Key Findings</div>
-                <pre className="text-foreground/90 mt-1 whitespace-pre-wrap font-sans text-sm">{detailRecord.key_findings ?? "—"}</pre>
-              </div>
-              <div>
-                <div className="label-eyebrow">Analysis Report</div>
-                <p className="text-muted-foreground mt-1 whitespace-pre-wrap">{detailRecord.analysis_report ?? "—"}</p>
-              </div>
-              <div>
-                <div className="label-eyebrow">Analyst Remarks</div>
-                <p className="text-foreground/90 mt-1">{detailRecord.analyst_remarks ?? "—"}</p>
-              </div>
-              <div className="label-eyebrow flex items-center gap-1"><Paperclip className="h-3 w-3" /> Attachments</div>
-              <div className="text-[11px] mono text-muted-foreground">No attachments uploaded for this mock record.</div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
     </AppShell>
   );
 }
 
-function DInfo({ label, value }: { label: string; value: string }) {
+function CardRow({
+  label,
+  value,
+  className = "text-foreground",
+}: {
+  label: string;
+  value: string;
+  className?: string;
+}) {
   return (
-    <div className="panel px-2 py-1.5">
-      <div className="label-eyebrow">{label}</div>
-      <div className="text-foreground truncate">{value}</div>
+    <div className="flex items-baseline justify-between gap-2">
+      <span className="text-muted-foreground shrink-0">{label}:</span>
+      <span className={`font-medium ${className}`}>{value}</span>
     </div>
-  );
-}
-
-function Section({
-  title,
-  icon,
-  records,
-  canEdit,
-  onAllot,
-  onDrop,
-  onImportant,
-  onView,
-}: {
-  title: string;
-  icon: React.ReactNode;
-  records: any[];
-  canEdit: boolean;
-  onAllot: (r: any) => void;
-  onDrop: (r: any) => void;
-  onImportant: (r: any) => void;
-  onView: (r: any) => void;
-}) {
-  return (
-    <section>
-      <div className="label-eyebrow flex items-center gap-1 mb-2">
-        {icon} {title} <span className="text-muted-foreground">({records.length})</span>
-      </div>
-      {records.length === 0 ? (
-        <div className="panel p-3 text-[11px] mono text-muted-foreground">No records in this category.</div>
-      ) : (
-        <div className="grid gap-3 grid-cols-1 lg:grid-cols-2">
-          {records.map((r: any) => (
-            <IntelCard
-              key={r.id}
-              record={r}
-              canEdit={canEdit}
-              onAllot={() => onAllot(r)}
-              onDrop={() => onDrop(r)}
-              onImportant={() => onImportant(r)}
-              onView={() => onView(r)}
-            />
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function IntelCard({
-  record,
-  canEdit,
-  onAllot,
-  onDrop,
-  onImportant,
-  onView,
-}: {
-  record: any;
-  canEdit: boolean;
-  onAllot: () => void;
-  onDrop: () => void;
-  onImportant: () => void;
-  onView: () => void;
-}) {
-  const { data: attachments = [] } = useQuery({
-    queryKey: ["intel-att", record.id],
-    queryFn: async () => (await supabase.from("attachments").select("*").eq("entity_type", "intel").eq("entity_id", record.id)).data ?? [],
-  });
-  return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>
-        <div className="panel p-4 select-none cursor-pointer" onClick={onView}>
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="label-eyebrow flex items-center gap-1">
-                <span className="px-1 py-px rounded-sm bg-primary/15 text-primary border border-primary/30">{record.intel_type ?? "SIGINT"}</span>
-                {record.report_number ?? record.observation_date}
-                <span>· {record.units?.code ?? "—"}</span>
-              </div>
-              <div className="mono text-base font-bold uppercase truncate">{record.satellites?.name ?? "—"}</div>
-              <div className="text-[11px] text-muted-foreground mono mt-1">
-                {record.frequency ?? "—"} {record.band && `• ${record.band}`}
-                {record.classification && <span className="ml-2 text-destructive">[{record.classification}]</span>}
-              </div>
-            </div>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" aria-label="Actions" onClick={(e) => e.stopPropagation()}>
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="mono text-[12px] uppercase tracking-wider" onClick={(e) => e.stopPropagation()}>
-                <DropdownMenuItem onClick={onView}>
-                  <Eye className="h-3.5 w-3.5 mr-2 text-primary" /> View Details
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={onAllot}>
-                  <Target className="h-3.5 w-3.5 mr-2 text-primary" /> Allot
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={onImportant}>
-                  <Star className="h-3.5 w-3.5 mr-2 text-accent" /> Add to Important
-                </DropdownMenuItem>
-                {canEdit && (
-                  <DropdownMenuItem onClick={onDrop} className="text-destructive focus:text-destructive">
-                    <Trash2 className="h-3.5 w-3.5 mr-2" /> Drop
-                  </DropdownMenuItem>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-          {record.summary && <p className="text-sm mt-3 text-foreground/90">{record.summary}</p>}
-          {attachments.length > 0 && (
-            <div className="mt-3 pt-3 border-t border-border">
-              <div className="label-eyebrow flex items-center gap-1"><Paperclip className="h-3 w-3" /> Attachments</div>
-              <ul className="mt-1 space-y-1">
-                {attachments.map((a: any) => (
-                  <li key={a.id}>
-                    <button onClick={async () => window.open(await signedUrl(a.file_url), "_blank")} className="text-xs mono text-primary hover:underline flex items-center gap-1">
-                      <FileText className="h-3 w-3" /> {a.file_name}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          <div className="mt-3 text-[10px] mono text-muted-foreground">Click for full report · right-click for quick actions</div>
-        </div>
-      </ContextMenuTrigger>
-      <ContextMenuContent className="mono text-[12px] uppercase tracking-wider">
-        <ContextMenuItem onClick={onView}>
-          <Eye className="h-3.5 w-3.5 mr-2 text-primary" /> View Details
-        </ContextMenuItem>
-        <ContextMenuItem onClick={onAllot}>
-          <Target className="h-3.5 w-3.5 mr-2 text-primary" /> Allot
-        </ContextMenuItem>
-        {canEdit && (
-          <ContextMenuItem onClick={onDrop} className="text-destructive focus:text-destructive">
-            <Trash2 className="h-3.5 w-3.5 mr-2" /> Drop
-          </ContextMenuItem>
-        )}
-        <ContextMenuItem onClick={onImportant}>
-          <Star className="h-3.5 w-3.5 mr-2 text-accent" /> Add to Important Frequencies
-        </ContextMenuItem>
-      </ContextMenuContent>
-    </ContextMenu>
-  );
-}
-
-function NewIntelDialog({ onSaved }: { onSaved: () => void }) {
-  const [open, setOpen] = useState(false);
-  const { data: sats = [] } = useQuery({ queryKey: ["sats"], queryFn: listSatellites });
-  const { data: units = [] } = useQuery({ queryKey: ["units"], queryFn: listUnits });
-  const [form, setForm] = useState({ satellite_id: "", unit_id: "", observation_date: new Date().toISOString().slice(0, 10), frequency: "", band: "", summary: "", analysis_report: "" });
-  const [files, setFiles] = useState<FileList | null>(null);
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    try {
-      const { data, error } = await supabase.from("intel_records").insert({ ...form, satellite_id: form.satellite_id || null, unit_id: form.unit_id || null }).select().single();
-      if (error) throw error;
-      if (files && data) {
-        for (const f of Array.from(files)) {
-          const path = await uploadFile(f, `intel/${data.id}`);
-          await supabase.from("attachments").insert({ entity_type: "intel", entity_id: data.id, file_name: f.name, file_url: path, mime_type: f.type, size_bytes: f.size });
-        }
-      }
-      toast.success("Record archived");
-      setOpen(false);
-      onSaved();
-    } catch (e: any) { toast.error(e.message); }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild><Button size="sm" className="mono text-[11px] uppercase tracking-wider h-8"><Plus className="h-3.5 w-3.5 mr-1" /> New Record</Button></DialogTrigger>
-      <DialogContent className="max-w-lg">
-        <DialogHeader><DialogTitle className="mono uppercase tracking-wider">Archive INT Record</DialogTitle></DialogHeader>
-        <form onSubmit={submit} className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div><Label className="label-eyebrow">Satellite</Label>
-              <Select value={form.satellite_id} onValueChange={(v) => setForm({ ...form, satellite_id: v })}>
-                <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
-                <SelectContent>{sats.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            <div><Label className="label-eyebrow">Agency</Label>
-              <Select value={form.unit_id} onValueChange={(v) => setForm({ ...form, unit_id: v })}>
-                <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
-                <SelectContent>{units.map((u) => <SelectItem key={u.id} value={u.id}>{u.code}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            <div><Label className="label-eyebrow">Date</Label><Input type="date" value={form.observation_date} onChange={(e) => setForm({ ...form, observation_date: e.target.value })} /></div>
-            <div><Label className="label-eyebrow">Frequency</Label><Input value={form.frequency} onChange={(e) => setForm({ ...form, frequency: e.target.value })} /></div>
-            <div><Label className="label-eyebrow">Band</Label><Input value={form.band} onChange={(e) => setForm({ ...form, band: e.target.value })} /></div>
-          </div>
-          <div><Label className="label-eyebrow">Summary</Label><Textarea rows={3} value={form.summary} onChange={(e) => setForm({ ...form, summary: e.target.value })} /></div>
-          <div><Label className="label-eyebrow">Analysis Report</Label><Textarea rows={4} value={form.analysis_report} onChange={(e) => setForm({ ...form, analysis_report: e.target.value })} /></div>
-          <div><Label className="label-eyebrow">Attachments</Label><Input type="file" multiple onChange={(e) => setFiles(e.target.files)} /></div>
-          <Button type="submit" className="w-full mono uppercase tracking-wider">Archive</Button>
-        </form>
-      </DialogContent>
-    </Dialog>
   );
 }
