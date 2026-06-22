@@ -38,14 +38,14 @@ function EngagementMatrix() {
 
   if (units.length === 0) {
     return (
-      <AppShell title="Control Center and Engagement Status" subtitle="Live Operational Utilisation">
+      <AppShell title="Engagement Status" subtitle="Live Operational Utilisation">
         <Empty title="No units registered" />
       </AppShell>
     );
   }
 
   return (
-    <AppShell title="Control Center and Engagement Status" subtitle="Live Operational Utilisation">
+    <AppShell title="Engagement Status" subtitle="Live Operational Utilisation">
       <p className="text-[11px] mono text-muted-foreground mb-3">
         Utilisation = active engagements / serviceable equipment per unit. Click a unit to manage its engagements.
       </p>

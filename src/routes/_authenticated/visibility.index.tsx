@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
 import {
@@ -19,16 +19,22 @@ import {
 import { Button } from "@/components/ui/button";
 import {
   ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   Compass,
+  Download,
+  Eye,
   Globe,
   ImageIcon,
   Map,
   MapPin,
+  Pencil,
   Plus,
   Radio,
   Satellite as SatIcon,
   TrendingUp,
+  Upload,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -46,19 +52,42 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { listUnits } from "@/lib/queries";
 
+// ─── Static unit roster for visibility layer ─────────────────────────────────
+
+interface VisibilityUnit {
+  id: string;
+  code: string;
+  name: string;
+  location: string;
+}
+
+const VISIBILITY_UNITS: VisibilityUnit[] = [
+  { id: "alpha",   code: "A", name: "Unit Alpha",   location: "Northern Sector" },
+  { id: "bravo",   code: "B", name: "Unit Bravo",   location: "Eastern Sector" },
+  { id: "charlie", code: "C", name: "Unit Charlie", location: "Western Sector" },
+  { id: "delta",   code: "D", name: "Unit Delta",   location: "Southern Sector" },
+  { id: "echo",    code: "E", name: "Unit Echo",    location: "Central Sector" },
+  { id: "foxtrot", code: "F", name: "Unit Foxtrot", location: "Forward Sector" },
+  { id: "golf",    code: "G", name: "Unit Golf",    location: "Rear Sector" },
+  { id: "hotel",   code: "H", name: "Unit Hotel",   location: "Coastal Sector" },
+];
+
 // ─── Static GEO satellite data by region ──────────────────────────────────────
 
 interface GeoSatellite {
   id: string;
   name: string;
-  orbitType?: string;              // GEO | LEO | MEO (existing sats default to "GEO")
+  orbitType?: string;              // GEO | LEO | MEO
   position: string;
   launchDate: string;
   transponders: string;            // display string e.g. "38 C/Ku-band"
-  cBandTransponders?: string;      // independent C-band entry
-  kuBandTransponders?: string;     // independent Ku-band entry
+  cBandTransponders?: string;
+  kuBandTransponders?: string;
   beamCoverage: string;
-  beamCoverageImageUrl?: string;   // data URL for user-uploaded coverage map
+  beamCoverageImageUrl?: string;   // legacy upload field
+  beams?: string[];                // beam breakdown e.g. ["8 Ku Spot Beams","6 Regional Beams"]
+  footprintImageUrl?: string;      // primary footprint/coverage image
+  visibilityNotes?: string;        // free-text notes about unit visibility
 }
 
 interface Region {
@@ -236,6 +265,132 @@ function buildMockVisibility(satId: string, satName: string) {
   return { currentPct, timeline, history, passes, access };
 }
 
+// ─── Standardized beam pool — format: "Band Type – Beam NN" ──────────────────
+// Each entry is a complete, display-ready label in professional format.
+
+const REGION_BEAMS: Record<string, string[]> = {
+  "china": [
+    "Ku Regional – Beam 08",
+    "Ku Spot – Beam 11",
+    "C-band Wide Beam",
+    "Ka Spot – Beam 04",
+    "Ku Regional – Beam 13",
+  ],
+  "pakistan": [
+    "Ku Regional – Beam 05",
+    "C-band Wide Beam",
+    "Ka Spot – Beam 02",
+    "Ku Spot – Beam 09",
+  ],
+  "turkey": [
+    "Ku Regional – Beam 07",
+    "Ka Spot – Beam 03",
+    "C-band Regional Beam",
+    "Ku Spot – Beam 14",
+  ],
+  "bangladesh": [
+    "Ku Regional – Beam 06",
+    "C-band Wide Beam",
+    "Ka Spot – Beam 01",
+    "Ku Spot – Beam 10",
+  ],
+  "sea": [
+    "Ku Regional – Beam 09",
+    "C-band Wide Beam",
+    "Ka Spot – Beam 06",
+    "Ku Spot – Beam 15",
+    "C-band Regional Beam",
+  ],
+  "middle-east": [
+    "Ku Regional – Beam 03",
+    "Ka Spot – Beam 07",
+    "C-band Wide Beam",
+    "Ku Spot – Beam 12",
+    "C-band Regional Beam",
+  ],
+  "europe": [
+    "Ku Regional – Beam 10",
+    "Ka Spot – Beam 05",
+    "C-band Wide Beam",
+    "Ku Spot – Beam 16",
+  ],
+  "africa": [
+    "Ku Regional – Beam 02",
+    "C-band Wide Beam",
+    "Ka Spot – Beam 08",
+    "Ku Spot – Beam 17",
+  ],
+  "russia": [
+    "Ku Regional – Beam 04",
+    "C-band Wide Beam",
+    "Ka Spot – Beam 09",
+    "Ku Spot – Beam 18",
+  ],
+  "usa": [
+    "Ku Regional – Beam 01",
+    "C-band Wide Beam",
+    "Ka Spot – Beam 10",
+    "Ku Spot – Beam 19",
+  ],
+};
+
+// Deterministic beam breakdown from transponder data
+function getBeamBreakdown(sat: GeoSatellite): { total: number; beams: string[] } {
+  if (sat.beams && sat.beams.length > 0) {
+    const total = sat.beams.reduce((n, b) => {
+      const m = b.match(/^(\d+)/);
+      return n + (m ? parseInt(m[1]) : 1);
+    }, 0);
+    return { total, beams: sat.beams };
+  }
+  const rand = seedRand(sat.id + "beams");
+  const ku  = 4 + Math.floor(rand() * 6);
+  const reg = 2 + Math.floor(rand() * 4);
+  const c   = 2 + Math.floor(rand() * 3);
+  return {
+    total: ku + reg + c,
+    beams: [`${ku} Ku Spot Beams`, `${reg} Regional Beams`, `${c} C-band Beams`],
+  };
+}
+
+// Deterministic visible beams for a given unit + satellite + region combination
+// Returns 1–3 standardized beam labels from the region pool.
+function getVisibleBeams(unitId: string, satId: string, regionId: string): string[] {
+  const pool  = REGION_BEAMS[regionId] ?? ["Ku Regional – Beam 01", "C-band Wide Beam", "Ka Spot – Beam 02"];
+  const rand  = seedRand(unitId + satId);
+  const count = 1 + Math.floor(rand() * Math.min(3, pool.length - 1));
+  // Deterministic Fisher-Yates to pick distinct entries
+  const idxs = Array.from({ length: pool.length }, (_, i) => i);
+  for (let i = idxs.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [idxs[i], idxs[j]] = [idxs[j], idxs[i]];
+  }
+  return idxs.slice(0, count).map((i) => pool[i]);
+}
+
+// Parse transponder counts from a GeoSatellite into structured numbers
+function parseTransponders(sat: GeoSatellite): { total: number; cBand?: string; kuBand?: string } {
+  const cNum  = sat.cBandTransponders  ? (parseInt(sat.cBandTransponders)  || 0) : 0;
+  const kuNum = sat.kuBandTransponders ? (parseInt(sat.kuBandTransponders) || 0) : 0;
+  if (cNum || kuNum) {
+    return {
+      total: cNum + kuNum,
+      cBand:  cNum  > 0 ? String(cNum)  : undefined,
+      kuBand: kuNum > 0 ? String(kuNum) : undefined,
+    };
+  }
+  const totalMatch = sat.transponders.match(/^(\d+)/);
+  const total = totalMatch ? parseInt(totalMatch[1]) : 0;
+  const tl = sat.transponders.toLowerCase();
+  if (tl.includes("c") && tl.includes("ku")) {
+    const half = Math.floor(total / 2);
+    return { total, cBand: String(half), kuBand: String(total - half) };
+  }
+  if (tl.includes("ku")) return { total, kuBand: String(total) };
+  if (tl.includes("c"))  return { total, cBand:  String(total) };
+  return { total };
+}
+
 // ─── Route ────────────────────────────────────────────────────────────────────
 
 export const Route = createFileRoute("/_authenticated/visibility/")({
@@ -245,12 +400,17 @@ export const Route = createFileRoute("/_authenticated/visibility/")({
 // ─── Main page component ───────────────────────────────────────────────────────
 
 function VisibilityPage() {
-  // activeRegionId stores just the ID so merges stay live when satellites are added
+  // Three-level hierarchy: unit → region → satellite
+  const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
   const [activeRegionId, setActiveRegionId] = useState<string | null>(null);
   const [activeSat, setActiveSat]  = useState<GeoSatellite | null>(null);
 
-  // User-added satellites keyed by region.id — merged with static data at render time
-  const [addedSats, setAddedSats] = useState<Record<string, GeoSatellite[]>>({});
+  const selectedUnit = VISIBILITY_UNITS.find((u) => u.id === selectedUnitId) ?? null;
+
+  // User-added satellites keyed by region.id
+  const [addedSats, setAddedSats]   = useState<Record<string, GeoSatellite[]>>({});
+  // User-edited overrides keyed by satellite id
+  const [editedSats, setEditedSats] = useState<Record<string, GeoSatellite>>({});
 
   function handleAddSat(regionId: string, sat: GeoSatellite) {
     setAddedSats((prev) => ({
@@ -259,14 +419,20 @@ function VisibilityPage() {
     }));
   }
 
-  // Merge static + user-added satellites for every region
+  function handleEditSat(updated: GeoSatellite) {
+    setEditedSats((prev) => ({ ...prev, [updated.id]: updated }));
+  }
+
+  // Merge static + user-added, then apply any edits
   const mergedRegions = useMemo(
     () =>
       GEO_REGIONS.map((r) => ({
         ...r,
-        satellites: [...r.satellites, ...(addedSats[r.id] ?? [])],
+        satellites: [...r.satellites, ...(addedSats[r.id] ?? [])].map(
+          (s) => editedSats[s.id] ?? s,
+        ),
       })),
-    [addedSats],
+    [addedSats, editedSats],
   );
 
   const activeRegion = useMemo(
@@ -313,14 +479,34 @@ function VisibilityPage() {
       subtitle="Target Country Satellites"
       headerIcon={<SatIcon className="h-4 w-4 shrink-0" />}
     >
-      {!activeRegion ? (
-        <RegionGrid regions={mergedRegions} onSelect={(r) => setActiveRegionId(r.id)} />
-      ) : (
+      {/* ── Level 1: Unit selection ──────────────────────────────────────── */}
+      {!selectedUnitId && (
+        <UnitGrid
+          units={VISIBILITY_UNITS}
+          onSelect={(u) => setSelectedUnitId(u.id)}
+        />
+      )}
+
+      {/* ── Level 2: Region selection (inside a unit) ────────────────────── */}
+      {selectedUnitId && !activeRegion && (
+        <RegionGrid
+          regions={mergedRegions}
+          onSelect={(r) => setActiveRegionId(r.id)}
+          unit={selectedUnit}
+          onBackToUnits={() => { setSelectedUnitId(null); setActiveRegionId(null); }}
+        />
+      )}
+
+      {/* ── Level 3: Region detail / satellite list ──────────────────────── */}
+      {selectedUnitId && activeRegion && (
         <RegionDetail
           region={activeRegion}
           onBack={() => setActiveRegionId(null)}
           onSelectSat={setActiveSat}
           onAddSat={(sat) => handleAddSat(activeRegion.id, sat)}
+          onEditSat={handleEditSat}
+          unitName={selectedUnit?.name}
+          unitId={selectedUnitId}
         />
       )}
 
@@ -481,6 +667,41 @@ function VisibilityPage() {
   );
 }
 
+// ─── Unit grid — first layer of the visibility hierarchy ─────────────────────
+
+function UnitGrid({
+  units,
+  onSelect,
+}: {
+  units: VisibilityUnit[];
+  onSelect: (u: VisibilityUnit) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="label-eyebrow">Select Unit</div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+        {units.map((u) => (
+          <button
+            key={u.id}
+            type="button"
+            onClick={() => onSelect(u)}
+            className="panel text-left group hover:bg-secondary/60 transition-all duration-150
+                       hover:scale-[1.02] hover:shadow-md focus:outline-none focus:ring-1 focus:ring-primary p-3"
+          >
+            <div className="mono text-sm font-bold uppercase tracking-tight leading-tight">
+              {u.name}
+            </div>
+            <div className="flex items-center gap-1 mt-1 mono text-[10px] text-muted-foreground">
+              <MapPin className="h-3 w-3 shrink-0" />
+              <span>{u.location}</span>
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── Region icon fallbacks for multi-country regions ─────────────────────────
 const REGION_ICON: Record<string, React.ReactNode> = {
   "sea":         <Map     className="h-9 w-9 text-muted-foreground" />,
@@ -490,11 +711,42 @@ const REGION_ICON: Record<string, React.ReactNode> = {
 
 // ─── Region grid — icon-driven country/region selection ───────────────────────
 
-function RegionGrid({ regions, onSelect }: { regions: Region[]; onSelect: (r: Region) => void }) {
+function RegionGrid({
+  regions,
+  onSelect,
+  unit,
+  onBackToUnits,
+}: {
+  regions: Region[];
+  onSelect: (r: Region) => void;
+  unit?: VisibilityUnit | null;
+  onBackToUnits?: () => void;
+}) {
   const totalSats = regions.reduce((sum, r) => sum + r.satellites.length, 0);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
+      {/* Unit context header — back to units + breadcrumb */}
+      {unit && onBackToUnits && (
+        <div className="flex items-center gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onBackToUnits}
+            className="mono text-[11px] h-8 uppercase tracking-wider"
+          >
+            <ArrowLeft className="h-3.5 w-3.5 mr-1" /> All Units
+          </Button>
+          <div className="flex items-center gap-1.5 text-[12px] mono text-muted-foreground">
+            <SatIcon className="h-3.5 w-3.5" />
+            <span>{unit.name}</span>
+            <span>/</span>
+            <span className="text-foreground font-bold uppercase">Select Region</span>
+          </div>
+        </div>
+      )}
+
       {/* Country / region tiles */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         {regions.map((region) => (
@@ -542,15 +794,21 @@ function RegionDetail({
   onBack,
   onSelectSat,
   onAddSat,
+  onEditSat,
+  unitName,
+  unitId,
 }: {
   region: Region;
   onBack: () => void;
   onSelectSat: (s: GeoSatellite) => void;
   onAddSat: (sat: GeoSatellite) => void;
+  onEditSat: (sat: GeoSatellite) => void;
+  unitName?: string;
+  unitId: string;
 }) {
   return (
     <div className="space-y-4">
-      {/* Header row: Back + breadcrumb (left) | Add New Satellite (right) */}
+      {/* Header row */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-3">
           <Button
@@ -564,81 +822,504 @@ function RegionDetail({
           </Button>
           <div className="flex items-center gap-1.5 text-[12px] mono text-muted-foreground">
             <Globe className="h-3.5 w-3.5" />
+            {unitName && <><span>{unitName}</span><span>/</span></>}
             <span>Target Satellites</span>
             <span>/</span>
             <span className="text-foreground font-bold uppercase">{region.label}</span>
           </div>
         </div>
 
-        {/* Green primary action — always visible for every region */}
-        <AddSatelliteDialog regionId={region.id} onAdd={onAddSat} />
+        {/* Action buttons: Import CSV + Add New Satellite */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <CsvImportButton regionId={region.id} onImport={onAddSat} />
+          <AddSatelliteDialog regionId={region.id} onAdd={onAddSat} />
+        </div>
       </div>
 
       <div className="label-eyebrow flex items-center gap-1.5">
         <SatIcon className="h-3 w-3" />
-        {region.label} — Satellite Assets ({region.satellites.length})
+        {region.label} — Satellite Database ({region.satellites.length} records)
       </div>
 
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-        {region.satellites.map((sat) => (
-          <SatelliteTile key={sat.id} sat={sat} onSelect={onSelectSat} />
-        ))}
-      </div>
+      {/* Satellite database table */}
+      <SatelliteTable
+        satellites={region.satellites}
+        regionId={region.id}
+        unitId={unitId}
+        onViewSat={onSelectSat}
+        onEditSat={onEditSat}
+      />
     </div>
   );
 }
 
-// ─── Individual satellite tile ─────────────────────────────────────────────────
+// ─── Satellite database table ──────────────────────────────────────────────────
 
-function SatelliteTile({
-  sat,
-  onSelect,
+function SatelliteTable({
+  satellites,
+  regionId,
+  unitId,
+  onViewSat,
+  onEditSat,
 }: {
-  sat: GeoSatellite;
-  onSelect: (s: GeoSatellite) => void;
+  satellites: GeoSatellite[];
+  regionId: string;
+  unitId: string;
+  onViewSat: (s: GeoSatellite) => void;
+  onEditSat: (s: GeoSatellite) => void;
 }) {
+  const [editingSat,   setEditingSat]   = useState<GeoSatellite | null>(null);
+  const [footprintSat, setFootprintSat] = useState<GeoSatellite | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  function scrollTable(dir: "left" | "right") {
+    scrollRef.current?.scrollBy({ left: dir === "left" ? -320 : 320, behavior: "smooth" });
+  }
+
+  if (satellites.length === 0) {
+    return (
+      <div className="panel p-8 flex flex-col items-center gap-2 text-center">
+        <SatIcon className="h-8 w-8 text-muted-foreground opacity-40" />
+        <div className="mono text-sm font-bold uppercase tracking-wide text-muted-foreground">
+          No satellites recorded
+        </div>
+        <div className="mono text-[11px] text-muted-foreground">
+          Use "Add New Satellite" or "Import CSV" to populate data.
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <button
-      type="button"
-      onClick={() => onSelect(sat)}
-      className="tile text-left focus:outline-none focus:ring-1 focus:ring-primary hover:bg-secondary/60 transition-colors"
-    >
-      <div className="label-eyebrow flex items-center gap-1">
-        <SatIcon className="h-3 w-3" /> {sat.orbitType ?? "GEO"} Satellite
+    <>
+      <div className="panel overflow-hidden">
+        {/* Scroll controls — always visible at the top, no vertical scrolling required */}
+        <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-secondary/30">
+          <span className="mono text-[10px] text-muted-foreground uppercase tracking-wider">
+            Satellite Records — scroll horizontally to view all columns
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => scrollTable("left")}
+              title="Scroll left"
+              className="h-6 w-6 grid place-items-center rounded-sm border border-border hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => scrollTable("right")}
+              title="Scroll right"
+              className="h-6 w-6 grid place-items-center rounded-sm border border-border hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+            >
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+        <div ref={scrollRef} className="overflow-x-auto">
+          <table className="w-full text-[11px] mono border-collapse">
+            <thead>
+              <tr className="border-b border-border bg-secondary/50">
+                <th className="px-3 py-2 text-left text-muted-foreground font-medium w-8">#</th>
+                <th className="px-3 py-2 text-left text-muted-foreground font-medium min-w-[140px]">Satellite Name</th>
+                <th className="px-3 py-2 text-left text-muted-foreground font-medium w-24">Orbital Pos.</th>
+                <th className="px-3 py-2 text-left text-muted-foreground font-medium w-16">Launch</th>
+                <th className="px-3 py-2 text-left text-muted-foreground font-medium min-w-[110px]">Transponders</th>
+                <th className="px-3 py-2 text-left text-muted-foreground font-medium min-w-[130px]">Beams</th>
+                <th className="px-3 py-2 text-left text-muted-foreground font-medium min-w-[200px]">Visible Beams</th>
+                <th className="px-3 py-2 text-left text-muted-foreground font-medium w-20">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {satellites.map((sat, idx) => {
+                const tp             = parseTransponders(sat);
+                const { total: bt, beams } = getBeamBreakdown(sat);
+                const visibleBeams   = getVisibleBeams(unitId, sat.id, regionId);
+                const hasFootprint   = !!(sat.footprintImageUrl || sat.beamCoverageImageUrl);
+
+                return (
+                  <tr key={sat.id} className="hover:bg-secondary/30 transition-colors align-top">
+                    {/* S.No */}
+                    <td className="px-3 py-2.5 text-muted-foreground">{idx + 1}</td>
+
+                    {/* Satellite Name */}
+                    <td className="px-3 py-2.5">
+                      <div className="font-bold text-foreground uppercase tracking-tight leading-tight">{sat.name}</div>
+                      <div className="text-muted-foreground text-[10px] mt-0.5">{sat.orbitType ?? "GEO"}</div>
+                    </td>
+
+                    {/* Orbital Position */}
+                    <td className="px-3 py-2.5 text-foreground font-bold">{sat.position}</td>
+
+                    {/* Launch Date (year only for compactness) */}
+                    <td className="px-3 py-2.5 text-foreground">{sat.launchDate.slice(0, 4)}</td>
+
+                    {/* Transponders */}
+                    <td className="px-3 py-2.5">
+                      <div className="font-bold text-foreground">{tp.total}</div>
+                      {tp.cBand  && <div className="text-[10px] text-muted-foreground">· {tp.cBand} C-band</div>}
+                      {tp.kuBand && <div className="text-[10px] text-muted-foreground">· {tp.kuBand} Ku-band</div>}
+                    </td>
+
+                    {/* Beams */}
+                    <td className="px-3 py-2.5">
+                      <div className="font-bold text-foreground">{bt}</div>
+                      {beams.map((b, i) => (
+                        <div key={i} className="text-[10px] text-muted-foreground">· {b}</div>
+                      ))}
+                    </td>
+
+                    {/* Visibility — beams visible to selected unit */}
+                    <td className="px-3 py-2.5">
+                      {visibleBeams.length > 0 ? (
+                        <div className="space-y-0.5">
+                          {visibleBeams.map((b, i) => (
+                            <div key={i} className="flex items-center gap-1 text-[10px]">
+                              <span className="inline-block w-1.5 h-1.5 rounded-full bg-primary shrink-0" />
+                              <span className="text-foreground">{b}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground italic text-[10px]">No visible beams</span>
+                      )}
+                    </td>
+
+                    {/* Actions */}
+                    <td className="px-3 py-2.5">
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          title="Edit satellite data"
+                          onClick={() => setEditingSat(sat)}
+                          className="h-6 w-6 grid place-items-center rounded-sm border border-border
+                                     hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </button>
+                        <button
+                          type="button"
+                          title={hasFootprint ? "View footprint image" : "No footprint uploaded"}
+                          onClick={() => hasFootprint && setFootprintSat(sat)}
+                          className={`h-6 w-6 grid place-items-center rounded-sm border border-border
+                                      transition-colors
+                                      ${hasFootprint
+                                        ? "text-primary hover:bg-secondary cursor-pointer"
+                                        : "text-muted-foreground/30 cursor-not-allowed"}`}
+                        >
+                          <Eye className="h-3 w-3" />
+                        </button>
+                        <button
+                          type="button"
+                          title="View visibility details"
+                          onClick={() => onViewSat(sat)}
+                          className="h-6 w-6 grid place-items-center rounded-sm border border-border
+                                     hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+                        >
+                          <TrendingUp className="h-3 w-3" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
-      <div className="mono text-sm font-bold uppercase tracking-tight mt-1">{sat.name}</div>
 
-      {sat.beamCoverageImageUrl && (
-        <img
-          src={sat.beamCoverageImageUrl}
-          alt="Beam coverage"
-          className="w-full h-20 object-cover rounded-sm border border-border mt-2"
-        />
-      )}
+      {/* Edit dialog */}
+      <SatelliteEditDialog
+        satellite={editingSat}
+        onClose={() => setEditingSat(null)}
+        onSave={(updated) => { onEditSat(updated); setEditingSat(null); }}
+      />
 
-      <dl className="grid grid-cols-2 gap-y-1 gap-x-3 mt-3 text-[11px] mono">
-        <dt className="text-muted-foreground">Position</dt>
-        <dd className="text-right">{sat.position}</dd>
+      {/* Footprint image modal */}
+      <FootprintModal
+        satellite={footprintSat}
+        onClose={() => setFootprintSat(null)}
+      />
+    </>
+  );
+}
 
-        <dt className="text-muted-foreground">Launched</dt>
-        <dd className="text-right">{sat.launchDate}</dd>
+// ─── Satellite edit dialog ─────────────────────────────────────────────────────
 
-        <dt className="text-muted-foreground">Transponders</dt>
-        <dd className="text-right">{sat.transponders}</dd>
+function SatelliteEditDialog({
+  satellite,
+  onClose,
+  onSave,
+}: {
+  satellite: GeoSatellite | null;
+  onClose: () => void;
+  onSave: (sat: GeoSatellite) => void;
+}) {
+  const [form, setForm] = useState({
+    orbitType: "GEO", name: "", position: "", launchDate: "",
+    cBand: "", kuBand: "", beamCoverage: "", visibilityNotes: "",
+  });
+  const [fpPreview, setFpPreview] = useState("");
 
-        <dt className="text-muted-foreground">Beam Coverage</dt>
-        <dd className="text-right text-[10px] leading-tight">{sat.beamCoverage}</dd>
-      </dl>
+  useEffect(() => {
+    if (satellite) {
+      setForm({
+        orbitType:       satellite.orbitType ?? "GEO",
+        name:            satellite.name,
+        position:        satellite.position,
+        launchDate:      satellite.launchDate,
+        cBand:           satellite.cBandTransponders ?? "",
+        kuBand:          satellite.kuBandTransponders ?? "",
+        beamCoverage:    satellite.beamCoverage,
+        visibilityNotes: satellite.visibilityNotes ?? "",
+      });
+      setFpPreview(satellite.footprintImageUrl || satellite.beamCoverageImageUrl || "");
+    }
+  }, [satellite?.id]);
 
-      <div className="mt-3 flex gap-1">
-        <span className="text-[10px] mono uppercase border border-border bg-secondary/60 px-1.5 py-0.5 rounded-sm">
-          {sat.orbitType ?? "GEO"}
-        </span>
-        <span className="text-[10px] mono text-muted-foreground px-1.5 py-0.5">
-          View visibility →
-        </span>
-      </div>
-    </button>
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!satellite) return;
+    const cNum  = parseInt(form.cBand)  || 0;
+    const kuNum = parseInt(form.kuBand) || 0;
+    const transponders =
+      [cNum  > 0 ? `${cNum} C-band` : "", kuNum > 0 ? `${kuNum} Ku-band` : ""]
+        .filter(Boolean).join(" / ") || satellite.transponders;
+    onSave({
+      ...satellite,
+      orbitType:          form.orbitType,
+      name:               form.name.trim(),
+      position:           form.position.trim(),
+      launchDate:         form.launchDate,
+      transponders,
+      cBandTransponders:  form.cBand.trim()  || undefined,
+      kuBandTransponders: form.kuBand.trim() || undefined,
+      beamCoverage:       form.beamCoverage.trim(),
+      visibilityNotes:    form.visibilityNotes.trim() || undefined,
+      footprintImageUrl:  fpPreview || undefined,
+    });
+  }
+
+  return (
+    <Dialog open={!!satellite} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="mono uppercase tracking-wider flex items-center gap-2 text-sm">
+            <Pencil className="h-4 w-4 text-primary" />
+            Edit Satellite — {satellite?.name}
+          </DialogTitle>
+        </DialogHeader>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <SatField label="Orbit Type">
+            <Select value={form.orbitType} onValueChange={(v) => setForm({ ...form, orbitType: v })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {ORBIT_TYPES.map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </SatField>
+
+          <SatField label="Satellite Name *">
+            <Input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+          </SatField>
+
+          <div className="grid grid-cols-2 gap-3">
+            <SatField label="Orbital Position">
+              <Input value={form.position} onChange={(e) => setForm({ ...form, position: e.target.value })} placeholder="e.g. 87.5°E" />
+            </SatField>
+            <SatField label="Launch Date">
+              <Input type="date" value={form.launchDate} onChange={(e) => setForm({ ...form, launchDate: e.target.value })} />
+            </SatField>
+          </div>
+
+          <div className="space-y-2">
+            <div className="label-eyebrow">Transponders</div>
+            <div className="grid grid-cols-2 gap-3">
+              <SatField label="C-band count"><Input value={form.cBand}  onChange={(e) => setForm({ ...form, cBand: e.target.value })}  placeholder="e.g. 20" /></SatField>
+              <SatField label="Ku-band count"><Input value={form.kuBand} onChange={(e) => setForm({ ...form, kuBand: e.target.value })} placeholder="e.g. 18" /></SatField>
+            </div>
+          </div>
+
+          <SatField label="Beam Coverage">
+            <Input value={form.beamCoverage} onChange={(e) => setForm({ ...form, beamCoverage: e.target.value })} placeholder="e.g. Asia / Pacific" />
+          </SatField>
+
+          <SatField label="Visibility Notes">
+            <Input value={form.visibilityNotes} onChange={(e) => setForm({ ...form, visibilityNotes: e.target.value })} placeholder="e.g. Ku Spot Beam 08 visible from this unit" />
+          </SatField>
+
+          <SatField label="Footprint / Coverage Map">
+            <label className="flex flex-col items-center justify-center w-full h-28 border-2 border-dashed border-border rounded-sm cursor-pointer hover:border-primary transition-colors bg-secondary/30">
+              {fpPreview ? (
+                <img src={fpPreview} alt="Footprint" className="h-full w-full object-contain rounded-sm" />
+              ) : (
+                <div className="flex flex-col items-center gap-1 text-muted-foreground">
+                  <ImageIcon className="h-6 w-6" />
+                  <span className="mono text-[11px]">Click to upload JPG / PNG / WEBP</span>
+                </div>
+              )}
+              <input
+                type="file"
+                accept="image/jpeg,image/jpg,image/png,image/webp"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (!f) return;
+                  const reader = new FileReader();
+                  reader.onloadend = () => setFpPreview(reader.result as string);
+                  reader.readAsDataURL(f);
+                }}
+              />
+            </label>
+          </SatField>
+
+          <div className="flex gap-2 pt-1">
+            <Button type="button" variant="outline" size="sm" className="flex-1 mono uppercase tracking-wider" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" size="sm" className="flex-1 mono uppercase tracking-wider">
+              Save Changes
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Footprint image modal ─────────────────────────────────────────────────────
+
+function FootprintModal({
+  satellite,
+  onClose,
+}: {
+  satellite: GeoSatellite | null;
+  onClose: () => void;
+}) {
+  const imgUrl = satellite?.footprintImageUrl || satellite?.beamCoverageImageUrl;
+  return (
+    <Dialog open={!!satellite} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="mono uppercase tracking-wider flex items-center gap-2 text-sm">
+            <ImageIcon className="h-4 w-4 text-primary" />
+            {satellite?.name} — Footprint / Coverage Map
+          </DialogTitle>
+        </DialogHeader>
+        {imgUrl ? (
+          <img
+            src={imgUrl}
+            alt={`${satellite?.name} footprint`}
+            className="w-full object-contain rounded-sm border border-border max-h-[60vh]"
+          />
+        ) : (
+          <p className="mono text-[12px] text-muted-foreground text-center py-6">
+            No footprint image available for this satellite.
+          </p>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── CSV import button ─────────────────────────────────────────────────────────
+
+function CsvImportButton({
+  regionId,
+  onImport,
+}: {
+  regionId: string;
+  onImport: (sat: GeoSatellite) => void;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  function parseCsvLine(line: string): string[] {
+    const result: string[] = [];
+    let current = "";
+    let inQuotes = false;
+    for (const char of line) {
+      if (char === '"') { inQuotes = !inQuotes; continue; }
+      if (char === "," && !inQuotes) { result.push(current); current = ""; continue; }
+      current += char;
+    }
+    result.push(current);
+    return result;
+  }
+
+  function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target?.result as string;
+      const lines = text.split(/\r?\n/).filter((l) => l.trim());
+      if (lines.length < 2) return;
+      lines.slice(1).forEach((line, i) => {
+        const [name, position, launchDate, cBand, kuBand, beamCoverage, visNotes] = parseCsvLine(line);
+        if (!name?.trim()) return;
+        const cNum  = parseInt(cBand  ?? "0") || 0;
+        const kuNum = parseInt(kuBand ?? "0") || 0;
+        const sat: GeoSatellite = {
+          id:                  `${regionId}-csv-${Date.now()}-${i}`,
+          name:                name.trim(),
+          position:            position?.trim() || "—",
+          launchDate:          launchDate?.trim() || "—",
+          transponders:
+            [cNum  > 0 ? `${cNum} C-band`  : "",
+             kuNum > 0 ? `${kuNum} Ku-band` : ""]
+              .filter(Boolean).join(" / ") || "—",
+          cBandTransponders:   cBand?.trim()  || undefined,
+          kuBandTransponders:  kuBand?.trim() || undefined,
+          beamCoverage:        beamCoverage?.trim() || "—",
+          visibilityNotes:     visNotes?.trim() || undefined,
+        };
+        onImport(sat);
+      });
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  }
+
+  function downloadTemplate() {
+    const header = "Satellite Name,Orbital Position,Launch Date,C-band Transponders,Ku-band Transponders,Beam Coverage,Visibility Notes";
+    const sample = 'Example Sat 1,105.5°E,2020-06-15,20,18,"Asia / Pacific","East Asia Beam"';
+    const blob   = new Blob([header + "\n" + sample], { type: "text/csv" });
+    const a      = document.createElement("a");
+    a.href     = URL.createObjectURL(blob);
+    a.download = "satellite_import_template.csv";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".csv,text/csv"
+        className="hidden"
+        onChange={handleFile}
+      />
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-8 mono text-[11px] uppercase tracking-wider"
+        onClick={() => fileRef.current?.click()}
+      >
+        <Upload className="h-3.5 w-3.5 mr-1" /> Import CSV
+      </Button>
+      <button
+        type="button"
+        onClick={downloadTemplate}
+        title="Download CSV template"
+        className="h-8 w-8 grid place-items-center rounded-sm border border-border hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+      >
+        <Download className="h-3.5 w-3.5" />
+      </button>
+    </div>
   );
 }
 

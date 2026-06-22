@@ -15,6 +15,7 @@ import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/
 import { Route as AuthenticatedReportsRouteImport } from './routes/_authenticated/reports'
 import { Route as AuthenticatedMinutesRouteImport } from './routes/_authenticated/minutes'
 import { Route as AuthenticatedImportantRouteImport } from './routes/_authenticated/important'
+import { Route as AuthenticatedControlCenterRouteImport } from './routes/_authenticated/control-center'
 import { Route as AuthenticatedVisibilityIndexRouteImport } from './routes/_authenticated/visibility.index'
 import { Route as AuthenticatedServiceabilityIndexRouteImport } from './routes/_authenticated/serviceability.index'
 import { Route as AuthenticatedPriorityIndexRouteImport } from './routes/_authenticated/priority/index'
@@ -61,6 +62,12 @@ const AuthenticatedImportantRoute = AuthenticatedImportantRouteImport.update({
   path: '/important',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedControlCenterRoute =
+  AuthenticatedControlCenterRouteImport.update({
+    id: '/control-center',
+    path: '/control-center',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedVisibilityIndexRoute =
   AuthenticatedVisibilityIndexRouteImport.update({
     id: '/visibility/',
@@ -158,6 +165,7 @@ const AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRoute =
 export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
   '/auth': typeof AuthRoute
+  '/control-center': typeof AuthenticatedControlCenterRoute
   '/important': typeof AuthenticatedImportantRoute
   '/minutes': typeof AuthenticatedMinutesRoute
   '/reports': typeof AuthenticatedReportsRoute
@@ -180,6 +188,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/auth': typeof AuthRoute
+  '/control-center': typeof AuthenticatedControlCenterRoute
   '/important': typeof AuthenticatedImportantRoute
   '/minutes': typeof AuthenticatedMinutesRoute
   '/reports': typeof AuthenticatedReportsRoute
@@ -205,6 +214,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
+  '/_authenticated/control-center': typeof AuthenticatedControlCenterRoute
   '/_authenticated/important': typeof AuthenticatedImportantRoute
   '/_authenticated/minutes': typeof AuthenticatedMinutesRoute
   '/_authenticated/reports': typeof AuthenticatedReportsRoute
@@ -231,6 +241,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/auth'
+    | '/control-center'
     | '/important'
     | '/minutes'
     | '/reports'
@@ -253,6 +264,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/auth'
+    | '/control-center'
     | '/important'
     | '/minutes'
     | '/reports'
@@ -277,6 +289,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/_authenticated'
     | '/auth'
+    | '/_authenticated/control-center'
     | '/_authenticated/important'
     | '/_authenticated/minutes'
     | '/_authenticated/reports'
@@ -346,6 +359,13 @@ declare module '@tanstack/react-router' {
       path: '/important'
       fullPath: '/important'
       preLoaderRoute: typeof AuthenticatedImportantRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/control-center': {
+      id: '/_authenticated/control-center'
+      path: '/control-center'
+      fullPath: '/control-center'
+      preLoaderRoute: typeof AuthenticatedControlCenterRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/visibility/': {
@@ -464,6 +484,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthenticatedRouteRouteChildren {
+  AuthenticatedControlCenterRoute: typeof AuthenticatedControlCenterRoute
   AuthenticatedImportantRoute: typeof AuthenticatedImportantRoute
   AuthenticatedMinutesRoute: typeof AuthenticatedMinutesRoute
   AuthenticatedReportsRoute: typeof AuthenticatedReportsRoute
@@ -487,6 +508,7 @@ interface AuthenticatedRouteRouteChildren {
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
+  AuthenticatedControlCenterRoute: AuthenticatedControlCenterRoute,
   AuthenticatedImportantRoute: AuthenticatedImportantRoute,
   AuthenticatedMinutesRoute: AuthenticatedMinutesRoute,
   AuthenticatedReportsRoute: AuthenticatedReportsRoute,

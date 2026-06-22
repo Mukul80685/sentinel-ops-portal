@@ -12,6 +12,7 @@ import {
   ArrowLeft,
   Satellite,
   Landmark,
+  LayoutDashboard,
   Settings,
   User,
   FileText,
@@ -40,13 +41,14 @@ import { Label } from "@/components/ui/label";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 const moduleNavItems = [
-  { to: "/engagement",     label: "Control Center and Engagement Status", icon: Activity },
-  { to: "/intel",          label: "INT Repository",                       icon: Archive },
-  { to: "/visibility",     label: "Satellite Visibility Metrics",         icon: Radar },
-  { to: "/priority",       label: "Satellite Priority and Allocation",    icon: ListOrdered },
-  { to: "/inventory",      label: "Resource Inventory",                   icon: Boxes },
-  { to: "/serviceability", label: "Serviceability State",                 icon: Shield },
-  { to: "/important",      label: "Important Frequencies",                icon: Star },
+  { to: "/control-center", label: "Control Center",                    icon: LayoutDashboard },
+  { to: "/engagement",     label: "Engagement Status",                 icon: Activity },
+  { to: "/intel",          label: "INT Repository",                    icon: Archive },
+  { to: "/visibility",     label: "Satellite Visibility Metrics",      icon: Radar },
+  { to: "/priority",       label: "Satellite Priority and Allocation", icon: ListOrdered },
+  { to: "/inventory",      label: "Resource Inventory",                icon: Boxes },
+  { to: "/serviceability", label: "Serviceability State",              icon: Shield },
+  { to: "/important",      label: "Important Frequencies",             icon: Star },
 ] as const;
 
 const standardNavItems = [
@@ -174,30 +176,56 @@ function SidebarLink({
   );
 }
 
-/** Compact inline SSACC logo for the home header bar */
+/** SSACC insignia — precision space-operations badge */
 function SsaccLogo() {
   return (
     <svg
-      width="32"
-      height="32"
-      viewBox="0 0 72 72"
+      width="44"
+      height="44"
+      viewBox="0 0 80 80"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
       aria-hidden="true"
       className="text-foreground shrink-0"
     >
-      <circle cx="36" cy="36" r="33" stroke="currentColor" strokeWidth="1.5" strokeDasharray="4 2" />
-      <circle cx="36" cy="36" r="22" stroke="currentColor" strokeWidth="1.2" />
-      <ellipse cx="36" cy="36" rx="22" ry="9" stroke="currentColor" strokeWidth="1" />
-      <line x1="36" y1="14" x2="36" y2="58" stroke="currentColor" strokeWidth="1" />
-      <path d="M 10 20 Q 36 6 62 20" stroke="currentColor" strokeWidth="1.5" strokeDasharray="3 2" fill="none" />
-      <rect x="58" y="16" width="8" height="5" rx="1" fill="currentColor" />
-      <rect x="50" y="17" width="4" height="3" rx="0.5" fill="currentColor" />
-      <rect x="66" y="17" width="4" height="3" rx="0.5" fill="currentColor" />
-      <path d="M 36 36 Q 42 30 50 28" stroke="currentColor" strokeWidth="1" fill="none" strokeDasharray="2 2" />
-      <path d="M 28 60 Q 36 52 44 60" stroke="currentColor" strokeWidth="1.8" fill="none" strokeLinecap="round" />
-      <line x1="36" y1="60" x2="36" y2="66" stroke="currentColor" strokeWidth="1.5" />
-      <line x1="30" y1="66" x2="42" y2="66" stroke="currentColor" strokeWidth="1.5" />
+      {/* Outer precision ring */}
+      <circle cx="40" cy="40" r="37" stroke="currentColor" strokeWidth="1.8" />
+      {/* Inner dashed ring */}
+      <circle cx="40" cy="40" r="32" stroke="currentColor" strokeWidth="0.8" strokeDasharray="3 3" opacity="0.45" />
+
+      {/* Earth globe — filled disc with continental suggestion */}
+      <circle cx="40" cy="40" r="14" stroke="currentColor" strokeWidth="1.2" fill="currentColor" fillOpacity="0.08" />
+      {/* Globe equatorial band */}
+      <ellipse cx="40" cy="40" rx="14" ry="5.5" stroke="currentColor" strokeWidth="0.8" opacity="0.55" />
+      {/* Globe meridian */}
+      <line x1="40" y1="26" x2="40" y2="54" stroke="currentColor" strokeWidth="0.8" opacity="0.55" />
+
+      {/* Main orbital ellipse — tilted 20° */}
+      <ellipse cx="40" cy="40" rx="27" ry="10.5" stroke="currentColor" strokeWidth="1.6" transform="rotate(-20 40 40)" />
+
+      {/* Satellite body (upper-right on orbit, at ~–20+70° = 50° CCW from top) */}
+      <rect x="59" y="11" width="10" height="7" rx="1.2" fill="currentColor" />
+      {/* Left solar panel */}
+      <rect x="49" y="12.5" width="10" height="4" rx="0.6" fill="currentColor" opacity="0.72" />
+      {/* Right solar panel */}
+      <rect x="69" y="12.5" width="10" height="4" rx="0.6" fill="currentColor" opacity="0.72" />
+      {/* Satellite nadir antenna dot */}
+      <circle cx="64" cy="18.5" r="1.2" fill="currentColor" opacity="0.5" />
+
+      {/* Signal beams — satellite to Earth (2 dashed lines) */}
+      <line x1="62" y1="19" x2="50" y2="33" stroke="currentColor" strokeWidth="0.9" strokeDasharray="2 2.5" opacity="0.5" />
+      <line x1="66" y1="21" x2="53" y2="37" stroke="currentColor" strokeWidth="0.65" strokeDasharray="1.5 3" opacity="0.35" />
+
+      {/* Ground station */}
+      <path d="M 24 65 Q 40 54 56 65" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+      <line x1="40" y1="65" x2="40" y2="74" stroke="currentColor" strokeWidth="1.6" />
+      <line x1="33" y1="74" x2="47" y2="74" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+
+      {/* Cardinal tick marks — precision compass feel */}
+      <line x1="40" y1="2"  x2="40" y2="6"  stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <line x1="40" y1="74" x2="40" y2="78" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <line x1="2"  y1="40" x2="6"  y2="40" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <line x1="74" y1="40" x2="78" y2="40" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
     </svg>
   );
 }
@@ -700,7 +728,7 @@ export function AppShell({
           /* ── HOME HEADER: Logo+SSACC | 3-line title | Settings+Sign Out ── */
           <header className="border-b border-border bg-card/80 backdrop-blur sticky top-0 z-20">
             <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3 px-4 sm:px-6 py-2">
-              {/* LEFT: Logo + SSACC label */}
+              {/* LEFT: Logo + wordmark */}
               <div className="flex flex-col items-center gap-0.5 shrink-0">
                 <SsaccLogo />
                 <span className="mono text-[9px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
