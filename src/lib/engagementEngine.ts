@@ -2,6 +2,22 @@
  * Engagement Status – bottleneck utilization engine + satellite analysis helpers.
  */
 
+import { supabase } from "@/integrations/supabase/client";
+
+/** Shared query key — fleet dashboard and unit pages stay in sync after mutations. */
+export const ENGAGEMENTS_ALL_KEY = ["engagements", "all"] as const;
+
+export async function fetchAllEngagements() {
+  const { data, error } = await supabase
+    .from("engagements")
+    .select(
+      "id,unit_id,status,satellite_id,antenna_id,demodulator_id,processing_server_id,satellites:satellite_id(name)",
+    )
+    .order("observation_start", { ascending: false });
+  if (error) throw error;
+  return data ?? [];
+}
+
 export const NON_OPERATIONAL = new Set([
   "Non-Serviceable",
   "Under Repair",
@@ -83,6 +99,62 @@ export function computeBottleneckEngagement(
   );
 
   return { pct: bottleneck.pct, bottleneck, categories };
+}
+
+/** Statuses that hold an active scanning session (matches unit detail page). */
+export const ACTIVE_SCAN_STATUSES = new Set(["In Progress", "Paused"]);
+export const QUEUED_SCAN_STATUS = "Planned";
+
+export function isActiveScanStatus(status: string): boolean {
+  return ACTIVE_SCAN_STATUSES.has(status);
+}
+
+export function scanStatusLabel(status: string): string {
+  if (status === "In Progress") return "Active";
+  if (status === "Paused") return "Idle";
+  if (status === QUEUED_SCAN_STATUS) return "Pending";
+  return status;
+}
+
+export function filterActiveScans(engagements: any[], unitId?: string) {
+  return engagements.filter(
+    (e) => isActiveScanStatus(e.status) && (!unitId || e.unit_id === unitId),
+  );
+}
+
+export function countActiveScans(engagements: any[], unitId?: string): number {
+  return filterActiveScans(engagements, unitId).length;
+}
+
+export type ScanningSatellite = {
+  engagementId: string;
+  name: string;
+  status: string;
+  displayStatus: string;
+};
+
+export type UnitScanSnapshot = {
+  activeCount: number;
+  satellites: ScanningSatellite[];
+};
+
+/** Authoritative per-unit scanning state derived from engagements. */
+export function buildUnitScanSnapshot(engagements: any[], unitId: string): UnitScanSnapshot {
+  const active = filterActiveScans(engagements, unitId);
+  return {
+    activeCount: active.length,
+    satellites: active.map((e) => ({
+      engagementId: e.id,
+      name: e.satellites?.name ?? "Unassigned",
+      status: e.status,
+      displayStatus: scanStatusLabel(e.status),
+    })),
+  };
+}
+
+/** Fleet-wide active scan total — sum of all unit snapshots (no independent counter). */
+export function countFleetActiveScans(engagements: any[]): number {
+  return countActiveScans(engagements);
 }
 
 /** Build allocated resource IDs from active engagements (In Progress + Paused hold capacity). */

@@ -36,6 +36,7 @@ import {
   Upload,
 } from "lucide-react";
 import { toast } from "sonner";
+import { ccModuleBackLink } from "@/lib/controlCenter";
 import {
   validateImportFile,
   buildCsv,
@@ -227,7 +228,7 @@ function SatelliteIntelRepository() {
 
   if (!unit) {
     return (
-      <AppShell title="INT Repository" showBack>
+      <AppShell title="INT Repository" showBack backLink={ccModuleBackLink("intel")} horizontalNav={null}>
         <Empty title="Unit not found" />
       </AppShell>
     );
@@ -238,14 +239,16 @@ function SatelliteIntelRepository() {
       title={`${satelliteName}`}
       subtitle={`${unit.name} · ${polarization} — Intelligence Repository`}
       showBack
+      backLink={ccModuleBackLink("intel")}
       headerIcon={<Archive className="h-4 w-4 shrink-0" />}
+      horizontalNav={null}
     >
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 mb-4 flex-wrap">
         <button
           type="button"
-          onClick={() => navigate({ to: "/intel" })}
-          className="mono text-[11px] uppercase tracking-wider flex items-center gap-1 text-muted-foreground hover:text-primary"
+          onClick={() => navigate({ to: "/control-center", search: { module: "intel" } })}
+          className="mono text-[11px] uppercase tracking-wider flex items-center gap-1 text-foreground/85 hover:text-primary"
         >
           <ArrowLeft className="h-3.5 w-3.5" /> All Units
         </button>

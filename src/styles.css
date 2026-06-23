@@ -75,7 +75,7 @@
   --secondary: oklch(0.91 0.04 145);            /* light green selection */
   --secondary-foreground: oklch(0.22 0.01 260);
   --muted: oklch(0.94 0.01 95);
-  --muted-foreground: oklch(0.28 0.01 260);
+  --muted-foreground: oklch(0.22 0.01 260);
   --accent: oklch(0.91 0.04 145);
   --accent-foreground: oklch(0.22 0.01 260);
   --destructive: oklch(0.55 0.2 25);
@@ -95,7 +95,7 @@
   --status-repair: oklch(0.55 0.02 260);
 
   --sidebar: oklch(0.96 0.012 95);
-  --sidebar-foreground: oklch(0.35 0.01 260);
+  --sidebar-foreground: oklch(0.22 0.01 260);
   --sidebar-primary: oklch(0.45 0.1 145);
   --sidebar-primary-foreground: oklch(0.99 0.005 95);
   --sidebar-accent: oklch(0.91 0.04 145);
@@ -170,7 +170,8 @@
     text-transform: uppercase;
     letter-spacing: 0.12em;
     font-size: 0.7rem;
-    color: var(--muted-foreground);
+    color: var(--foreground);
+    opacity: 0.85;
   }
 
   .status-dot {

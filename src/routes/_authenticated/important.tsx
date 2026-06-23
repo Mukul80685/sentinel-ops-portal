@@ -1,7 +1,10 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
+import {
+  getImportantFrequencyRefs,
+  INTEL_FREQ_EVENT,
+} from "@/lib/intelFrequencyActions";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Fragment, useMemo, useState } from "react";
-import { AppShell } from "@/components/AppShell";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { Empty } from "@/components/Empty";
 import { listSatellites } from "@/lib/queries";
 import { supabase } from "@/integrations/supabase/client";
@@ -50,7 +53,10 @@ import { validateImportFile, buildCsv, downloadCsv, toggleSelection, allSelected
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/important")({
-  component: ImportantFrequencies,
+  beforeLoad: () => {
+    throw redirect({ to: "/control-center", search: { module: "important" } });
+  },
+  component: () => null,
 });
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -179,7 +185,7 @@ function fmtDate(iso: string): string {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-function ImportantFrequencies() {
+export function ImportantFrequenciesView() {
   const canEdit  = useCanEdit();
   const qc       = useQueryClient();
   const [q, setQ]                       = useState("");
@@ -192,6 +198,13 @@ function ImportantFrequencies() {
   const [filterOpen,      setFilterOpen]      = useState(false);
   const [freqFilter,      setFreqFilter]      = useState<FreqFilter>(EMPTY_FREQ_FILTER);
   const [selectedIds,     setSelectedIds]     = useState<Set<string>>(new Set());
+  const [refSync, setRefSync] = useState(0);
+
+  useEffect(() => {
+    const h = () => setRefSync((n) => n + 1);
+    window.addEventListener(INTEL_FREQ_EVENT, h);
+    return () => window.removeEventListener(INTEL_FREQ_EVENT, h);
+  }, []);
 
   // In-memory traceability data: Record<freqRowId, ScanEntry[]>
   // Pre-seeded with mock scan history for visualisation purposes
@@ -223,11 +236,24 @@ function ImportantFrequencies() {
     [sats],
   );
 
-  // ── Effective row set: real DB data, or mock fallback when DB is empty ───────
-  const effectiveRows = useMemo(
-    () => (rows.length > 0 ? (rows as FreqRow[]) : MOCK_FREQUENCIES),
-    [rows],
-  );
+  // ── Effective row set: DB + INT cross-module refs ───────────────────────────
+  const effectiveRows = useMemo(() => {
+    const base = rows.length > 0 ? (rows as FreqRow[]) : MOCK_FREQUENCIES;
+    const refs = getImportantFrequencyRefs().map(
+      (ref): FreqRow => ({
+        id: ref.id,
+        satellite_id: "",
+        frequency: ref.frequency,
+        band: ref.unitLabel,
+        label: `[INT ref] ${ref.satelliteName}`,
+        created_at: ref.createdAt,
+        updated_at: ref.createdAt,
+        _mock: true,
+        _satName: ref.satelliteName,
+      }),
+    );
+    return [...refs, ...base];
+  }, [rows, refSync]);
 
   // ── Filtering (text search + structured filters) ─────────────────────────────
   const filtered = useMemo(() => {
@@ -355,11 +381,7 @@ function ImportantFrequencies() {
 
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
-    <AppShell
-      title="Important Frequencies"
-      subtitle="Compiled List of Important Links"
-      showBack
-    >
+    <>
       {/* ── Search + Controls bar ──────────────────────────────────────────── */}
       <div className="flex items-center gap-2 mb-2 flex-wrap">
         <div className="relative flex-1 min-w-[200px]">
@@ -851,7 +873,7 @@ function ImportantFrequencies() {
           setAddOpen(false);
         }}
       />
-    </AppShell>
+    </>
   );
 }
 

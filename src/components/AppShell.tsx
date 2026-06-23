@@ -1,25 +1,18 @@
 import { Link, useRouter, useRouterState } from "@tanstack/react-router";
 import {
   Home,
-  Boxes,
-  Radar,
-  ListOrdered,
-  Activity,
-  Archive,
-  Shield,
   ShieldCheck,
   Power,
   ArrowLeft,
   Satellite,
   Landmark,
-  LayoutDashboard,
   Settings,
   User,
   FileText,
   Clock,
-  Star,
 } from "lucide-react";
 import { useAuth, useIsAdmin } from "@/lib/auth";
+import { PasswordResetNotice } from "@/components/auth/PasswordResetNotice";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -40,15 +33,11 @@ import {
 import { Label } from "@/components/ui/label";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
-const moduleNavItems = [
-  { to: "/control-center", label: "Control Center",                    icon: LayoutDashboard },
-  { to: "/engagement",     label: "Engagement Status",                 icon: Activity },
-  { to: "/intel",          label: "INT Repository",                    icon: Archive },
-  { to: "/visibility",     label: "Satellite Visibility Metrics",      icon: Radar },
-  { to: "/priority",       label: "Satellite Priority and Allocation", icon: ListOrdered },
-  { to: "/inventory",      label: "Resource Inventory",                icon: Boxes },
-  { to: "/serviceability", label: "Serviceability State",              icon: Shield },
-  { to: "/important",      label: "Important Frequencies",             icon: Star },
+/** Support / utility navigation — NOT main dashboard modules (those live on the homepage). */
+const supportNavItems = [
+  { key: "satellites", label: "Satellites",         icon: Satellite, adminTo: "/admin/satellites", userTo: "/visibility" },
+  { key: "minutes",    label: "Recent Discussions", icon: Clock,     adminTo: "/minutes",           userTo: "/minutes" },
+  { key: "reports",    label: "Reports",            icon: FileText,  adminTo: "/reports",           userTo: "/reports" },
 ] as const;
 
 const standardNavItems = [
@@ -144,7 +133,7 @@ function navActive(pathname: string, to: string, exact?: boolean) {
 
 /** Shared style for Settings + Sign Out — identical font/size/weight */
 const secondaryCtrlCls =
-  "flex w-full items-center gap-2 px-2 py-1.5 mono text-[11px] uppercase tracking-wider text-muted-foreground rounded-sm hover:bg-secondary/50 hover:text-foreground transition-colors";
+  "flex w-full items-center gap-2 px-2 py-1 mono text-[11px] uppercase tracking-wider text-foreground rounded-sm hover:bg-secondary/50 transition-colors";
 
 function SidebarLink({
   to,
@@ -162,7 +151,7 @@ function SidebarLink({
   return (
     <Link
       to={to}
-      className={`flex items-center gap-2 px-2 py-1.5 mono text-[11px] uppercase tracking-wider rounded-sm transition-colors leading-snug ${
+      className={`flex items-center gap-2 px-2 py-1 mono text-[11px] uppercase tracking-wider rounded-sm transition-colors leading-tight ${
         bold ? "font-bold" : ""
       } ${
         active
@@ -395,13 +384,21 @@ function DateTimeModal({
 
 // ─── Sidebars ──────────────────────────────────────────────────────────────────
 
-function HomeSidebar({
+/**
+ * Primary navigation sidebar — used on homepage and all main modules.
+ * TOP: User Profile, Settings, Clock, Sign Out
+ * MAIN: four primary application functions
+ */
+/**
+ * Primary sidebar — support / utility navigation only.
+ * Operational modules (Control Center, Visibility, Inventory, Serviceability) are on the homepage.
+ */
+function PrimaryNavSidebar({
   mode,
   setMode,
   isAdmin,
   signOut,
   pathname,
-  resolveSecondaryTo,
   stamp,
   onClockClick,
 }: {
@@ -410,69 +407,62 @@ function HomeSidebar({
   isAdmin: boolean;
   signOut: () => Promise<void>;
   pathname: string;
-  resolveSecondaryTo: (item: (typeof standardNavItems)[number]) => string;
   stamp: string;
   onClockClick: () => void;
 }) {
+  const resolveTo = (item: (typeof supportNavItems)[number]) =>
+    mode === "admin" && isAdmin ? item.adminTo : item.userTo;
+
   return (
-    <div className="flex flex-col">
-      {/* ── A. USER SECTION: toggle + live clock ── */}
-      <div className="px-2 pt-2 pb-1.5 border-b border-border">
+    <div className="flex flex-col h-full">
+      {/* TOP — User Profile, then Clock */}
+      <div className="px-2 pt-1.5 pb-1 flex flex-col gap-0.5 shrink-0">
         <button
           type="button"
           onClick={() => setMode((m) => (m === "admin" ? "user" : "admin"))}
           disabled={!isAdmin}
-          className={`flex w-full items-center gap-2 px-2 py-1.5 mono text-[11px] uppercase tracking-wider rounded-sm transition-colors ${
-            mode === "admin" && isAdmin
-              ? "bg-secondary text-foreground"
-              : "text-sidebar-foreground hover:bg-secondary/50"
-          } ${!isAdmin ? "opacity-70 cursor-default" : "cursor-pointer"}`}
-          title={isAdmin ? "Toggle admin / user mode" : "User mode"}
+          className={`${secondaryCtrlCls} ${!isAdmin ? "opacity-70 cursor-default" : "cursor-pointer"}`}
+          title={isAdmin ? "Toggle admin / user mode" : "User profile"}
         >
           {mode === "admin" && isAdmin ? (
             <ShieldCheck className="h-3 w-3 shrink-0" />
           ) : (
             <User className="h-3 w-3 shrink-0" />
           )}
-          <span>{mode === "admin" && isAdmin ? "Admin" : "User"}</span>
+          {mode === "admin" && isAdmin ? "Admin Account" : "User Profile"}
         </button>
-        {/* Clock directly under User — clickable to open DateTime panel */}
         <button
           type="button"
           onClick={onClockClick}
           title="Open Date / Time Control Panel"
-          className="w-full text-left px-2 pt-1 mono text-[10px] text-muted-foreground leading-snug hover:text-foreground transition-colors rounded-sm"
+          className="w-full text-left px-2 py-1 mono text-[10px] text-foreground leading-tight hover:bg-secondary/50 transition-colors rounded-sm flex items-center gap-2"
         >
-          {stamp || "\u00A0"}
+          <Clock className="h-3 w-3 shrink-0" />
+          <span className="truncate">{stamp || "\u00A0"}</span>
         </button>
       </div>
 
-      {/* ── B. MAIN NAVIGATION ── */}
-      <nav className="py-1.5">
-        <ul className="space-y-0.5 px-1.5">
-          {standardNavItems.map((item) => {
-            const to = resolveSecondaryTo(item);
-            return (
-              <li key={item.key}>
-                <SidebarLink
-                  to={to}
-                  label={item.label}
-                  icon={item.icon}
-                  active={navActive(pathname, to)}
-                />
-              </li>
-            );
-          })}
-        </ul>
+      <div className="border-t border-border mx-1.5 shrink-0" />
+
+      {/* MAIN — utility navigation */}
+      <nav className="flex-1 py-1 px-1.5 flex flex-col gap-0 min-h-0">
+        {supportNavItems.map((item) => {
+          const to = resolveTo(item);
+          return (
+            <SidebarLink
+              key={item.key}
+              to={to}
+              label={item.label}
+              icon={item.icon}
+              active={navActive(pathname, to)}
+            />
+          );
+        })}
       </nav>
 
-      {/* ── C. SYSTEM CONTROLS: Settings + Sign Out ── */}
-      <div className="border-t border-border px-2 py-1.5 space-y-0.5">
-        <Link
-          to={isAdmin ? "/admin/users" : "/"}
-          className={secondaryCtrlCls}
-          title="Settings"
-        >
+      {/* BOTTOM — Settings, Sign Out */}
+      <div className="border-t border-border px-2 py-1 flex flex-col gap-0.5 shrink-0">
+        <Link to={isAdmin ? "/admin/users" : "/"} className={secondaryCtrlCls} title="Settings">
           <Settings className="h-3 w-3 shrink-0" />
           Settings
         </Link>
@@ -482,73 +472,6 @@ function HomeSidebar({
         </button>
       </div>
     </div>
-  );
-}
-
-/**
- * Module sidebar — used by most module pages.
- * Shows: module links (other than current) → clock → Settings → Sign Out
- */
-function ModuleSidebar({
-  isAdmin,
-  signOut,
-  pathname,
-  stamp,
-  onClockClick,
-}: {
-  isAdmin: boolean;
-  signOut: () => Promise<void>;
-  pathname: string;
-  stamp: string;
-  onClockClick: () => void;
-}) {
-  const visibleModuleItems = moduleNavItems.filter(
-    (item) => !navActive(pathname, item.to),
-  );
-
-  return (
-    <>
-      {/* Module nav — natural height, no flex-1 gap */}
-      <nav className="py-2">
-        <ul className="space-y-0.5 px-1.5">
-          {visibleModuleItems.map((item) => (
-            <li key={item.to}>
-              <SidebarLink
-                to={item.to}
-                label={item.label}
-                icon={item.icon}
-                active={false}
-                bold
-              />
-            </li>
-          ))}
-        </ul>
-      </nav>
-
-      {/* Settings + Sign Out + Clock — compact cluster, no spacer */}
-      <div className="border-t border-border px-2 pt-1.5 pb-1.5 space-y-0.5">
-        <Link
-          to={isAdmin ? "/admin/users" : "/"}
-          className={secondaryCtrlCls}
-          title="Settings"
-        >
-          <Settings className="h-3 w-3 shrink-0" />
-          Settings
-        </Link>
-        <button type="button" onClick={() => signOut()} className={secondaryCtrlCls}>
-          <Power className="h-3 w-3 shrink-0" />
-          Sign Out
-        </button>
-        <button
-          type="button"
-          onClick={onClockClick}
-          title="Open Date / Time Control Panel"
-          className="w-full text-left px-2 pt-1 mono text-[10px] text-muted-foreground leading-snug hover:text-foreground transition-colors rounded-sm"
-        >
-          {stamp || "\u00A0"}
-        </button>
-      </div>
-    </>
   );
 }
 
@@ -648,9 +571,10 @@ export function AppShell({
   subtitle,
   headerIcon,
   showBack = false,
+  backLink,
   isHome = false,
   hideSidebar = false,
-  sidebarVariant = "modules",
+  sidebarVariant = "primary",
   horizontalNav,
   actions,
   children,
@@ -659,15 +583,22 @@ export function AppShell({
   subtitle?: string;
   headerIcon?: ReactNode;
   showBack?: boolean;
+  /** When set, Back navigates here instead of browser history */
+  backLink?: {
+    to: string;
+    search?: Record<string, unknown>;
+    params?: Record<string, string>;
+  };
   isHome?: boolean;
   hideSidebar?: boolean;
-  /** "modules" = show other-module links (default). "secondary" = show nav items (User/Units/…). "home" = identical to homepage sidebar. */
-  sidebarVariant?: "modules" | "secondary" | "home";
-  horizontalNav?: ReactNode;
+  /** "primary" = support nav (default). "secondary" = inventory admin layout. */
+  sidebarVariant?: "primary" | "secondary";
+  /** Pass `null` to suppress horizontal nav entirely. Omit for default StandardModuleNav. */
+  horizontalNav?: ReactNode | null;
   actions?: ReactNode;
   children: ReactNode;
 }) {
-  const { signOut } = useAuth();
+  const { signOut, user } = useAuth();
   const isAdmin = useIsAdmin();
   const router = useRouter();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -690,29 +621,7 @@ export function AppShell({
           isHome ? "w-44" : "w-48"
         }`}
       >
-        {isHome ? (
-          <HomeSidebar
-            mode={mode}
-            setMode={setMode}
-            isAdmin={isAdmin}
-            signOut={signOut}
-            pathname={pathname}
-            resolveSecondaryTo={resolveSecondaryTo}
-            stamp={stamp}
-            onClockClick={() => setDtOpen(true)}
-          />
-        ) : sidebarVariant === "home" ? (
-          <HomeSidebar
-            mode={mode}
-            setMode={setMode}
-            isAdmin={isAdmin}
-            signOut={signOut}
-            pathname={pathname}
-            resolveSecondaryTo={resolveSecondaryTo}
-            stamp={stamp}
-            onClockClick={() => setDtOpen(true)}
-          />
-        ) : sidebarVariant === "secondary" ? (
+        {sidebarVariant === "secondary" ? (
           <SecondarySidebar
             mode={mode}
             setMode={setMode}
@@ -724,7 +633,9 @@ export function AppShell({
             onClockClick={() => setDtOpen(true)}
           />
         ) : (
-          <ModuleSidebar
+          <PrimaryNavSidebar
+            mode={mode}
+            setMode={setMode}
             isAdmin={isAdmin}
             signOut={signOut}
             pathname={pathname}
@@ -772,14 +683,25 @@ export function AppShell({
             <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3 px-4 sm:px-6 py-3">
               <div className="flex items-center">
                 {showBack && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => router.history.back()}
-                    className="mono text-[11px] h-8 uppercase tracking-wider"
-                  >
-                    <ArrowLeft className="h-3.5 w-3.5 mr-1" /> Back
-                  </Button>
+                  backLink ? (
+                    <Link
+                      to={backLink.to}
+                      search={backLink.search}
+                      params={backLink.params}
+                      className="mono text-[11px] h-8 px-3 inline-flex items-center uppercase tracking-wider border border-border rounded-sm hover:bg-secondary/50 hover:text-foreground"
+                    >
+                      <ArrowLeft className="h-3.5 w-3.5 mr-1" /> Back
+                    </Link>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => router.history.back()}
+                      className="mono text-[11px] h-8 uppercase tracking-wider"
+                    >
+                      <ArrowLeft className="h-3.5 w-3.5 mr-1" /> Back
+                    </Button>
+                  )
                 )}
               </div>
 
@@ -798,7 +720,7 @@ export function AppShell({
                   </h1>
                 )}
                 {subtitle && (
-                  <div className="text-[11px] text-muted-foreground mt-0.5">{subtitle}</div>
+                  <div className="text-[11px] text-foreground/80 mt-0.5">{subtitle}</div>
                 )}
               </div>
 
@@ -815,10 +737,15 @@ export function AppShell({
           </header>
         )}
 
-        {/* Horizontal nav: custom override OR auto standard nav for all module pages */}
-        {horizontalNav ?? (!isHome && <StandardModuleNav />)}
+        {/* Horizontal nav: explicit null suppresses; undefined = auto standard nav */}
+        {horizontalNav !== undefined
+          ? horizontalNav
+          : (!isHome && <StandardModuleNav />)}
 
-        <main className={`flex-1 overflow-y-auto overflow-x-hidden ${isHome ? "p-3 sm:p-4" : "p-4 sm:p-6"}`}>{children}</main>
+        <main className={`flex-1 min-h-0 ${isHome ? "overflow-hidden p-3 sm:p-4" : "overflow-y-auto overflow-x-hidden p-4 sm:p-6"}`}>
+          <PasswordResetNotice email={user?.email} />
+          {children}
+        </main>
       </div>
 
       {/* Date / Time Control Panel — global, rendered at AppShell level */}

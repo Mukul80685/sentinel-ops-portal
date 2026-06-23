@@ -418,12 +418,19 @@ function parseTransponders(sat: GeoSatellite): { total: number; cBand?: string; 
 // ─── Route ────────────────────────────────────────────────────────────────────
 
 export const Route = createFileRoute("/_authenticated/visibility/")({
+  validateSearch: (search: Record<string, unknown>) => ({
+    unit: typeof search.unit === "string" ? search.unit : undefined,
+    satellite: typeof search.satellite === "string" ? search.satellite : undefined,
+  }),
   component: VisibilityPage,
 });
 
 // ─── Main page component ───────────────────────────────────────────────────────
 
 function VisibilityPage() {
+  const { unit: searchUnit, satellite: searchSatellite } = Route.useSearch();
+  const deepLinkApplied = useRef(false);
+
   // Three-level hierarchy: unit → region → satellite
   const [localUnits, setLocalUnits] = useState<VisibilityUnit[]>(VISIBILITY_UNITS);
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
@@ -506,9 +513,31 @@ function VisibilityPage() {
     [activeSat],
   );
 
+  useEffect(() => {
+    if (deepLinkApplied.current) return;
+    if (!searchUnit && !searchSatellite) return;
+    deepLinkApplied.current = true;
+
+    if (searchUnit) {
+      setSelectedUnitId(searchUnit);
+    }
+
+    if (searchSatellite) {
+      const target = searchSatellite.toLowerCase();
+      for (const region of mergedRegions) {
+        const sat = region.satellites.find((s) => s.name.toLowerCase() === target);
+        if (sat) {
+          setActiveRegionId(region.id);
+          setActiveSat(sat);
+          break;
+        }
+      }
+    }
+  }, [searchUnit, searchSatellite, mergedRegions]);
+
   return (
     <AppShell
-      title="Satellite Visibility Metrics"
+      title="Satellite Visibility Matrices"
       subtitle="Target Country Satellites"
       headerIcon={<SatIcon className="h-4 w-4 shrink-0" />}
     >

@@ -128,6 +128,7 @@ function AllocateRecommendation() {
       title="Allocation Recommendation"
       subtitle={`Frequency ${(intel as any)?.frequency ?? "—"} · ${(intel as any)?.satellites?.name ?? "—"}`}
       showBack
+      horizontalNav={null}
     >
       <div className="panel p-3 mb-3 grid grid-cols-1 md:grid-cols-4 gap-3 text-[12px] mono">
         <Stat label="Satellite" value={(intel as any)?.satellites?.name ?? "—"} />

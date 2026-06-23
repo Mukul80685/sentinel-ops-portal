@@ -1,8 +1,8 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { UnitTilePicker } from "@/components/UnitTilePicker";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/_authenticated/priority/")({
-  component: () => (
-    <UnitTilePicker title="Satellite Priority and Allocation" subtitle="Select Unit" basePath="/priority" />
-  ),
+  beforeLoad: () => {
+    throw redirect({ to: "/control-center", search: { module: "priority" } });
+  },
+  component: () => null,
 });

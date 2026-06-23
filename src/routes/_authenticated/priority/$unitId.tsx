@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
+import { ccModuleBackLink } from "@/lib/controlCenter";
 import { Empty } from "@/components/Empty";
 import { listSatellites, priorityClass, exportCsv } from "@/lib/queries";
 import { supabase } from "@/integrations/supabase/client";
@@ -75,6 +76,8 @@ function PriorityUnit() {
       title={unit ? `${unit.code} — Allocations` : "Allocations"}
       subtitle="Priority & Allocation"
       showBack
+      backLink={ccModuleBackLink("priority")}
+      horizontalNav={null}
       actions={
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={exportData} className="mono text-[11px] uppercase tracking-wider h-8">

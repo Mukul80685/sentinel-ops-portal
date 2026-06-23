@@ -23,15 +23,19 @@ import {
   productivityStatusLabel,
   NON_OPERATIONAL,
   CHAIN_CATEGORIES,
+  ACTIVE_SCAN_STATUSES,
+  QUEUED_SCAN_STATUS,
+  countActiveScans,
+  ENGAGEMENTS_ALL_KEY,
 } from "@/lib/engagementEngine";
+import { ccModuleBackLink } from "@/lib/controlCenter";
 import { AlertTriangle, Plus, Trash2, X } from "lucide-react";
 import { useMemo, useRef, useState, useEffect } from "react";
 import { toast } from "sonner";
 
 const STATUSES = ["Planned", "In Progress", "Completed", "Paused", "Failed"] as const;
 const STATUSES_NO_PROGRESS = STATUSES.filter(s => s !== "In Progress") as unknown as readonly string[];
-const ACTIVE_ENG  = new Set(["In Progress", "Paused"]);
-const QUEUED_ENG  = "Planned";
+const QUEUED_ENG  = QUEUED_SCAN_STATUS;
 const DEMOD_TYPES = ["Narrowband", "Wideband", "DVB-S2", "DVB-S2X"] as const;
 
 export const Route = createFileRoute("/_authenticated/engagement/$unitId")({
@@ -266,7 +270,7 @@ function EngagementUnit() {
     staleTime: 30 * 1000,
   });
 
-  const inProgressRows = useMemo(() => rows.filter((r: any) => ACTIVE_ENG.has(r.status)), [rows]);
+  const inProgressRows = useMemo(() => rows.filter((r: any) => ACTIVE_SCAN_STATUSES.has(r.status)), [rows]);
   const plannedRows    = useMemo(() => rows.filter((r: any) => r.status === QUEUED_ENG), [rows]);
 
   const allocatedIds = useMemo(() => buildAllocatedIds(inProgressRows), [inProgressRows]);
@@ -327,12 +331,14 @@ function EngagementUnit() {
     const { error } = await supabase.from("engagements").update(patch).eq("id", id);
     if (error) return toast.error(error.message);
     qc.invalidateQueries({ queryKey: ["eng", unitId] });
+    qc.invalidateQueries({ queryKey: ENGAGEMENTS_ALL_KEY });
   }
   async function remove(id: string) {
     if (!confirm("Remove engagement?")) return;
     const { error } = await supabase.from("engagements").delete().eq("id", id);
     if (error) return toast.error(error.message);
     qc.invalidateQueries({ queryKey: ["eng", unitId] });
+    qc.invalidateQueries({ queryKey: ENGAGEMENTS_ALL_KEY });
   }
 
   const displayCode = unitDisplayCode(unit?.code ?? "—");
@@ -350,13 +356,15 @@ function EngagementUnit() {
       title="Live Engagement Status"
       subtitle={unitLabel}
       showBack
+      backLink={ccModuleBackLink("engagement")}
+      horizontalNav={null}
       actions={
         <div className="flex items-center gap-2">
           {canEdit && (
             <AddEngagement unitId={unitId} activeRows={inProgressRows} equipment={equipmentRaw} />
           )}
           <button
-            onClick={() => navigate({ to: "/engagement/" })}
+            onClick={() => navigate({ to: "/control-center", search: { module: "engagement" } })}
             title="Close"
             className="h-7 w-7 flex items-center justify-center rounded-sm border border-border
                        hover:bg-secondary/60 text-foreground/70 hover:text-foreground transition-colors"
@@ -420,7 +428,7 @@ function EngagementUnit() {
             </div>
 
             <div className="mt-2 flex items-center gap-4 flex-wrap">
-              <EngStat label="Active Scans" value={inProgressRows.length} color="primary" />
+              <EngStat label="Active Scans" value={countActiveScans(rows)} color="primary" />
               <EngStat label="Planned"      value={plannedRows.length} />
               <EngStat label="Faulty Eq."   value={faultyCount} color={faultyCount > 0 ? "warn" : undefined} />
               <EngStat label="Svc Antennas" value={serviceableAntennaCount || "—"} />
@@ -774,9 +782,8 @@ function AddEngagement({ unitId, activeRows, equipment }: AddEngagementProps) {
     toast.success("Engagement created");
     setOpen(false);
     qc.invalidateQueries({ queryKey: ["eng", unitId] });
+    qc.invalidateQueries({ queryKey: ENGAGEMENTS_ALL_KEY });
   }
-
-  const lnaDevices = form.lna_type === "LNA" ? availableLNA : availableLNB;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

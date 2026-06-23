@@ -1,6 +1,18 @@
-import { createFileRoute, Link, useRouterState } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useMemo, useState, type ComponentType } from "react";
 import { AppShell } from "@/components/AppShell";
+import {
+  CONTROL_CENTER_MODULE_MAP,
+  CONTROL_CENTER_MODULES,
+  isControlCenterModule,
+  type ControlCenterModuleId,
+} from "@/lib/controlCenter";
+import {
+  EngagementDashboardView,
+  ImportantFrequenciesView,
+  IntelRepositoryView,
+  PriorityAllocationView,
+} from "@/components/control-center/ControlCenterModuleViews";
 import {
   Activity,
   AlertTriangle,
@@ -29,9 +41,14 @@ import {
 export const Route = createFileRoute("/_authenticated/control-center")({
   component: ControlCenterPage,
   head: () => ({ meta: [{ title: "Control Center — SSACC" }] }),
-  validateSearch: (search: Record<string, unknown>) => ({
-    unit: typeof search.unit === "string" ? search.unit : undefined,
-  }),
+  validateSearch: (search: Record<string, unknown>) => {
+    const moduleRaw = typeof search.module === "string" ? search.module : undefined;
+    const module = moduleRaw && isControlCenterModule(moduleRaw) ? moduleRaw : undefined;
+    return {
+      unit: typeof search.unit === "string" ? search.unit : undefined,
+      module,
+    };
+  },
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2099,43 +2116,61 @@ function OptimizationEngine() {
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// CONTROL CENTER COMMAND BAR — 4 operational quick-access links
+// CONTROL CENTER — Operational subsystem launch cards
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const CC_COMMAND_LINKS = [
-  { to: "/engagement", label: "Live Engagement Status",          icon: Activity      },
-  { to: "/intel",      label: "INT Repository",                  icon: Archive       },
-  { to: "/important",  label: "Important Frequencies",           icon: Star          },
-  { to: "/priority",   label: "Satellite Priority & Allocation", icon: ListOrdered   },
-] as const;
+const MODULE_VIEWS: Record<ControlCenterModuleId, ComponentType> = {
+  engagement: EngagementDashboardView,
+  intel: IntelRepositoryView,
+  important: ImportantFrequenciesView,
+  priority: PriorityAllocationView,
+};
 
-function ControlCenterCommandBar() {
-  const pathname = useRouterState({ select: s => s.location.pathname });
+function ControlCenterSubsystemCards({ activeModule }: { activeModule?: ControlCenterModuleId }) {
+  const navigate = useNavigate();
   return (
-    <nav className="border-b border-border bg-sidebar">
-      <div className="flex items-center justify-center flex-nowrap px-2 py-1 gap-0 overflow-hidden">
-        {CC_COMMAND_LINKS.map(({ to, label }, i) => {
-          const active = pathname === to;
-          return (
-            <div key={to} className="flex items-center shrink-0">
-              {i > 0 && (
-                <span className="text-muted-foreground/30 text-[9px] px-1 select-none leading-none">•</span>
-              )}
-              <Link
-                to={to}
-                className={`inline-flex items-center px-1.5 py-1 mono text-[9px] rounded-sm whitespace-nowrap transition-colors tracking-[0.04em] uppercase ${
-                  active
-                    ? "bg-secondary text-foreground font-semibold"
-                    : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
-                }`}
-              >
-                {label}
-              </Link>
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      {CONTROL_CENTER_MODULES.map(({ id, title, icon: Icon, description }) => {
+        const active = activeModule === id;
+        return (
+          <button
+            key={id}
+            type="button"
+            onClick={() => navigate({ to: "/control-center", search: { module: id } })}
+            className={`group relative overflow-hidden rounded-md border bg-card p-4 sm:p-5
+                        flex items-start gap-4 text-left w-full
+                        transition-all duration-200 cursor-pointer
+                        hover:scale-[1.015] hover:shadow-lg hover:-translate-y-0.5
+                        focus:outline-none focus:ring-2 focus:ring-primary/50
+                        ${active
+                          ? "border-primary/50 bg-primary/5 shadow-md"
+                          : "border-border hover:border-primary/40 hover:bg-secondary/15"
+                        }`}
+          >
+            <div className={`h-12 w-12 shrink-0 grid place-items-center rounded-sm border
+                            transition-colors
+                            ${active
+                              ? "border-primary/40 bg-primary/12"
+                              : "border-border bg-secondary group-hover:bg-primary/8 group-hover:border-primary/30"
+                            }`}>
+              <Icon className={`h-5 w-5 ${active ? "text-primary" : "text-foreground group-hover:text-primary"}`} />
             </div>
-          );
-        })}
-      </div>
-    </nav>
+            <div className="min-w-0 flex-1">
+              <div className="mono text-[12px] font-bold uppercase tracking-wide text-foreground leading-tight">
+                {title}
+              </div>
+              <p className="text-[10px] text-foreground/85 leading-snug mt-1.5">{description}</p>
+              <div className="mt-2.5 mono text-[8px] uppercase tracking-wider text-primary
+                              group-hover:text-primary transition-colors">
+                Open subsystem →
+              </div>
+            </div>
+            <div className="absolute bottom-0 inset-x-0 h-[2px] bg-gradient-to-r from-transparent via-primary/20 to-transparent
+                            group-hover:via-primary/50 transition-all" />
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -2144,21 +2179,52 @@ function ControlCenterCommandBar() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function ControlCenterPage() {
+  const { module } = Route.useSearch();
+
+  if (module) {
+    const meta = CONTROL_CENTER_MODULE_MAP[module];
+    const View = MODULE_VIEWS[module];
+    const Icon = meta.icon;
+    const isEngagement = module === "engagement";
+    return (
+      <AppShell
+        title={meta.title}
+        subtitle={isEngagement || !meta.subtitle ? undefined : meta.subtitle}
+        headerIcon={isEngagement ? undefined : <Icon className="h-4 w-4" />}
+        showBack
+        backLink={{ to: "/control-center", search: {} }}
+        horizontalNav={null}
+      >
+        <View />
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell
       title="Control Center"
-      subtitle="Live Operations Layer"
+      subtitle="Operational Command Environment"
       headerIcon={<LayoutDashboard className="h-4 w-4" />}
       showBack={false}
-      sidebarVariant="home"
-      horizontalNav={<ControlCenterCommandBar />}
+      horizontalNav={null}
     >
-      <div className="space-y-4 pb-6">
+      <div className="space-y-5 pb-6">
 
-        {/* ── Module 1: Unit Activity Snapshot ───────────────────────────── */}
+        {/* ── Operational subsystem launchers ──────────────────────────── */}
+        <section>
+          <div className="flex items-center gap-2 mb-3">
+            <LayoutDashboard className="h-3.5 w-3.5 text-primary" />
+            <span className="mono text-[10px] font-bold uppercase tracking-wider text-foreground">
+              Operational Subsystems
+            </span>
+          </div>
+          <ControlCenterSubsystemCards />
+        </section>
+
+        {/* ── Module 1: Unit Activity Snapshot ───────────────────────── */}
         <UnitActivitySnapshot />
 
-        {/* ── Module 2: Optimization Engine ──────────────────────────────── */}
+        {/* ── Module 2: Optimization Engine ────────────────────────────── */}
         <OptimizationEngine />
 
       </div>
