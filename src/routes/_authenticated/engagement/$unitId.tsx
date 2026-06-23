@@ -1,3 +1,4 @@
+import { Component, type ReactNode, useMemo, useRef, useState, useEffect } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
@@ -30,7 +31,6 @@ import {
 } from "@/lib/engagementEngine";
 import { ccModuleBackLink } from "@/lib/controlCenter";
 import { AlertTriangle, Plus, Trash2, X } from "lucide-react";
-import { useMemo, useRef, useState, useEffect } from "react";
 import { toast } from "sonner";
 
 const STATUSES = ["Planned", "In Progress", "Completed", "Paused", "Failed"] as const;
@@ -38,8 +38,31 @@ const STATUSES_NO_PROGRESS = STATUSES.filter(s => s !== "In Progress") as unknow
 const QUEUED_ENG  = QUEUED_SCAN_STATUS;
 const DEMOD_TYPES = ["Narrowband", "Wideband", "DVB-S2", "DVB-S2X"] as const;
 
+const ENGAGEMENT_LIST_SELECT =
+  "id,unit_id,status,satellite_id,antenna_id,demodulator_id,processing_server_id,observation_start,updated_at,remarks,satellites:satellite_id(name)";
+
+function attachEquipmentToEngagements(rows: any[], equipment: any[]) {
+  const byId = new Map(equipment.map((e) => [e.id, e]));
+  return rows.map((r) => ({
+    ...r,
+    antenna: r.antenna_id
+      ? { id: r.antenna_id, name: byId.get(r.antenna_id)?.name ?? null }
+      : null,
+    demodulator: r.demodulator_id
+      ? { id: r.demodulator_id, name: byId.get(r.demodulator_id)?.name ?? null }
+      : null,
+    server: r.processing_server_id
+      ? { id: r.processing_server_id, name: byId.get(r.processing_server_id)?.name ?? null }
+      : null,
+  }));
+}
+
+function safeEngStatusClass(status: string) {
+  return engStatusClass(status as Parameters<typeof engStatusClass>[0]) ?? "bg-secondary text-foreground";
+}
+
 export const Route = createFileRoute("/_authenticated/engagement/$unitId")({
-  component: EngagementUnit,
+  component: EngagementUnitPage,
 });
 
 function unitDisplayCode(code: string): string {
@@ -222,6 +245,56 @@ function SmallRing({
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
+class EngagementErrorBoundary extends Component<
+  { children: ReactNode },
+  { error: Error | null }
+> {
+  state = { error: null as Error | null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error) {
+    console.error("[EngagementUnit]", error);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <AppShell
+          title="Live Engagement Status"
+          subtitle="Unit detail"
+          showBack
+          backLink={{ to: "/control-center", search: { module: "engagement" } }}
+          horizontalNav={null}
+        >
+          <div className="panel p-6 text-center space-y-3">
+            <p className="mono text-sm font-bold text-foreground">Unable to load unit engagement view</p>
+            <p className="mono text-[10px] text-foreground/70">{this.state.error.message}</p>
+            <button
+              type="button"
+              onClick={() => this.setState({ error: null })}
+              className="mono text-[10px] uppercase tracking-wider px-3 py-1.5 border border-border rounded-sm hover:bg-secondary/50"
+            >
+              Retry
+            </button>
+          </div>
+        </AppShell>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function EngagementUnitPage() {
+  return (
+    <EngagementErrorBoundary>
+      <EngagementUnit />
+    </EngagementErrorBoundary>
+  );
+}
+
 function EngagementUnit() {
   const { unitId } = Route.useParams();
   const canEdit    = useCanEdit();
@@ -234,29 +307,45 @@ function EngagementUnit() {
       (await supabase.from("units").select("*").eq("id", unitId).maybeSingle()).data,
   });
 
-  const { data: rows = [] } = useQuery({
+  const { data: engResult } = useQuery({
     queryKey: ["eng", unitId],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("engagements")
-        .select("*, satellites:satellite_id(name), antenna:antenna_id(name,id), demodulator:demodulator_id(name,id), server:processing_server_id(name,id)")
+        .select(ENGAGEMENT_LIST_SELECT)
         .eq("unit_id", unitId)
         .order("observation_start", { ascending: false });
-      if (error) throw error;
-      return data ?? [];
+      if (error) {
+        console.error("[engagement] fetch failed:", error.message);
+        return { rows: [] as any[], failed: true };
+      }
+      return { rows: data ?? [], failed: false };
     },
+    retry: false,
   });
+
+  const rows = engResult?.rows ?? [];
+  const engError = engResult?.failed ?? false;
 
   const { data: equipmentRaw = [] } = useQuery({
     queryKey: ["unit-equipment-detail", unitId],
     queryFn: async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("equipment")
         .select("id, name, serviceability, category:category_id(name)")
         .eq("unit_id", unitId);
+      if (error) {
+        console.error("[engagement] equipment fetch failed:", error.message);
+        return [];
+      }
       return data ?? [];
     },
   });
+
+  const enrichedRows = useMemo(
+    () => attachEquipmentToEngagements(rows, equipmentRaw),
+    [rows, equipmentRaw],
+  );
 
   const { data: intelRows = [] } = useQuery({
     queryKey: ["intel-eng", unitId],
@@ -270,8 +359,14 @@ function EngagementUnit() {
     staleTime: 30 * 1000,
   });
 
-  const inProgressRows = useMemo(() => rows.filter((r: any) => ACTIVE_SCAN_STATUSES.has(r.status)), [rows]);
-  const plannedRows    = useMemo(() => rows.filter((r: any) => r.status === QUEUED_ENG), [rows]);
+  const inProgressRows = useMemo(
+    () => enrichedRows.filter((r: any) => ACTIVE_SCAN_STATUSES.has(r.status)),
+    [enrichedRows],
+  );
+  const plannedRows = useMemo(
+    () => enrichedRows.filter((r: any) => r.status === QUEUED_ENG),
+    [enrichedRows],
+  );
 
   const allocatedIds = useMemo(() => buildAllocatedIds(inProgressRows), [inProgressRows]);
 
@@ -428,7 +523,7 @@ function EngagementUnit() {
             </div>
 
             <div className="mt-2 flex items-center gap-4 flex-wrap">
-              <EngStat label="Active Scans" value={countActiveScans(rows)} color="primary" />
+              <EngStat label="Active Scans" value={countActiveScans(enrichedRows)} color="primary" />
               <EngStat label="Planned"      value={plannedRows.length} />
               <EngStat label="Faulty Eq."   value={faultyCount} color={faultyCount > 0 ? "warn" : undefined} />
               <EngStat label="Svc Antennas" value={serviceableAntennaCount || "—"} />
@@ -497,7 +592,8 @@ function EngagementUnit() {
               <tbody className="divide-y divide-border">
                 {inProgressRows.map((r: any, idx: number) => {
                   const { isPending, missing } = resourceCompleteness(r);
-                  const analysis = analysisByEngId.get(r.id)!;
+                  const analysis =
+                    analysisByEngId.get(r.id) ?? computeSatelliteAnalysis(r, intelRows);
                   const hasResources = !isPending;
 
                   return (
@@ -606,11 +702,11 @@ function EngagementUnit() {
                           canEdit ? (
                             <select value={r.status} onChange={(e) => update(r.id, { status: e.target.value })}
                               className={`px-1.5 py-0.5 rounded-sm text-[8.5px] uppercase tracking-wider
-                                          border border-border/50 bg-card ${engStatusClass(r.status)}`}>
+                                          border border-border/50 bg-card ${safeEngStatusClass(r.status)}`}>
                               {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
                             </select>
                           ) : (
-                            <span className={`px-1.5 py-0.5 rounded-sm text-[8.5px] uppercase tracking-wider ${engStatusClass(r.status)}`}>
+                            <span className={`px-1.5 py-0.5 rounded-sm text-[8.5px] uppercase tracking-wider ${safeEngStatusClass(r.status)}`}>
                               {r.status}
                             </span>
                           )
@@ -673,7 +769,7 @@ function EngagementUnit() {
                       {r.observation_start ? new Date(r.observation_start).toLocaleString() : "—"}
                     </td>
                     <td className="px-3 py-2">
-                      <span className={`px-1.5 py-0.5 rounded-sm text-[8.5px] uppercase tracking-wider ${engStatusClass(r.status)}`}>
+                      <span className={`px-1.5 py-0.5 rounded-sm text-[8.5px] uppercase tracking-wider ${safeEngStatusClass(r.status)}`}>
                         {r.status}
                       </span>
                     </td>
@@ -692,7 +788,13 @@ function EngagementUnit() {
         )}
       </div>
 
-      {rows.length === 0 && <Empty title="No engagements recorded" />}
+      {engError && (
+        <div className="panel mb-3 px-3 py-2 mono text-[10px] text-amber-800 border border-amber-400/30 bg-amber-400/10">
+          Engagement records could not be loaded — showing available unit data only.
+        </div>
+      )}
+
+      {enrichedRows.length === 0 && !engError && <Empty title="No engagements recorded" />}
     </AppShell>
   );
 }
@@ -714,7 +816,18 @@ interface AddEngagementProps { unitId: string; activeRows: any[]; equipment: any
 function AddEngagement({ unitId, activeRows, equipment }: AddEngagementProps) {
   const [open, setOpen] = useState(false);
   const qc = useQueryClient();
-  const { data: sats = [] } = useQuery({ queryKey: ["sats"], queryFn: listSatellites });
+  const { data: sats = [] } = useQuery({
+    queryKey: ["sats"],
+    queryFn: async () => {
+      try {
+        return await listSatellites();
+      } catch (e) {
+        console.error("[engagement] satellites fetch failed:", e);
+        return [];
+      }
+    },
+    retry: false,
+  });
 
   const allocatedAntennaIds = useMemo(
     () => new Set(activeRows.map((r: any) => r.antenna_id).filter(Boolean)), [activeRows],
@@ -759,6 +872,8 @@ function AddEngagement({ unitId, activeRows, equipment }: AddEngagementProps) {
     (!form.antenna_id || !form.demodulator_id || !form.processing_server_id);
 
   const canSubmit = !noAntenna && !!form.satellite_id && !inProgressMissingResources;
+
+  const lnaDevices = form.lna_type === "LNA" ? availableLNA : availableLNB;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();

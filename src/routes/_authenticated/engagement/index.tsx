@@ -1,4 +1,4 @@
-import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { Empty } from "@/components/Empty";
@@ -23,7 +23,6 @@ export const Route = createFileRoute("/_authenticated/engagement/")({
 });
 
 export function EngagementDashboardView() {
-  const navigate = useNavigate();
   const { data: units = [] } = useQuery({ queryKey: ["units"], queryFn: listUnits });
 
   const { data: equipment = [] } = useQuery({
@@ -112,23 +111,18 @@ export function EngagementDashboardView() {
             </div>
 
             <div className="border-t border-border/50 px-3 pb-3 pt-2 mt-auto">
-              <button
-                type="button"
-                onClick={() =>
-                  navigate({
-                    to: "/engagement/$unitId",
-                    params: { unitId: unit.id },
-                  })
-                }
+              <Link
+                to="/engagement/$unitId"
+                params={{ unitId: unit.id }}
                 className="w-full flex items-center justify-center gap-1.5 rounded-sm
-                           border border-border bg-card px-3 py-1.5
+                           border border-border bg-card px-3 py-1.5 no-underline
                            hover:bg-primary/10 hover:border-primary/50 transition-all cursor-pointer"
               >
                 <span className="mono text-[8px] uppercase tracking-wider text-foreground hover:text-primary transition-colors">
                   View Details
                 </span>
                 <ChevronRight className="h-2.5 w-2.5 text-foreground" />
-              </button>
+              </Link>
             </div>
           </div>
         ))}
