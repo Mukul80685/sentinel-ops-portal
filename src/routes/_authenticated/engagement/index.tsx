@@ -13,6 +13,7 @@ import {
   engColor,
   fetchAllEngagements,
 } from "@/lib/engagementEngine";
+import { INT_UNITS } from "@/lib/intelRepository";
 import { ChevronRight } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/engagement/")({
@@ -77,16 +78,12 @@ export function EngagementDashboardView() {
                 <div className="mono text-[12px] font-bold uppercase tracking-tight text-foreground leading-tight">
                   Unit {unitDisplayCode(unit.code)}
                 </div>
+                <div className="mono text-[8px] text-foreground/75 mt-0.5 truncate">
+                  {unitLocation(unit)}
+                </div>
               </div>
 
               <EngagementRing pct={pct} />
-
-              <div className="text-center">
-                <div className="mono text-[11px] font-bold text-foreground leading-none">{scan.activeCount}</div>
-                <div className="mono text-[7px] uppercase tracking-wider text-foreground leading-none mt-0.5">
-                  scanning
-                </div>
-              </div>
 
               <div className="w-full min-h-[52px]">
                 {scan.satellites.length === 0 ? (
@@ -135,6 +132,12 @@ function unitDisplayCode(code: string): string {
   return code.replace(/^GATE[-\s]?/i, "").trim() || code;
 }
 
+function unitLocation(unit: { code: string; description?: string | null }): string {
+  const code = unitDisplayCode(unit.code);
+  const intUnit = INT_UNITS.find((u) => u.code === code);
+  return intUnit?.location ?? unit.description ?? "—";
+}
+
 function FleetStat({ label, value, accent }: { label: string; value: string | number; accent?: boolean }) {
   return (
     <div className="flex items-baseline gap-1.5">
@@ -179,7 +182,6 @@ function EngagementRing({ pct }: { pct: number }) {
         <span className="mono text-[12px] font-bold leading-none" style={{ color }}>
           {pct}%
         </span>
-        <span className="mono text-[6px] uppercase tracking-wider text-foreground leading-none mt-0.5">load</span>
       </div>
     </div>
   );

@@ -10,6 +10,7 @@ import {
   User,
   FileText,
   Clock,
+  Trash2,
 } from "lucide-react";
 import { useAuth, useIsAdmin } from "@/lib/auth";
 import { PasswordResetNotice } from "@/components/auth/PasswordResetNotice";
@@ -38,12 +39,14 @@ const supportNavItems = [
   { key: "satellites", label: "Satellites",         icon: Satellite, adminTo: "/admin/satellites", userTo: "/visibility" },
   { key: "minutes",    label: "Recent Discussions", icon: Clock,     adminTo: "/minutes",           userTo: "/minutes" },
   { key: "reports",    label: "Reports",            icon: FileText,  adminTo: "/reports",           userTo: "/reports" },
+  { key: "discarded",  label: "Discarded Frequencies", icon: Trash2, adminTo: "/discarded",       userTo: "/discarded" },
 ] as const;
 
 const standardNavItems = [
   { key: "units",      label: "Units",               icon: Landmark,  adminTo: "/admin/units",      userTo: "/inventory" },
   { key: "satellites", label: "Satellites",          icon: Satellite, adminTo: "/admin/satellites", userTo: "/visibility" },
   { key: "reports",    label: "Reports and Returns", icon: FileText,  adminTo: "/reports",           userTo: "/reports" },
+  { key: "discarded",  label: "Discarded Frequencies", icon: Trash2, adminTo: "/discarded",       userTo: "/discarded" },
   { key: "minutes",    label: "Recent Discussions",  icon: Clock,     adminTo: "/minutes",           userTo: "/minutes" },
 ] as const;
 
@@ -104,18 +107,17 @@ function useLiveTzStamp(tz: string) {
   useEffect(() => {
     const fmt = () => {
       const now = new Date();
-      const time = now.toLocaleTimeString("en-GB", {
+      const time = `${now.toLocaleTimeString("en-GB", {
         timeZone: tz,
         hour: "2-digit",
         minute: "2-digit",
-        second: "2-digit",
-      });
+        hour12: false,
+      })} Hrs`;
       const date = now.toLocaleDateString("en-GB", {
         timeZone: tz,
-        weekday: "short",
-        year: "numeric",
-        month: "short",
         day: "numeric",
+        month: "short",
+        year: "numeric",
       });
       return { time, date, full: `${date} · ${time}` };
     };
@@ -124,6 +126,34 @@ function useLiveTzStamp(tz: string) {
     return () => clearInterval(id);
   }, [tz]);
   return stamp;
+}
+
+type TzStamp = ReturnType<typeof useLiveTzStamp>;
+
+function SidebarClock({
+  stamp,
+  onClockClick,
+  muted = false,
+}: {
+  stamp: TzStamp;
+  onClockClick: () => void;
+  muted?: boolean;
+}) {
+  const textCls = muted ? "text-muted-foreground" : "text-foreground";
+  return (
+    <button
+      type="button"
+      onClick={onClockClick}
+      title="Open Date / Time Control Panel"
+      className="w-full text-left px-2 py-1 hover:bg-secondary/50 transition-colors rounded-sm flex items-start gap-2"
+    >
+      <Clock className={`h-3 w-3 shrink-0 mt-0.5 ${textCls}`} />
+      <span className="flex flex-col gap-0.5 min-w-0 leading-tight">
+        <span className={`mono text-[10px] ${textCls}`}>{stamp.date || "\u00A0"}</span>
+        <span className={`mono text-[10px] ${textCls}`}>{stamp.time || "\u00A0"}</span>
+      </span>
+    </button>
+  );
 }
 
 function navActive(pathname: string, to: string, exact?: boolean) {
@@ -162,60 +192,6 @@ function SidebarLink({
       <Icon className="h-3 w-3 shrink-0" />
       {label}
     </Link>
-  );
-}
-
-/** SSACC insignia — precision space-operations badge */
-function SsaccLogo() {
-  return (
-    <svg
-      width="44"
-      height="44"
-      viewBox="0 0 80 80"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden="true"
-      className="text-foreground shrink-0"
-    >
-      {/* Outer precision ring */}
-      <circle cx="40" cy="40" r="37" stroke="currentColor" strokeWidth="1.8" />
-      {/* Inner dashed ring */}
-      <circle cx="40" cy="40" r="32" stroke="currentColor" strokeWidth="0.8" strokeDasharray="3 3" opacity="0.45" />
-
-      {/* Earth globe — filled disc with continental suggestion */}
-      <circle cx="40" cy="40" r="14" stroke="currentColor" strokeWidth="1.2" fill="currentColor" fillOpacity="0.08" />
-      {/* Globe equatorial band */}
-      <ellipse cx="40" cy="40" rx="14" ry="5.5" stroke="currentColor" strokeWidth="0.8" opacity="0.55" />
-      {/* Globe meridian */}
-      <line x1="40" y1="26" x2="40" y2="54" stroke="currentColor" strokeWidth="0.8" opacity="0.55" />
-
-      {/* Main orbital ellipse — tilted 20° */}
-      <ellipse cx="40" cy="40" rx="27" ry="10.5" stroke="currentColor" strokeWidth="1.6" transform="rotate(-20 40 40)" />
-
-      {/* Satellite body (upper-right on orbit, at ~–20+70° = 50° CCW from top) */}
-      <rect x="59" y="11" width="10" height="7" rx="1.2" fill="currentColor" />
-      {/* Left solar panel */}
-      <rect x="49" y="12.5" width="10" height="4" rx="0.6" fill="currentColor" opacity="0.72" />
-      {/* Right solar panel */}
-      <rect x="69" y="12.5" width="10" height="4" rx="0.6" fill="currentColor" opacity="0.72" />
-      {/* Satellite nadir antenna dot */}
-      <circle cx="64" cy="18.5" r="1.2" fill="currentColor" opacity="0.5" />
-
-      {/* Signal beams — satellite to Earth (2 dashed lines) */}
-      <line x1="62" y1="19" x2="50" y2="33" stroke="currentColor" strokeWidth="0.9" strokeDasharray="2 2.5" opacity="0.5" />
-      <line x1="66" y1="21" x2="53" y2="37" stroke="currentColor" strokeWidth="0.65" strokeDasharray="1.5 3" opacity="0.35" />
-
-      {/* Ground station */}
-      <path d="M 24 65 Q 40 54 56 65" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-      <line x1="40" y1="65" x2="40" y2="74" stroke="currentColor" strokeWidth="1.6" />
-      <line x1="33" y1="74" x2="47" y2="74" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-
-      {/* Cardinal tick marks — precision compass feel */}
-      <line x1="40" y1="2"  x2="40" y2="6"  stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      <line x1="40" y1="74" x2="40" y2="78" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      <line x1="2"  y1="40" x2="6"  y2="40" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      <line x1="74" y1="40" x2="78" y2="40" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-    </svg>
   );
 }
 
@@ -407,7 +383,7 @@ function PrimaryNavSidebar({
   isAdmin: boolean;
   signOut: () => Promise<void>;
   pathname: string;
-  stamp: string;
+  stamp: TzStamp;
   onClockClick: () => void;
 }) {
   const resolveTo = (item: (typeof supportNavItems)[number]) =>
@@ -431,15 +407,7 @@ function PrimaryNavSidebar({
           )}
           {mode === "admin" && isAdmin ? "Admin Account" : "User Profile"}
         </button>
-        <button
-          type="button"
-          onClick={onClockClick}
-          title="Open Date / Time Control Panel"
-          className="w-full text-left px-2 py-1 mono text-[10px] text-foreground leading-tight hover:bg-secondary/50 transition-colors rounded-sm flex items-center gap-2"
-        >
-          <Clock className="h-3 w-3 shrink-0" />
-          <span className="truncate">{stamp || "\u00A0"}</span>
-        </button>
+        <SidebarClock stamp={stamp} onClockClick={onClockClick} />
       </div>
 
       <div className="border-t border-border mx-1.5 shrink-0" />
@@ -495,7 +463,7 @@ function SecondarySidebar({
   signOut: () => Promise<void>;
   pathname: string;
   resolveSecondaryTo: (item: (typeof standardNavItems)[number]) => string;
-  stamp: string;
+  stamp: TzStamp;
   onClockClick: () => void;
 }) {
   return (
@@ -549,14 +517,7 @@ function SecondarySidebar({
 
       {/* BOTTOM — Clock (live) + Sign Out */}
       <div className="border-t border-border px-2 py-1.5 space-y-0.5">
-        <button
-          type="button"
-          onClick={onClockClick}
-          title="Open Date / Time Control Panel"
-          className="w-full text-left px-2 py-1 mono text-[10px] text-muted-foreground leading-snug hover:text-foreground transition-colors rounded-sm"
-        >
-          {stamp || "\u00A0"}
-        </button>
+        <SidebarClock stamp={stamp} onClockClick={onClockClick} muted />
         <button type="button" onClick={() => signOut()} className={secondaryCtrlCls}>
           <Power className="h-3 w-3 shrink-0" />
           Sign Out
@@ -607,7 +568,6 @@ export function AppShell({
   const [selectedTz, setSelectedTz] = useState<string>("Asia/Kolkata");
   const [dtOpen, setDtOpen] = useState(false);
   const tzStamp = useLiveTzStamp(selectedTz);
-  const stamp = tzStamp.full;
 
   const [mode, setMode] = useState<"admin" | "user">("user");
 
@@ -629,7 +589,7 @@ export function AppShell({
             signOut={signOut}
             pathname={pathname}
             resolveSecondaryTo={resolveSecondaryTo}
-            stamp={stamp}
+            stamp={tzStamp}
             onClockClick={() => setDtOpen(true)}
           />
         ) : (
@@ -639,42 +599,27 @@ export function AppShell({
             isAdmin={isAdmin}
             signOut={signOut}
             pathname={pathname}
-            stamp={stamp}
+            stamp={tzStamp}
             onClockClick={() => setDtOpen(true)}
           />
         )}
       </aside>
 
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      <div className="flex-1 flex flex-col min-w-0">
         {isHome ? (
-          /* ── HOME HEADER: Logo+SSACC | 3-line title | Settings+Sign Out ── */
-          <header className="border-b border-border bg-card/80 backdrop-blur sticky top-0 z-20">
-            <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3 px-4 sm:px-6 py-2">
-              {/* LEFT: Logo + wordmark */}
-              <div className="flex flex-col items-center gap-0.5 shrink-0">
-                <SsaccLogo />
-                <span className="mono text-[9px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
-                  SSACC
-                </span>
-              </div>
-
-              {/* CENTER: 3-line title — full-width visual identity */}
-              <div className="text-center select-none py-0.5">
-                <div className="mono font-bold tracking-widest uppercase text-foreground text-sm sm:text-base underline decoration-2 underline-offset-4 leading-snug">
-                  Satellite Signal Analysis
+          <header className="border-b border-border bg-card/80 backdrop-blur sticky top-0 z-20 shrink-0">
+            <div className="relative flex items-center justify-center w-full min-h-[4.5rem] sm:min-h-[5rem] px-4 sm:px-8 lg:px-10 py-3 sm:py-4">
+              <h1
+                className="mono font-bold uppercase text-[#000000] tracking-tight leading-none whitespace-nowrap
+                           text-[clamp(0.78rem,1.55vw+0.35rem,1.9rem)] max-w-full text-center"
+              >
+                Satellite Signal Analysis and Coordination Center
+              </h1>
+              {actions && (
+                <div className="absolute right-4 sm:right-6 lg:right-8 top-1/2 -translate-y-1/2 shrink-0">
+                  {actions}
                 </div>
-                <div className="mono font-semibold text-muted-foreground text-[13px] leading-none py-1">
-                  &amp;
-                </div>
-                <div className="mono font-bold tracking-widest uppercase text-foreground text-sm sm:text-base underline decoration-2 underline-offset-4 leading-snug">
-                  Coordination Center
-                </div>
-              </div>
-
-              {/* RIGHT: actions slot (empty by default on homepage) */}
-              <div className="flex flex-col items-end gap-0.5 shrink-0">
-                {actions}
-              </div>
+              )}
             </div>
           </header>
         ) : (
@@ -737,12 +682,10 @@ export function AppShell({
           </header>
         )}
 
-        {/* Horizontal nav: explicit null suppresses; undefined = auto standard nav */}
-        {horizontalNav !== undefined
-          ? horizontalNav
-          : (!isHome && <StandardModuleNav />)}
+        {/* Sidebar is the sole module navigation — no duplicate horizontal strip */}
+        {horizontalNav}
 
-        <main className={`flex-1 min-h-0 ${isHome ? "overflow-hidden p-3 sm:p-4" : "overflow-y-auto overflow-x-hidden p-4 sm:p-6"}`}>
+        <main className={`flex-1 min-h-0 overflow-hidden ${isHome ? "p-3 sm:p-4" : "overflow-y-auto overflow-x-hidden p-4 sm:p-6"}`}>
           <PasswordResetNotice email={user?.email} />
           {children}
         </main>

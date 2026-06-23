@@ -3,10 +3,13 @@
  */
 import { computeSatelliteAnalysis } from "@/lib/engagementEngine";
 import {
+  canUnitScanSatellite,
+  getVisibleBeamNamesFromMatrix,
   resolveBeamVisibilityFromMatrix,
   resolveScanPolarizationFromEngagement,
   validateIntelReportIntegrity,
 } from "@/lib/intelIntegrity";
+import { resolveMatrixVisibility } from "@/lib/visibilityMatrix";
 import { bandToPolarizations, INT_UNITS } from "@/lib/intelRepository";
 
 export const OUTPUT_TYPES = ["voice", "packet", "image", "video", "location"] as const;
@@ -157,6 +160,19 @@ export function hasIntelData(unitId: string): boolean {
   return INTEL_MOCK_UNIT_IDS.has(unitId);
 }
 
+/** True when satellite appears in this unit's INT Repository roster. */
+export function isSatelliteInIntRoster(unitId: string, satelliteName: string): boolean {
+  if (!hasIntelData(unitId)) return false;
+  const roster = UNIT_SATELLITE_ROSTER[unitId];
+  if (!roster) return false;
+  const norm = satelliteName.trim().toLowerCase();
+  return roster.some((s) => s.toLowerCase() === norm);
+}
+
+export function intelReportIdForSatellite(unitId: string, satelliteName: string): string {
+  return `${unitId}__${satelliteName.replace(/\s+/g, "-")}`;
+}
+
 export function getUnitIntelName(unitId: string): string {
   return INT_UNITS.find((u) => u.id === unitId)?.name ?? "Current Unit";
 }
@@ -165,28 +181,10 @@ export function getUnitIntelCode(unitId: string): string {
   return INT_UNITS.find((u) => u.id === unitId)?.code ?? "A";
 }
 
-/** All beams defined for a satellite (complete inventory). */
-export function getAllSatelliteBeams(satName: string): string[] {
-  return [...(SATELLITE_BEAMS[satName] ?? ["Regional Beam 1", "Regional Beam 2"])];
+/** Beam inventory from Visibility Matrix SSOT (inventory is unit-independent). */
+export function getAllSatelliteBeams(satName: string, unitId = "alpha"): string[] {
+  return resolveMatrixVisibility(unitId, satName)?.beamInventory ?? [];
 }
-
-/** Named beams per satellite — aligned with Visibility Matrix naming */
-export const SATELLITE_BEAMS: Record<string, readonly string[]> = {
-  "ChinaSat 6B":    ["KU Regional Beam 1", "KU Regional Beam 2", "KU Regional Beam 3", "KU Regional Beam 4", "C Wide Beam", "C Regional Beam"],
-  "Apstar 7":       ["KU Spot Beam 1", "KU Spot Beam 2", "C-band Regional", "South Asia Footprint"],
-  "PAKSAT-1R":      ["KU Beam Pakistan", "KU Beam Middle East", "Pakistan / ME Coverage"],
-  "Measat-3a":      ["KU Regional 1", "KU Regional 2", "KU Regional 3", "SE Asia / Indian Ocean"],
-  "Arabsat 6A":     ["Ka Spot 1", "Ka Spot 2", "Ku Spot 1", "Ku Spot 2", "MENA Wide Beam", "Ku HTS Beam 6"],
-  "ChinaSat 10":    ["KU Beam East 1", "KU Beam East 2", "C-band Footprint 1", "C-band Footprint 2", "East Asia Coverage"],
-  "AsiaSat 7":      ["KU Relay 1", "KU Relay 2", "KU Relay 3", "Asia / Middle East Relay"],
-  "Turksat 4A":     ["KU Spot Europe", "KU Spot MENA", "KU Regional", "Europe / MENA Coverage"],
-  "Eutelsat 7B":    ["KU Africa 1", "KU Africa 2", "KU Europe 1", "KU Europe 2", "Sub-Saharan / Europe"],
-  "Yamal 601":      ["C-band Russia", "C-band CIS", "KU Beam 1", "KU Beam 2", "Russia / CIS Coverage"],
-  "ChinaSat 12":    ["KU Indian Ocean 1", "KU Indian Ocean 2", "KU Africa 1", "Africa Footprint"],
-  "Bangabandhu-1":  ["KU Spot DTH 1", "KU Spot DTH 2", "South Asia DTH"],
-  "Thaicom 8":      ["KU SE Asia 1", "KU SE Asia 2", "KU SE Asia 3", "SE Asia Coverage"],
-  "Nilesat 201":    ["KU Wide North Africa", "KU Wide Middle East", "North Africa / ME DTH"],
-};
 
 export type BeamVisibilityEntry = {
   name: string;
@@ -194,39 +192,26 @@ export type BeamVisibilityEntry = {
   label: string;
 };
 
+/** Delegates to Visibility Matrix — never computes visibility locally. */
 export function resolveBeamVisibility(
   satName: string,
   unitId: string,
   ctx: IntelLinkageContext,
 ): BeamVisibilityEntry[] {
-  const beams = SATELLITE_BEAMS[satName] ?? ["Regional Beam 1", "Regional Beam 2"];
-  const unitName = getUnitIntelName(unitId);
-  const matrixPols = ctx.visibilityBySatName.get(satName) ?? [];
-  const hasMatrix = matrixPols.length > 0;
-  const rand = seedRand(`${unitId}-${satName}-beams`);
-
-  return beams.map((name, i) => {
-    const visibleToUnit = hasMatrix
-      ? i < Math.ceil(beams.length * 0.55) && rand() > 0.15
-      : rand() > 0.35;
-    return {
-      name,
-      visibleToUnit,
-      label: visibleToUnit
-        ? `(Visible to ${unitName})`
-        : "(Not visible to Current Unit)",
-    };
-  });
+  return resolveBeamVisibilityFromMatrix(satName, unitId, ctx).beams;
 }
 
 export type IntelSatelliteReportRow = {
   reportId: string;
   satelliteName: string;
+  /** False when Visibility Matrix reports zero intersecting beams for this unit. */
+  scanEligible: boolean;
   totalScanned: number;
   analyzed: number;
   pending: number;
-  productivityScore: number;
-  reportTimestamp: string;
+  /** null = not applicable (zero visibility) */
+  productivityScore: number | null;
+  reportTimestamp: string | null;
   polarization: string;
   processingStatus: string;
   engagementStatus: string | null;
@@ -260,8 +245,12 @@ export type IntelDrillDownReport = {
   unitId: string;
   baseProfile: VisibilitySatelliteProfile;
   totalBeamsAvailable: string[];
+  totalBeamCount: number;
   beamsVisibleToUnit: string[];
   scanBand: string;
+  /** True when visibility matrix reports zero beams for this unit — sections remain, data gated. */
+  visibilityBlocked: boolean;
+  visibilityConstraint: string;
   scanSummary: {
     polarization: string;
     totalScanned: number;
@@ -331,16 +320,8 @@ export function buildIntelLinkageContext(
   }
 
   const visibilityBySatId = new Map<string, Set<string>>();
+  const visibilityBySatName = new Map<string, string[]>();
   const satIdToName = new Map<string, string>();
-
-  for (const row of visibilityRows) {
-    const beam = row.beams;
-    if (!beam) continue;
-    const satId = beam.satellite_id as string;
-    const pols = bandToPolarizations(beam.band ?? "");
-    if (!visibilityBySatId.has(satId)) visibilityBySatId.set(satId, new Set());
-    for (const p of pols) visibilityBySatId.get(satId)!.add(p);
-  }
 
   for (const eng of engagements) {
     if (eng.satellites?.id && eng.satellites?.name) {
@@ -348,15 +329,24 @@ export function buildIntelLinkageContext(
     }
   }
 
-  const visibilityBySatName = new Map<string, string[]>();
-  for (const [satId, pols] of visibilityBySatId) {
-    const name = satIdToName.get(satId);
-    if (name) visibilityBySatName.set(name, Array.from(pols));
-  }
+  for (const row of visibilityRows) {
+    if (row.visible === false) continue;
+    const beam = row.beams;
+    if (!beam) continue;
+    const satId = beam.satellite_id as string;
+    const satName =
+      (beam.satellites as { name?: string } | null)?.name ??
+      satIdToName.get(satId);
+    if (!satName) continue;
 
-  for (const profile of Object.values(VISIBILITY_SATELLITE_PROFILES)) {
-    if (!visibilityBySatName.has(profile.name)) {
-      visibilityBySatName.set(profile.name, [profile.defaultPolarization]);
+    const pols = bandToPolarizations(beam.band ?? "");
+    if (!visibilityBySatId.has(satId)) visibilityBySatId.set(satId, new Set());
+    if (!visibilityBySatName.has(satName)) visibilityBySatName.set(satName, []);
+
+    for (const p of pols) {
+      visibilityBySatId.get(satId)!.add(p);
+      const list = visibilityBySatName.get(satName)!;
+      if (!list.includes(p)) list.push(p);
     }
   }
 
@@ -390,6 +380,16 @@ function buildScanCounts(
   processingStatus: string;
   engagementStatus: string | null;
 } {
+  if (!canUnitScanSatellite(satName, unitId, ctx)) {
+    return {
+      totalScanned: 0,
+      analyzed: 0,
+      pending: 0,
+      processingStatus: "No Activity Possible — Zero Beam Visibility",
+      engagementStatus: null,
+    };
+  }
+
   const eng = ctx.engagementBySatName.get(satName);
 
   if (eng && ctx.resourcesServiceable) {
@@ -438,11 +438,29 @@ export function buildIntelSatelliteTable(
   const roster = UNIT_SATELLITE_ROSTER[unitId];
   if (!roster) return [];
 
-  const rand = seedRand(`${unitId}-table`);
-  const now = Date.now();
+  const now = INTEL_MOCK_EPOCH_MS;
 
   return roster.map((satName, idx) => {
+    const eligible = canUnitScanSatellite(satName, unitId, ctx);
     const counts = buildScanCounts(unitId, satName, ctx);
+
+    if (!eligible) {
+      return {
+        reportId: `${unitId}__${satName.replace(/\s+/g, "-")}`,
+        satelliteName: satName,
+        scanEligible: false,
+        totalScanned: 0,
+        analyzed: 0,
+        pending: 0,
+        productivityScore: null,
+        reportTimestamp: null,
+        polarization: "—",
+        processingStatus: counts.processingStatus,
+        engagementStatus: null,
+      };
+    }
+
+    const rand = seedRand(`${unitId}-${satName}-row`);
     const productiveEst = Math.floor(counts.analyzed * (0.35 + rand() * 0.25));
     const daysAgo = Math.floor(rand() * 14);
     const ts = new Date(now - daysAgo * 86400000 - idx * 3600000);
@@ -450,12 +468,13 @@ export function buildIntelSatelliteTable(
     return {
       reportId: `${unitId}__${satName.replace(/\s+/g, "-")}`,
       satelliteName: satName,
+      scanEligible: true,
       totalScanned: counts.totalScanned,
       analyzed: counts.analyzed,
       pending: counts.pending,
       productivityScore: productivityScore(counts.analyzed, productiveEst),
       reportTimestamp: ts.toISOString(),
-      polarization: resolveScanPolarizationFromEngagement(satName, ctx, engagements),
+      polarization: resolveScanPolarizationFromEngagement(satName, unitId, ctx, engagements),
       processingStatus: counts.processingStatus,
       engagementStatus: counts.engagementStatus,
     };
@@ -474,26 +493,58 @@ export function buildIntelDrillDownReport(
   const profile = VISIBILITY_SATELLITE_PROFILES[row.satelliteName];
   if (!profile) return null;
 
-  const scanPol = resolveScanPolarizationFromEngagement(row.satelliteName, ctx, engagements);
-  const { beams: beamVisibility, filteredOut: beamFilteredOut } = resolveBeamVisibilityFromMatrix(
+  const scanPol = resolveScanPolarizationFromEngagement(row.satelliteName, unitId, ctx, engagements);
+  const { beams: beamVisibility, filteredOut: beamFilteredOut, snapshot } = resolveBeamVisibilityFromMatrix(
     row.satelliteName,
     unitId,
     ctx,
   );
   const integrity = validateIntelReportIntegrity(
     row.satelliteName,
+    unitId,
     ctx,
     engagements,
     scanPol,
     beamVisibility,
     beamFilteredOut,
   );
+  const totalBeamsAvailable = snapshot?.beamInventory ?? [];
+  const totalBeamCount = snapshot?.totalBeamCount ?? totalBeamsAvailable.length;
+  const beamsVisibleToUnit = snapshot?.beamsVisibleToUnit ?? getVisibleBeamNamesFromMatrix(row.satelliteName, unitId, ctx);
+
+  if (!row.scanEligible) {
+    return {
+      reportId: row.reportId,
+      satelliteName: row.satelliteName,
+      unitId,
+      baseProfile: profile,
+      totalBeamsAvailable,
+      totalBeamCount,
+      beamsVisibleToUnit,
+      scanBand: integrity.scanBand,
+      visibilityBlocked: true,
+      visibilityConstraint: "Scanning blocked — Visibility Matrix reports zero beams visible to this unit.",
+      scanSummary: {
+        polarization: "—",
+        totalScanned: 0,
+        analyzed: 0,
+        pending: 0,
+        scanStartDate: "—",
+      },
+      productive: [],
+      nonProductive: [],
+      novelProtocols: [],
+    };
+  }
+
   const pol = scanPol !== "—" ? scanPol : (ctx.visibilityBySatName.get(row.satelliteName)?.[0] ?? profile.defaultPolarization);
 
   const rand = seedRand(`${reportId}-drill`);
   const baseFreq = pol.toUpperCase().startsWith("C") ? 3750 : 11750;
 
-  const productiveCount = Math.max(1, Math.floor(row.analyzed * (row.productivityScore / 100)));
+  const score = row.productivityScore ?? 0;
+  const productiveCount =
+    row.analyzed > 0 ? Math.min(row.analyzed, Math.max(1, Math.floor(row.analyzed * (score / 100)))) : 0;
   const nonProdCount = Math.max(0, row.analyzed - productiveCount);
 
   const productive: ProductiveFrequency[] = Array.from({ length: Math.min(productiveCount, 15) }, (_, i) => {
@@ -533,10 +584,9 @@ export function buildIntelDrillDownReport(
   }));
 
   const scanDays = 1 + Math.floor(rand() * 10);
-  const scanStart = new Date(new Date(row.reportTimestamp).getTime() - scanDays * 86400000);
-
-  const totalBeamsAvailable = getAllSatelliteBeams(row.satelliteName);
-  const beamsVisibleToUnit = beamVisibility.filter((b) => b.visibleToUnit).map((b) => b.name);
+  const scanStart = row.reportTimestamp
+    ? new Date(new Date(row.reportTimestamp).getTime() - scanDays * 86400000)
+    : null;
 
   return {
     reportId: row.reportId,
@@ -544,14 +594,17 @@ export function buildIntelDrillDownReport(
     unitId,
     baseProfile: profile,
     totalBeamsAvailable,
+    totalBeamCount,
     beamsVisibleToUnit,
     scanBand: integrity.scanBand,
+    visibilityBlocked: false,
+    visibilityConstraint: "",
     scanSummary: {
       polarization: pol,
       totalScanned: row.totalScanned,
       analyzed: row.analyzed,
       pending: row.pending,
-      scanStartDate: scanStart.toISOString().slice(0, 10),
+      scanStartDate: scanStart ? scanStart.toISOString().slice(0, 10) : "—",
     },
     productive,
     nonProductive,
@@ -559,13 +612,58 @@ export function buildIntelDrillDownReport(
   };
 }
 
+/** Fixed epoch for deterministic mock INT timestamps — all views derive from the same rows. */
+const INTEL_MOCK_EPOCH_MS = Date.parse("2026-06-19T12:00:00Z");
+
+export function formatIntelCompactDate(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const yy = String(d.getUTCFullYear()).slice(-2);
+  return `${dd}/${mm}/${yy}`;
+}
+
+/** @deprecated Use formatIntelCompactDate for repository summary views. */
 export function formatIntelTimestamp(iso: string): string {
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      day: "2-digit", month: "short", year: "numeric",
-      hour: "2-digit", minute: "2-digit",
-    });
-  } catch {
-    return iso;
+  return formatIntelCompactDate(iso);
+}
+
+export type UnitIntelSummary = {
+  hasData: boolean;
+  satellites: number;
+  totalScanned: number;
+  productive: number;
+  lastReportIso: string | null;
+};
+
+/** Derive unit-level stats from satellite table rows — single source of truth. */
+export function summarizeIntelSatelliteRows(rows: IntelSatelliteReportRow[]): UnitIntelSummary {
+  if (rows.length === 0) {
+    return { hasData: false, satellites: 0, totalScanned: 0, productive: 0, lastReportIso: null };
   }
+  const eligible = rows.filter((r) => r.scanEligible);
+  const totalScanned = eligible.reduce((s, r) => s + r.totalScanned, 0);
+  const productive = eligible.reduce(
+    (s, r) => s + Math.floor(r.analyzed * ((r.productivityScore ?? 0) / 100)),
+    0,
+  );
+  let maxTs = -Infinity;
+  let lastReportIso: string | null = null;
+  for (const r of eligible) {
+    if (!r.reportTimestamp) continue;
+    const t = new Date(r.reportTimestamp).getTime();
+    if (!isNaN(t) && t > maxTs) {
+      maxTs = t;
+      lastReportIso = r.reportTimestamp;
+    }
+  }
+  return {
+    hasData: rows.length > 0,
+    satellites: rows.length,
+    totalScanned,
+    productive,
+    lastReportIso,
+  };
 }

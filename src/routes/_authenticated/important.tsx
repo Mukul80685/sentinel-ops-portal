@@ -4,8 +4,7 @@ import {
   INTEL_FREQ_EVENT,
 } from "@/lib/intelFrequencyActions";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Fragment, useEffect, useMemo, useState } from "react";
-import { Empty } from "@/components/Empty";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { listSatellites } from "@/lib/queries";
 import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
@@ -47,9 +46,11 @@ import {
   Search,
   Settings2,
   Trash2,
+  Upload,
   X,
 } from "lucide-react";
 import { validateImportFile, buildCsv, downloadCsv, toggleSelection, allSelected } from "@/lib/dataTableUtils";
+import * as XLSX from "xlsx";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/important")({
@@ -97,7 +98,10 @@ type ScanEntry = {
 type SortKey = "satellite" | "unit";
 type SortDir = "asc" | "desc";
 
-// ─── Mock seed data (shown when Supabase table is empty) ──────────────────────
+/** Table + import schema — column order must match exactly. */
+const TABLE_HEADERS = ["Satellite", "Frequency", "Unit", "Date of Report", "INT Notes"] as const;
+const FREQ_GRID_COLS =
+  "[grid-template-columns:1.5rem_1.5rem_minmax(0,1.05fr)_minmax(0,0.88fr)_minmax(2.75rem,0.62fr)_3.5rem_minmax(5rem,1.75fr)_3.5rem]";
 
 type FreqRow = {
   id: string;
@@ -110,6 +114,7 @@ type FreqRow = {
   _satName?: string;
 };
 
+// Demo rows — shown when the Supabase table is empty (layout preview only).
 const MOCK_FREQUENCIES: FreqRow[] = [
   {
     id: "mock-1", satellite_id: "", frequency: "3 785 MHz",
@@ -153,7 +158,6 @@ const MOCK_FREQUENCIES: FreqRow[] = [
   },
 ];
 
-// Pre-seeded scan history for mock rows that show the ★ multi-scan badge
 const MOCK_SCAN_HISTORY: Record<string, ScanEntry[]> = {
   "mock-1": [
     { id: "ms-1a", unit: "Unit A", date: "2026-05-10", observation: "Carrier confirmed at −68 dBm. Uplink burst every 12 min." },
@@ -183,6 +187,19 @@ function fmtDate(iso: string): string {
   }
 }
 
+function fmtDateCompact(iso: string): string {
+  if (!iso || iso === "—") return "—";
+  try {
+    const d = new Date(iso);
+    const dd = String(d.getDate()).padStart(2, "0");
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const yy = String(d.getFullYear()).slice(-2);
+    return `${dd}/${mm}/${yy}`;
+  } catch {
+    return iso.slice(0, 10);
+  }
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export function ImportantFrequenciesView() {
@@ -207,7 +224,6 @@ export function ImportantFrequenciesView() {
   }, []);
 
   // In-memory traceability data: Record<freqRowId, ScanEntry[]>
-  // Pre-seeded with mock scan history for visualisation purposes
   const [scanHistory, setScanHistory]   = useState<Record<string, ScanEntry[]>>(MOCK_SCAN_HISTORY);
   // Which row's "Log Scan" form is open
   const [addScanForId, setAddScanForId] = useState<string | null>(null);
@@ -236,7 +252,7 @@ export function ImportantFrequenciesView() {
     [sats],
   );
 
-  // ── Effective row set: DB + INT cross-module refs ───────────────────────────
+  // ── Effective row set: DB (or demo rows) + INT cross-module refs ─────────────
   const effectiveRows = useMemo(() => {
     const base = rows.length > 0 ? (rows as FreqRow[]) : MOCK_FREQUENCIES;
     const refs = getImportantFrequencyRefs().map(
@@ -247,7 +263,6 @@ export function ImportantFrequenciesView() {
         band: ref.unitLabel,
         label: `[INT ref] ${ref.satelliteName}`,
         created_at: ref.createdAt,
-        updated_at: ref.createdAt,
         _mock: true,
         _satName: ref.satelliteName,
       }),
@@ -383,53 +398,57 @@ export function ImportantFrequenciesView() {
   return (
     <>
       {/* ── Search + Controls bar ──────────────────────────────────────────── */}
-      <div className="flex items-center gap-2 mb-2 flex-wrap">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="h-3.5 w-3.5 absolute left-2 top-2.5 text-muted-foreground pointer-events-none" />
-          <Input
-            placeholder="Search frequency, satellite, unit, notes…"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            className="pl-7 mono text-xs"
-          />
-        </div>
+      <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap flex-1 min-w-0">
+          <div className="relative flex-1 min-w-[180px] max-w-md">
+            <Search className="h-3.5 w-3.5 absolute left-2 top-2.5 text-muted-foreground pointer-events-none" />
+            <Input
+              placeholder="Search frequency, satellite, unit, notes…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              className="pl-7 mono text-xs"
+            />
+          </div>
 
-        {/* Filter toggle */}
-        <button
-          type="button"
-          onClick={() => setFilterOpen((v) => !v)}
-          className={`h-9 px-3 inline-flex items-center gap-1.5 rounded-sm border mono text-[11px] uppercase tracking-wider transition-colors shrink-0
-                      ${filterOpen ? "border-primary/50 bg-primary/10 text-primary" : "border-border hover:bg-secondary text-muted-foreground hover:text-foreground"}`}
-        >
-          <Filter className="h-3.5 w-3.5" /> Filter
-        </button>
-
-        {/* Export buttons */}
-        <button
-          type="button"
-          onClick={() => exportRows(effectiveRows, "all")}
-          className="h-9 px-3 inline-flex items-center gap-1.5 rounded-sm border border-border mono text-[11px] uppercase tracking-wider hover:bg-secondary transition-colors shrink-0"
-        >
-          <Download className="h-3.5 w-3.5" /> Export All
-        </button>
-        {isFiltered && (
           <button
             type="button"
-            onClick={() => exportRows(sorted, "filtered")}
-            className="h-9 px-3 inline-flex items-center gap-1.5 rounded-sm border border-primary/40 mono text-[11px] uppercase tracking-wider text-primary hover:bg-primary/10 transition-colors shrink-0"
+            onClick={() => setFilterOpen((v) => !v)}
+            className={`h-9 px-3 inline-flex items-center gap-1.5 rounded-sm border mono text-[11px] uppercase tracking-wider transition-colors shrink-0
+                        ${filterOpen ? "border-primary/50 bg-primary/10 text-primary" : "border-border hover:bg-secondary text-muted-foreground hover:text-foreground"}`}
           >
-            <Download className="h-3.5 w-3.5" /> Export Filtered ({sorted.length})
+            <Filter className="h-3.5 w-3.5" /> Filter
           </button>
-        )}
+
+          <button
+            type="button"
+            onClick={() => exportRows(effectiveRows, "all")}
+            className="h-9 px-3 inline-flex items-center gap-1.5 rounded-sm border border-border mono text-[11px] uppercase tracking-wider hover:bg-secondary transition-colors shrink-0"
+          >
+            <Download className="h-3.5 w-3.5" /> Export All
+          </button>
+          {isFiltered && (
+            <button
+              type="button"
+              onClick={() => exportRows(sorted, "filtered")}
+              className="h-9 px-3 inline-flex items-center gap-1.5 rounded-sm border border-primary/40 mono text-[11px] uppercase tracking-wider text-primary hover:bg-primary/10 transition-colors shrink-0"
+            >
+              <Download className="h-3.5 w-3.5" /> Export Filtered ({sorted.length})
+            </button>
+          )}
+        </div>
 
         {canEdit && (
-          <Button
-            size="sm"
-            className="h-9 mono text-[11px] uppercase tracking-wider shrink-0"
-            onClick={() => setAddOpen(true)}
-          >
-            <Plus className="h-3.5 w-3.5 mr-1" /> Add Frequency
-          </Button>
+          <div className="flex items-center gap-2 shrink-0 ml-auto">
+            <ImportFrequencyButton sats={sats} onImported={() => qc.invalidateQueries({ queryKey: ["important"] })} />
+            <Button
+              size="sm"
+              className="h-9 px-5 mono text-[11px] uppercase tracking-wider font-bold shadow-md
+                         bg-primary text-primary-foreground hover:bg-primary/90"
+              onClick={() => setAddOpen(true)}
+            >
+              <Plus className="h-4 w-4 mr-1.5" /> Add Frequency
+            </Button>
+          </div>
         )}
       </div>
 
@@ -523,163 +542,103 @@ export function ImportantFrequenciesView() {
 
       {/* ── Table ──────────────────────────────────────────────────────────── */}
       {sorted.length === 0 ? (
-        <Empty
-          title="No important frequencies logged"
-          hint="Click 'Add Frequency' to log the first entry."
-        />
+        <div className="rounded-md border border-border px-4 py-10 text-center mono text-[11px] text-muted-foreground">
+          No entries recorded.
+        </div>
       ) : (
-        <div className="rounded-md border border-border overflow-hidden">
-          {/* Mock data notice */}
-          {rows.length === 0 && (
-            <div className="px-3 py-1.5 bg-primary/5 border-b border-border flex items-center gap-1.5">
-              <span className="mono text-[10px] text-primary/70 font-bold uppercase tracking-wider">
-                Sample Data
-              </span>
-              <span className="mono text-[10px] text-muted-foreground">
-                — No live entries found. Showing visualisation data. Add a real entry to replace this view.
-              </span>
+        <div className="rounded-md border border-border overflow-x-hidden">
+          <div
+            className={`grid ${FREQ_GRID_COLS} gap-x-1 items-center border-b border-border bg-secondary/50 px-1 py-1.5 sticky top-0 z-10`}
+          >
+            <div className="flex justify-center">
+              <input
+                type="checkbox"
+                checked={selectAll}
+                onChange={handleSelectAll}
+                title="Select / deselect all visible"
+                className="cursor-pointer accent-primary"
+              />
             </div>
-          )}
-          <table className="w-full text-[11px] mono border-collapse">
-            <thead>
-              <tr className="border-b border-border bg-secondary/50">
-                {/* Select-all checkbox */}
-                <th className="px-3 py-2 w-8">
-                  <input
-                    type="checkbox"
-                    checked={selectAll}
-                    onChange={handleSelectAll}
-                    title="Select / deselect all visible"
-                    className="cursor-pointer accent-primary"
-                  />
-                </th>
-                <th className="px-3 py-2 text-left text-muted-foreground font-medium w-8">#</th>
+            <FreqTh>#</FreqTh>
+            <FreqTh sortable onClick={() => toggleSort("satellite")}>
+              Satellite{sortIcon("satellite")}
+            </FreqTh>
+            <FreqTh>Frequency</FreqTh>
+            <FreqTh sortable onClick={() => toggleSort("unit")}>
+              Unit{sortIcon("unit")}
+            </FreqTh>
+            <FreqTh>Date</FreqTh>
+            <FreqTh>INT</FreqTh>
+            <FreqTh align="right">Actions</FreqTh>
+          </div>
 
-                {/* Sortable: Satellite */}
-                <th
-                  className="px-3 py-2 text-left text-muted-foreground font-medium
-                             cursor-pointer hover:text-foreground select-none min-w-[120px]"
-                  onClick={() => toggleSort("satellite")}
+          {sorted.map((row, idx) => {
+            const satName    = row._mock ? (row._satName ?? "—") : (satMap[row.satellite_id]?.name ?? "—");
+            const scans      = scanHistory[row.id] ?? [];
+            const isExpanded = expandedId === row.id;
+            const checked    = selectedIds.has(row.id);
+
+            return (
+              <Fragment key={row.id}>
+                <div
+                  className={`grid ${FREQ_GRID_COLS} gap-x-1 items-center border-b border-border px-1 py-1.5
+                              transition-colors cursor-pointer
+                              ${checked ? "bg-primary/8" : isExpanded ? "bg-secondary/30" : "hover:bg-secondary/20"}`}
+                  onClick={() => setExpandedId(isExpanded ? null : row.id)}
                 >
-                  <span className="inline-flex items-center">
-                    Satellite{sortIcon("satellite")}
-                  </span>
-                </th>
-
-                <th className="px-3 py-2 text-left text-muted-foreground font-medium min-w-[110px]">Frequency</th>
-
-                {/* Sortable: Unit */}
-                <th
-                  className="px-3 py-2 text-left text-muted-foreground font-medium
-                             cursor-pointer hover:text-foreground select-none min-w-[90px]"
-                  onClick={() => toggleSort("unit")}
-                >
-                  <span className="inline-flex items-center">
-                    Unit{sortIcon("unit")}
-                  </span>
-                </th>
-
-                <th className="px-3 py-2 text-left text-muted-foreground font-medium w-28">Date of Report</th>
-                <th className="px-3 py-2 text-left text-muted-foreground font-medium min-w-[140px]">INT</th>
-                <th className="px-3 py-2 text-right text-muted-foreground font-medium w-28">Actions</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {sorted.map((row, idx) => {
-                const satName    = row._mock ? (row._satName ?? "—") : (satMap[row.satellite_id]?.name ?? "—");
-                const scans      = scanHistory[row.id] ?? [];
-                const isExpanded = expandedId === row.id;
-                const checked    = selectedIds.has(row.id);
-
-                return (
-                  <Fragment key={row.id}>
-                    {/* ── Main data row ─────────────────────────────────── */}
-                    <tr
-                      className={`border-b border-border transition-colors cursor-pointer
-                                  ${checked ? "bg-primary/8" : isExpanded ? "bg-secondary/30" : "hover:bg-secondary/20"}`}
+                  <div className="flex justify-center" onClick={(e) => e.stopPropagation()}>
+                    <input type="checkbox" checked={checked} onChange={() => toggleId(row.id)}
+                      className="cursor-pointer accent-primary" />
+                  </div>
+                  <div className="mono text-[11px] text-muted-foreground tabular-nums text-center">{idx + 1}</div>
+                  <div className="mono text-[11px] font-bold text-foreground uppercase leading-tight min-w-0">
+                    {satName}
+                  </div>
+                  <div className="flex items-center gap-1 min-w-0">
+                    <Radio className="h-3 w-3 text-primary shrink-0" />
+                    <span className="mono text-[11px] font-bold text-foreground">{row.frequency}</span>
+                  </div>
+                  <div className="mono text-[11px] text-foreground">{row.band || "—"}</div>
+                  <div className="mono text-[10px] text-muted-foreground tabular-nums whitespace-nowrap">{fmtDateCompact(row.created_at)}</div>
+                  <div className="mono text-[11px] text-foreground leading-snug break-words whitespace-normal overflow-visible min-w-0">
+                    {row.label || "—"}
+                  </div>
+                  <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+                    {scans.length > 0 && (
+                      <span
+                        className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded-sm
+                                   bg-primary/15 border border-primary/30 text-primary
+                                   mono text-[9px] font-bold"
+                        title={`${scans.length} scan report${scans.length !== 1 ? "s" : ""} logged`}
+                      >
+                        ★ {scans.length}
+                      </span>
+                    )}
+                    <button
+                      type="button"
                       onClick={() => setExpandedId(isExpanded ? null : row.id)}
+                      title={isExpanded ? "Collapse" : "Expand scan history"}
+                      className="h-6 w-6 grid place-items-center rounded-sm border border-border
+                                 hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
                     >
-                      {/* Checkbox cell — stopPropagation so row expand doesn't fire */}
-                      <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
-                        <input type="checkbox" checked={checked} onChange={() => toggleId(row.id)}
-                          className="cursor-pointer accent-primary" />
-                      </td>
-                      <td className="px-3 py-2 text-muted-foreground tabular-nums">{idx + 1}</td>
+                      {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                    </button>
+                    {canEdit && !row._mock && (
+                      <button
+                        type="button"
+                        onClick={() => deleteRow(row.id)}
+                        title="Delete frequency entry"
+                        className="h-6 w-6 grid place-items-center rounded-sm border border-destructive/30
+                                   hover:bg-destructive/10 transition-colors text-destructive/60 hover:text-destructive"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    )}
+                  </div>
+                </div>
 
-                      <td className="px-3 py-2">
-                        <div className="font-bold text-foreground uppercase tracking-tight leading-tight">
-                          {satName}
-                        </div>
-                      </td>
-
-                      <td className="px-3 py-2">
-                        <div className="flex items-center gap-1">
-                          <Radio className="h-3 w-3 text-primary shrink-0" />
-                          <span className="font-bold text-foreground">{row.frequency}</span>
-                        </div>
-                      </td>
-
-                      <td className="px-3 py-2 text-foreground">
-                        {row.band || "—"}
-                      </td>
-
-                      <td className="px-3 py-2 text-muted-foreground tabular-nums">
-                        {fmtDate(row.created_at)}
-                      </td>
-
-                      <td className="px-3 py-2 text-muted-foreground max-w-[200px]">
-                        <div className="truncate" title={row.label ?? ""}>{row.label || "—"}</div>
-                      </td>
-
-                      <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center justify-end gap-1.5">
-
-                          {/* Multi-scan badge — shows count when ≥ 1 scan logged */}
-                          {scans.length > 0 && (
-                            <span
-                              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-sm
-                                         bg-primary/15 border border-primary/30 text-primary
-                                         mono text-[9px] font-bold cursor-default"
-                              title={`${scans.length} scan report${scans.length !== 1 ? "s" : ""} logged`}
-                            >
-                              ★ {scans.length}
-                            </span>
-                          )}
-
-                          {/* Expand / collapse */}
-                          <button
-                            type="button"
-                            onClick={() => setExpandedId(isExpanded ? null : row.id)}
-                            title={isExpanded ? "Collapse" : "Expand scan history"}
-                            className="h-6 w-6 grid place-items-center rounded-sm border border-border
-                                       hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
-                          >
-                            {isExpanded
-                              ? <ChevronUp   className="h-3 w-3" />
-                              : <ChevronDown className="h-3 w-3" />}
-                          </button>
-
-                          {/* Delete — hidden for mock/sample rows */}
-                          {canEdit && !row._mock && (
-                            <button
-                              type="button"
-                              onClick={() => deleteRow(row.id)}
-                              title="Delete frequency entry"
-                              className="h-6 w-6 grid place-items-center rounded-sm border border-destructive/30
-                                         hover:bg-destructive/10 transition-colors text-destructive/60 hover:text-destructive"
-                            >
-                              <Trash2 className="h-3 w-3" />
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-
-                    {/* ── Expanded scan history panel ────────────────────── */}
-                    {isExpanded && (
-                      <tr className="border-b border-border bg-secondary/10">
-                        <td colSpan={8} className="px-5 py-3">
+                {isExpanded && (
+                  <div className="border-b border-border bg-secondary/10 px-4 py-3">
                           <div className="space-y-2.5">
 
                             {/* Header */}
@@ -792,14 +751,11 @@ export function ImportantFrequenciesView() {
                               </Button>
                             )}
                           </div>
-                        </td>
-                      </tr>
-                    )}
-                  </Fragment>
-                );
-              })}
-            </tbody>
-          </table>
+                  </div>
+                )}
+              </Fragment>
+            );
+          })}
         </div>
       )}
 
@@ -992,14 +948,276 @@ function AddFrequencyDialog({
             <Button
               type="submit"
               size="sm"
-              className="flex-1 mono uppercase tracking-wider"
+              className="flex-1 mono uppercase tracking-wider font-bold"
               disabled={busy || !form.satelliteId || !form.frequency.trim()}
             >
               {busy ? "Saving…" : "Add Entry"}
             </Button>
           </div>
+
+          <div className="border-t border-border pt-3 space-y-2">
+            <div className="mono text-[9px] uppercase tracking-wider text-muted-foreground">
+              Or import from file
+            </div>
+            <ImportFrequencyFileInput
+              sats={sats}
+              compact
+              onImported={() => {
+                setForm(EMPTY_ADD_FORM);
+                onSaved();
+              }}
+            />
+            <p className="mono text-[9px] text-muted-foreground leading-snug">
+              Columns required: {TABLE_HEADERS.join(", ")}
+            </p>
+          </div>
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ─── Table header cell ────────────────────────────────────────────────────────
+
+function FreqTh({
+  children,
+  sortable,
+  onClick,
+  align = "left",
+}: {
+  children: React.ReactNode;
+  sortable?: boolean;
+  onClick?: () => void;
+  align?: "left" | "right";
+}) {
+  const alignCls = align === "right" ? "text-right justify-end" : "text-left";
+  return (
+    <div
+      className={`mono text-[9px] uppercase tracking-wide text-muted-foreground font-medium
+                  flex items-center min-w-0 ${alignCls} ${sortable ? "cursor-pointer hover:text-foreground select-none" : ""}`}
+      onClick={onClick}
+    >
+      {children}
+    </div>
+  );
+}
+
+// ─── CSV / Excel import ───────────────────────────────────────────────────────
+
+function parseFreqCsvLine(line: string): string[] {
+  const result: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (inQuotes) {
+      if (char === '"' && line[i + 1] === '"') { current += '"'; i++; continue; }
+      if (char === '"') { inQuotes = false; continue; }
+      current += char;
+    } else {
+      if (char === '"') inQuotes = true;
+      else if (char === ",") { result.push(current); current = ""; }
+      else current += char;
+    }
+  }
+  result.push(current);
+  return result.map((c) => c.trim());
+}
+
+function normalizeHeader(h: string): string {
+  return h.replace(/^"|"$/g, "").trim().toLowerCase();
+}
+
+function validateImportHeaders(headerRow: string[]): string | null {
+  if (headerRow.length !== TABLE_HEADERS.length) {
+    return `Expected ${TABLE_HEADERS.length} columns (${TABLE_HEADERS.join(", ")}), found ${headerRow.length}.`;
+  }
+  for (let i = 0; i < TABLE_HEADERS.length; i++) {
+    if (normalizeHeader(headerRow[i] ?? "") !== TABLE_HEADERS[i].toLowerCase()) {
+      return `Column ${i + 1} must be "${TABLE_HEADERS[i]}", found "${headerRow[i] ?? ""}".`;
+    }
+  }
+  return null;
+}
+
+function parseReportDateForImport(raw: string): string | null {
+  const t = raw.trim();
+  if (!t) return new Date().toISOString();
+  if (/^\d{4}-\d{2}-\d{2}/.test(t)) {
+    const d = new Date(t);
+    return isNaN(d.getTime()) ? null : d.toISOString();
+  }
+  const d = new Date(t);
+  return isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+async function readSpreadsheetRows(file: File): Promise<string[][]> {
+  const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "csv") {
+    const text = await file.text();
+    return text.split(/\r?\n/).filter((l) => l.trim()).map(parseFreqCsvLine);
+  }
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: "array" });
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json<(string | number)[]>(sheet, { header: 1, defval: "" });
+  return rows.map((r) => r.map((c) => String(c ?? "").trim()));
+}
+
+function ImportFrequencyButton({
+  sats,
+  onImported,
+}: {
+  sats: any[];
+  onImported: () => void;
+}) {
+  return (
+    <ImportFrequencyFileInput
+      sats={sats}
+      onImported={onImported}
+      trigger={
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-9 mono text-[11px] uppercase tracking-wider border-primary/40 hover:bg-primary/10"
+        >
+          <Upload className="h-3.5 w-3.5 mr-1" /> Import CSV / Excel
+        </Button>
+      }
+    />
+  );
+}
+
+function ImportFrequencyFileInput({
+  sats,
+  onImported,
+  compact,
+  trigger,
+}: {
+  sats: any[];
+  onImported: () => void;
+  compact?: boolean;
+  trigger?: React.ReactNode;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+
+    const check = validateImportFile(file);
+    if (!check.ok) { toast.error(check.error); return; }
+
+    setBusy(true);
+    try {
+      const rows = await readSpreadsheetRows(file);
+      if (rows.length < 2) {
+        toast.error("File has no data rows.");
+        return;
+      }
+
+      const headerErr = validateImportHeaders(rows[0]);
+      if (headerErr) {
+        toast.error(`Schema mismatch: ${headerErr}`);
+        return;
+      }
+
+      const satByName = new Map(
+        sats.map((s: any) => [String(s.name).trim().toLowerCase(), s.id as string]),
+      );
+
+      const inserts: {
+        satellite_id: string;
+        frequency: string;
+        band: string;
+        label: string | null;
+        created_at: string;
+      }[] = [];
+
+      for (let i = 1; i < rows.length; i++) {
+        const cells = rows[i];
+        if (cells.every((c) => !c.trim())) continue;
+        if (cells.length !== TABLE_HEADERS.length) {
+          toast.error(`Row ${i + 1}: expected ${TABLE_HEADERS.length} columns, found ${cells.length}.`);
+          return;
+        }
+
+        const [satName, frequency, unit, dateRaw, notes] = cells;
+        if (!satName.trim() || !frequency.trim()) {
+          toast.error(`Row ${i + 1}: Satellite and Frequency are required.`);
+          return;
+        }
+
+        const satellite_id = satByName.get(satName.trim().toLowerCase());
+        if (!satellite_id) {
+          toast.error(`Row ${i + 1}: unknown satellite "${satName.trim()}".`);
+          return;
+        }
+
+        const created_at = parseReportDateForImport(dateRaw);
+        if (!created_at) {
+          toast.error(`Row ${i + 1}: invalid date "${dateRaw}".`);
+          return;
+        }
+
+        inserts.push({
+          satellite_id,
+          frequency: frequency.trim(),
+          band: unit.trim() || UNIT_LABELS[0],
+          label: notes.trim() || null,
+          created_at,
+        });
+      }
+
+      if (inserts.length === 0) {
+        toast.error("No valid rows to import.");
+        return;
+      }
+
+      const { error } = await supabase.from("important_frequencies").insert(inserts);
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+
+      toast.success(`Imported ${inserts.length} frequenc${inserts.length === 1 ? "y" : "ies"}.`);
+      onImported();
+    } catch {
+      toast.error("Failed to read file.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".csv,.xlsx,.xls,text/csv"
+        className="hidden"
+        onChange={handleFile}
+      />
+      {trigger ? (
+        <div onClick={() => !busy && fileRef.current?.click()} className={busy ? "opacity-50 pointer-events-none" : ""}>
+          {trigger}
+        </div>
+      ) : (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className={`w-full mono text-[10px] uppercase tracking-wider ${compact ? "h-8" : "h-9"}`}
+          disabled={busy}
+          onClick={() => fileRef.current?.click()}
+        >
+          <Upload className="h-3.5 w-3.5 mr-1" />
+          {busy ? "Importing…" : "Browse File"}
+        </Button>
+      )}
+    </>
   );
 }

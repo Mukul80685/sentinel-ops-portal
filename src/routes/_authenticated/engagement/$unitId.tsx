@@ -1,9 +1,9 @@
 import { Component, type ReactNode, useMemo, useRef, useState, useEffect } from "react";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
 import { Empty } from "@/components/Empty";
-import { engStatusClass, listSatellites } from "@/lib/queries";
+import { listSatellites } from "@/lib/queries";
 import { supabase } from "@/integrations/supabase/client";
 import { useCanEdit } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
@@ -20,21 +20,21 @@ import {
   computeBottleneckEngagement,
   computeSatelliteAnalysis,
   engColor,
+  engagementDisplayStatus,
   formatEngagementDate,
   productivityStatusLabel,
   NON_OPERATIONAL,
   CHAIN_CATEGORIES,
   ACTIVE_SCAN_STATUSES,
   QUEUED_SCAN_STATUS,
-  countActiveScans,
   ENGAGEMENTS_ALL_KEY,
 } from "@/lib/engagementEngine";
+import { INT_UNITS } from "@/lib/intelRepository";
 import { ccModuleBackLink } from "@/lib/controlCenter";
-import { AlertTriangle, Plus, Trash2, X } from "lucide-react";
+import { AlertTriangle, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 const STATUSES = ["Planned", "In Progress", "Completed", "Paused", "Failed"] as const;
-const STATUSES_NO_PROGRESS = STATUSES.filter(s => s !== "In Progress") as unknown as readonly string[];
 const QUEUED_ENG  = QUEUED_SCAN_STATUS;
 const DEMOD_TYPES = ["Narrowband", "Wideband", "DVB-S2", "DVB-S2X"] as const;
 
@@ -55,10 +55,6 @@ function attachEquipmentToEngagements(rows: any[], equipment: any[]) {
       ? { id: r.processing_server_id, name: byId.get(r.processing_server_id)?.name ?? null }
       : null,
   }));
-}
-
-function safeEngStatusClass(status: string) {
-  return engStatusClass(status as Parameters<typeof engStatusClass>[0]) ?? "bg-secondary text-foreground";
 }
 
 export const Route = createFileRoute("/_authenticated/engagement/$unitId")({
@@ -181,36 +177,71 @@ function ScanSummaryBar({ pct }: { pct: number }) {
   );
 }
 
-function ProductivityBadge({ pct, isPending }: { pct: number; isPending: boolean }) {
-  const label = productivityStatusLabel(pct, isPending);
-  const cls = isPending
-    ? "text-amber-700 bg-amber-400/12 border-amber-400/30"
-    : pct >= 80
+function ProductivityBadge({
+  pct,
+  isPending,
+  hasIntel,
+}: {
+  pct: number;
+  isPending: boolean;
+  hasIntel: boolean;
+}) {
+  if (isPending) {
+    return (
+      <span className="mono text-[10px] font-semibold text-foreground/70 whitespace-nowrap">Nil</span>
+    );
+  }
+  if (!hasIntel) {
+    return (
+      <span className="mono text-[10px] font-semibold text-foreground/70 whitespace-nowrap">
+        Could Not Be Assessed
+      </span>
+    );
+  }
+  const label = productivityStatusLabel(pct, true);
+  const cls =
+    pct >= 80
       ? "text-emerald-700 bg-emerald-500/10 border-emerald-500/25"
       : pct >= 50
         ? "text-primary bg-primary/8 border-primary/20"
         : "text-foreground/80 bg-secondary/40 border-border";
   return (
-    <span className={`inline-flex mono text-[7.5px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-sm border whitespace-nowrap ${cls}`}>
+    <span className={`inline-flex mono text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-sm border whitespace-nowrap ${cls}`}>
       {label}
     </span>
   );
 }
 
-// ─── Small resource ring ──────────────────────────────────────────────────────
+function StatusBadge({ label }: { label: string }) {
+  const cls =
+    label === "Pending Allocation"
+      ? "text-amber-700 bg-amber-400/12 border-amber-400/30"
+      : label === "Active"
+        ? "text-emerald-700 bg-emerald-500/10 border-emerald-500/25"
+        : label === "Under Analysis"
+          ? "text-primary bg-primary/8 border-primary/20"
+          : label === "Completed"
+            ? "text-emerald-800 bg-emerald-700/15 border-emerald-600/30"
+            : "text-foreground/80 bg-secondary/40 border-border";
+  return (
+    <span className={`inline-flex mono text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-sm border whitespace-nowrap ${cls}`}>
+      {label}
+    </span>
+  );
+}
+
+// ─── Resource rings ───────────────────────────────────────────────────────────
 
 function SmallRing({
-  pct, label, engaged, faulty, total, isBottleneck,
+  pct, label, engaged, faulty, total,
 }: {
   pct: number; label: string; engaged: number;
-  faulty: number; total: number; isBottleneck?: boolean;
+  faulty: number; total: number;
 }) {
-  const sz = 58, sw = 5.5, r = (sz - sw) / 2, c = 2 * Math.PI * r;
+  const sz = 48, sw = 4.5, r = (sz - sw) / 2, c = 2 * Math.PI * r;
   const color = total === 0 ? "#6b7280" : engColor(pct);
   return (
-    <div className={`flex flex-col items-center gap-1.5 px-2 py-1.5 rounded-sm transition-colors ${
-      isBottleneck ? "bg-amber-50 border border-amber-200/60" : ""
-    }`}>
+    <div className="flex flex-col items-center gap-1 px-1 py-0.5">
       <div className="relative" style={{ width: sz, height: sz }}>
         <svg width={sz} height={sz} viewBox={`0 0 ${sz} ${sz}`} className="-rotate-90">
           <circle cx={sz/2} cy={sz/2} r={r} stroke="currentColor" strokeWidth={sw}
@@ -221,23 +252,120 @@ function SmallRing({
           )}
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className="mono font-bold leading-none"
-            style={{ fontSize: 10, color: total === 0 ? "#6b7280" : color }}>
+          <span className="mono font-bold leading-none text-[11px]"
+            style={{ color: total === 0 ? "#374151" : color }}>
             {total === 0 ? "—" : `${pct}%`}
           </span>
         </div>
       </div>
       <div className="text-center space-y-0.5">
-        <div className="mono text-[8px] font-bold uppercase tracking-wide text-foreground leading-none">
-          {label}{isBottleneck && <span className="ml-1 text-amber-600">⬆</span>}
+        <div className="mono text-[12px] font-bold uppercase tracking-wide text-foreground leading-tight">
+          {label}
         </div>
         {total === 0
-          ? <div className="mono text-[6.5px] text-foreground/60 leading-none">No inventory</div>
-          : <div className="mono text-[6.5px] text-foreground/75 leading-none">{engaged}/{total} engaged</div>
+          ? <div className="mono text-[11px] text-foreground leading-none">No inventory</div>
+          : <div className="mono text-[11px] font-semibold text-foreground leading-none">{engaged}/{total} Engaged</div>
         }
         {faulty > 0 && (
-          <div className="mono text-[6px] text-destructive leading-none">{faulty} unserviceable</div>
+          <div className="mono text-[9px] text-destructive leading-none">{faulty} unserviceable</div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function LargeEngagementRing({ pct }: { pct: number }) {
+  const sz = 108, sw = 8, r = (sz - sw) / 2, c = 2 * Math.PI * r;
+  const color = engColor(pct);
+  return (
+    <div className="flex flex-col items-center justify-center shrink-0">
+      <div className="relative" style={{ width: sz, height: sz }}>
+        <svg width={sz} height={sz} viewBox={`0 0 ${sz} ${sz}`} className="-rotate-90">
+          <circle cx={sz/2} cy={sz/2} r={r} stroke="currentColor" strokeWidth={sw}
+            fill="none" className="text-secondary" />
+          <circle cx={sz/2} cy={sz/2} r={r} stroke={color} strokeWidth={sw} fill="none"
+            strokeDasharray={`${(pct/100)*c} ${c}`} strokeLinecap="round" />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="mono text-[22px] font-bold leading-none" style={{ color }}>{pct}%</span>
+        </div>
+      </div>
+      <div className="mono text-[10px] font-bold uppercase tracking-[0.15em] text-foreground mt-1.5">
+        Engaged
+      </div>
+    </div>
+  );
+}
+
+function ResourceHoneycomb({
+  resourceStats,
+}: {
+  resourceStats: { label: string; total: number; faulty: number; engaged: number; pct: number }[];
+}) {
+  const byLabel = (label: string) => resourceStats.find((r) => r.label === label);
+  const antennas     = byLabel("Antennas");
+  const lnb            = byLabel("LNB");
+  const demodulators   = byLabel("Demodulators");
+  const processors     = byLabel("Processors");
+  const other          = byLabel("Other");
+
+  return (
+    <div className="flex-1 min-w-0 grid grid-cols-6 gap-x-0 gap-y-1 items-start">
+      <div className="col-span-2 flex justify-center">
+        {antennas && <SmallRing {...antennas} label="Antennas" />}
+      </div>
+      <div className="col-span-2 flex justify-center">
+        {lnb && <SmallRing {...lnb} label="LNB" />}
+      </div>
+      <div className="col-span-2 flex justify-center">
+        {demodulators && <SmallRing {...demodulators} label="Demodulators" />}
+      </div>
+      <div className="col-span-2 col-start-2 flex justify-center">
+        {processors && <SmallRing {...processors} label="Processors" />}
+      </div>
+      <div className="col-span-2 col-start-4 flex justify-center">
+        {other && other.total > 0 && (
+          <SmallRing {...other} label="Other Resources" />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EngagementVisualization({
+  utilPct,
+  resourceStats,
+  unitLabel,
+  location,
+  canEdit,
+  newEngagement,
+}: {
+  utilPct: number;
+  resourceStats: { label: string; total: number; faulty: number; engaged: number; pct: number }[];
+  unitLabel: string;
+  location?: string;
+  canEdit: boolean;
+  newEngagement?: ReactNode;
+}) {
+  return (
+    <div className="panel overflow-hidden mb-2">
+      <div className="px-4 pt-3 pb-2.5 text-center border-b border-border/40 bg-secondary/10">
+        <div className="mono text-[14px] font-bold uppercase tracking-tight text-foreground leading-tight">
+          {unitLabel}
+        </div>
+        {location && (
+          <div className="mono text-[10px] text-foreground mt-0.5">{location}</div>
+        )}
+        {canEdit && newEngagement && (
+          <div className="mt-2.5 flex justify-center">{newEngagement}</div>
+        )}
+      </div>
+
+      <div className="px-3 py-2.5 flex items-center gap-3">
+        <div className="shrink-0 pr-3 border-r border-border/50">
+          <LargeEngagementRing pct={utilPct} />
+        </div>
+        <ResourceHoneycomb resourceStats={resourceStats} />
       </div>
     </div>
   );
@@ -299,7 +427,6 @@ function EngagementUnit() {
   const { unitId } = Route.useParams();
   const canEdit    = useCanEdit();
   const qc         = useQueryClient();
-  const navigate   = useNavigate();
 
   const { data: unit } = useQuery({
     queryKey: ["unit", unitId],
@@ -370,7 +497,7 @@ function EngagementUnit() {
 
   const allocatedIds = useMemo(() => buildAllocatedIds(inProgressRows), [inProgressRows]);
 
-  const { pct: utilPct, bottleneck: bottleneckStat, categories: chainCategories } = useMemo(
+  const { pct: utilPct } = useMemo(
     () => computeBottleneckEngagement(equipmentRaw, allocatedIds),
     [equipmentRaw, allocatedIds],
   );
@@ -378,7 +505,8 @@ function EngagementUnit() {
   // Per-category stats including "Other"
   const resourceStats = useMemo(() => {
     const claimed = new Set<string>();
-    const named = CHAIN_CATEGORIES.map(({ label, match }) => {
+    type ResourceStat = { label: string; total: number; faulty: number; allocated: number; engaged: number; pct: number };
+    const named: ResourceStat[] = CHAIN_CATEGORIES.map(({ label, match }) => {
       const catEq = equipmentRaw.filter((e: any) => {
         const name = (e.category?.name ?? "").toLowerCase();
         return name.includes(match) && !claimed.has(e.id);
@@ -401,18 +529,6 @@ function EngagementUnit() {
     named.push({ label: "Other", total: otherTotal, faulty: otherFaulty, allocated: otherActive, engaged: otherEngaged, pct: otherPct });
     return named;
   }, [equipmentRaw, allocatedIds]);
-
-  const totalPool       = equipmentRaw.length;
-  const faultyCount     = equipmentRaw.filter((e: any) => NON_OPERATIONAL.has(e.serviceability)).length;
-  const activeAllocated = equipmentRaw.filter((e: any) => e.serviceability === "Operational" && allocatedIds.has(e.id)).length;
-  const canAcceptTask   = utilPct < 100;
-
-  const serviceableAntennaCount = useMemo(
-    () => equipmentRaw.filter((e: any) =>
-      (e.category?.name ?? "").toLowerCase().includes("antenna") && e.serviceability === "Operational",
-    ).length,
-    [equipmentRaw],
-  );
 
   const analysisByEngId = useMemo(() => {
     const map = new Map<string, ReturnType<typeof computeSatelliteAnalysis>>();
@@ -438,6 +554,10 @@ function EngagementUnit() {
 
   const displayCode = unitDisplayCode(unit?.code ?? "—");
   const unitLabel   = `Unit ${displayCode}`;
+  const unitLocation = (() => {
+    const intUnit = INT_UNITS.find((u) => u.code === displayCode);
+    return intUnit?.location ?? (unit as any)?.description ?? undefined;
+  })();
 
   const SCAN_HEADERS = [
     "#", "Satellite", "Polarization", "Last Update",
@@ -449,116 +569,21 @@ function EngagementUnit() {
   return (
     <AppShell
       title="Live Engagement Status"
-      subtitle={unitLabel}
       showBack
       backLink={ccModuleBackLink("engagement")}
       horizontalNav={null}
-      actions={
-        <div className="flex items-center gap-2">
-          {canEdit && (
-            <AddEngagement unitId={unitId} activeRows={inProgressRows} equipment={equipmentRaw} />
-          )}
-          <button
-            onClick={() => navigate({ to: "/control-center", search: { module: "engagement" } })}
-            title="Close"
-            className="h-7 w-7 flex items-center justify-center rounded-sm border border-border
-                       hover:bg-secondary/60 text-foreground/70 hover:text-foreground transition-colors"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      }
     >
 
-      <div className="panel overflow-hidden mb-3">
-        <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-secondary/20">
-          <span className="mono text-[10.5px] font-bold uppercase tracking-wider text-foreground">
-            Resource Engagement Architecture
-          </span>
-          <span className="mono text-[7.5px] uppercase tracking-[0.15em] text-foreground/70">
-            Bottleneck Model · max(chain utilization)
-          </span>
-        </div>
-
-        <div className="px-4 py-3 flex items-center gap-5 border-b border-border/50">
-          {(() => {
-            const sz = 84, sw = 8, rad = (sz-sw)/2, circ = 2*Math.PI*rad, col = engColor(utilPct);
-            return (
-              <div className="relative shrink-0" style={{ width: sz, height: sz }}>
-                <svg width={sz} height={sz} viewBox={`0 0 ${sz} ${sz}`} className="-rotate-90">
-                  <circle cx={sz/2} cy={sz/2} r={rad} stroke="currentColor" strokeWidth={sw}
-                    fill="none" className="text-secondary" />
-                  <circle cx={sz/2} cy={sz/2} r={rad} stroke={col} strokeWidth={sw} fill="none"
-                    strokeDasharray={`${(utilPct/100)*circ} ${circ}`} strokeLinecap="round" />
-                </svg>
-                <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <span className="mono text-[16px] font-bold leading-none" style={{ color: col }}>{utilPct}%</span>
-                  <span className="mono text-[6px] uppercase tracking-wide text-foreground/70 mt-0.5">bottleneck</span>
-                </div>
-              </div>
-            );
-          })()}
-
-          <div className="min-w-0 flex-1">
-            <div className="mono text-[13px] font-bold uppercase tracking-tight text-foreground">{unitLabel}</div>
-            {(unit as any)?.location && (
-              <div className="mono text-[8.5px] text-foreground/75 mt-0.5">{(unit as any).location}</div>
-            )}
-
-            <div className="mt-1.5 inline-flex items-center gap-1.5 flex-wrap">
-              <span className={`inline-flex px-2 py-0.5 rounded-sm border mono text-[8px] font-bold uppercase tracking-wider ${
-                canAcceptTask
-                  ? "text-emerald-700 bg-emerald-500/10 border-emerald-500/25"
-                  : "text-destructive bg-destructive/8 border-destructive/25"
-              }`}>
-                {canAcceptTask ? "Can Accept Tasks" : "Capacity Exhausted"}
-              </span>
-              {bottleneckStat && (
-                <span className="mono text-[8px] text-foreground/75">
-                  · Operational Bottleneck:{" "}
-                  <span className="font-bold text-foreground">{bottleneckStat.label}</span>
-                  {utilPct >= 100 ? " Capacity Exhausted" : " Constrained"}
-                </span>
-              )}
-            </div>
-
-            <div className="mt-2 flex items-center gap-4 flex-wrap">
-              <EngStat label="Active Scans" value={countActiveScans(enrichedRows)} color="primary" />
-              <EngStat label="Planned"      value={plannedRows.length} />
-              <EngStat label="Faulty Eq."   value={faultyCount} color={faultyCount > 0 ? "warn" : undefined} />
-              <EngStat label="Svc Antennas" value={serviceableAntennaCount || "—"} />
-              <EngStat label="Pool"         value={totalPool} />
-            </div>
-
-            <div className="mt-2 px-2 py-1 rounded-sm border border-border/40 bg-secondary/15
-                            mono text-[7.5px] text-foreground/75 flex flex-wrap items-center gap-1">
-              <span className="uppercase tracking-wider font-semibold text-foreground">Bottleneck</span>
-              <span>= max(</span>
-              {chainCategories.filter(c => c.total > 0).map((c, i, arr) => (
-                <span key={c.label}
-                  className={`font-semibold ${c.label === bottleneckStat?.label ? "text-destructive" : "text-foreground/80"}`}>
-                  {c.short} {c.pct}%{i < arr.length - 1 ? "," : ""}
-                </span>
-              ))}
-              <span>) = </span>
-              <span className="font-bold" style={{ color: engColor(utilPct) }}>{utilPct}%</span>
-              <span className="text-foreground/65 ml-1">
-                · pool: {faultyCount}F + {activeAllocated}A / {totalPool}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <div className="px-4 py-3 flex flex-wrap items-start gap-3 justify-around">
-          {resourceStats.map((rs) => (
-            <SmallRing
-              key={rs.label}
-              {...rs}
-              isBottleneck={rs.label === bottleneckStat?.label}
-            />
-          ))}
-        </div>
-      </div>
+      <EngagementVisualization
+        utilPct={utilPct}
+        resourceStats={resourceStats}
+        unitLabel={unitLabel}
+        location={unitLocation}
+        canEdit={canEdit}
+        newEngagement={
+          <AddEngagement unitId={unitId} activeRows={inProgressRows} equipment={equipmentRaw} primary />
+        }
+      />
 
       {/* Satellite Scanning – Under Progress */}
       <div className="panel overflow-hidden mb-3">
@@ -595,6 +620,10 @@ function EngagementUnit() {
                   const analysis =
                     analysisByEngId.get(r.id) ?? computeSatelliteAnalysis(r, intelRows);
                   const hasResources = !isPending;
+                  const hasIntel = intelRows.some(
+                    (row) => row.satellite_id === r.satellite_id && row.unit_id === r.unit_id,
+                  );
+                  const statusLabel = engagementDisplayStatus(r.status, isPending, analysis.analysisPct);
 
                   return (
                     <tr key={r.id} className={`transition-colors ${
@@ -670,54 +699,36 @@ function EngagementUnit() {
                       </td>
 
                       <td className="px-3 py-2.5">
-                        <ProductivityBadge pct={analysis.analysisPct} isPending={isPending} />
+                        <ProductivityBadge
+                          pct={analysis.analysisPct}
+                          isPending={isPending}
+                          hasIntel={hasIntel}
+                        />
                       </td>
 
                       <td className="px-3 py-2.5">
-                        {isPending ? (
-                          <div className="flex flex-col gap-1">
-                            <span className="inline-flex text-[7.5px] font-bold uppercase tracking-wider
-                                             px-1.5 py-0.5 rounded-sm text-amber-700 bg-amber-400/12
-                                             border border-amber-400/30 whitespace-nowrap">
-                              Pending Allocation
-                            </span>
+                        <div className="flex flex-col gap-1">
+                          <StatusBadge label={statusLabel} />
+                          {isPending && missing.length > 0 && (
                             <div className="flex items-start gap-1">
                               <AlertTriangle className="h-2.5 w-2.5 text-amber-600 shrink-0 mt-px" />
-                              <span className="mono text-[6.5px] text-amber-700 leading-snug">
+                              <span className="mono text-[9px] text-amber-700 leading-snug">
                                 Need: {missing.join(", ")}
                               </span>
                             </div>
-                            {canEdit && (
-                              <select value={r.status}
-                                onChange={(e) => update(r.id, { status: e.target.value })}
-                                className="mt-0.5 px-1.5 py-0.5 rounded-sm text-[7.5px] uppercase tracking-wider
-                                           border border-border/50 bg-card text-foreground/80">
-                                {STATUSES_NO_PROGRESS.map((s) => (
-                                  <option key={s} value={s}>{s}</option>
-                                ))}
-                              </select>
-                            )}
-                          </div>
-                        ) : (
-                          canEdit ? (
-                            <select value={r.status} onChange={(e) => update(r.id, { status: e.target.value })}
-                              className={`px-1.5 py-0.5 rounded-sm text-[8.5px] uppercase tracking-wider
-                                          border border-border/50 bg-card ${safeEngStatusClass(r.status)}`}>
-                              {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-                            </select>
-                          ) : (
-                            <span className={`px-1.5 py-0.5 rounded-sm text-[8.5px] uppercase tracking-wider ${safeEngStatusClass(r.status)}`}>
-                              {r.status}
-                            </span>
-                          )
-                        )}
+                          )}
+                        </div>
                       </td>
 
                       <td className="px-2 py-2.5">
                         {canEdit && (
-                          <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => remove(r.id)}>
-                            <Trash2 className="h-3 w-3 text-destructive/80" />
-                          </Button>
+                          <EditEngagement
+                            row={r}
+                            activeRows={inProgressRows}
+                            equipment={equipmentRaw}
+                            onUpdate={update}
+                            onRemove={remove}
+                          />
                         )}
                       </td>
                     </tr>
@@ -769,15 +780,17 @@ function EngagementUnit() {
                       {r.observation_start ? new Date(r.observation_start).toLocaleString() : "—"}
                     </td>
                     <td className="px-3 py-2">
-                      <span className={`px-1.5 py-0.5 rounded-sm text-[8.5px] uppercase tracking-wider ${safeEngStatusClass(r.status)}`}>
-                        {r.status}
-                      </span>
+                      <StatusBadge label={engagementDisplayStatus(r.status, false, 0)} />
                     </td>
                     <td className="px-2 py-2">
                       {canEdit && (
-                        <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => remove(r.id)}>
-                          <Trash2 className="h-3 w-3 text-destructive/80" />
-                        </Button>
+                        <EditEngagement
+                          row={r}
+                          activeRows={inProgressRows}
+                          equipment={equipmentRaw}
+                          onUpdate={update}
+                          onRemove={remove}
+                        />
                       )}
                     </td>
                   </tr>
@@ -799,21 +812,257 @@ function EngagementUnit() {
   );
 }
 
-function EngStat({
-  label, value, color,
-}: { label: string; value: number | string; color?: "primary" | "warn" }) {
-  const cls = color === "primary" ? "text-primary" : color === "warn" ? "text-amber-600" : "text-foreground";
+interface EditEngagementProps {
+  row: any;
+  activeRows: any[];
+  equipment: any[];
+  onUpdate: (id: string, patch: any) => Promise<unknown>;
+  onRemove: (id: string) => Promise<unknown>;
+}
+
+function EditEngagement({
+  row,
+  activeRows,
+  equipment,
+  onUpdate,
+  onRemove,
+}: EditEngagementProps) {
+  const [open, setOpen] = useState(false);
+  const { data: sats = [] } = useQuery({
+    queryKey: ["sats"],
+    queryFn: async () => {
+      try {
+        return await listSatellites();
+      } catch {
+        return [];
+      }
+    },
+    retry: false,
+  });
+
+  const otherActive = activeRows.filter((r: any) => r.id !== row.id);
+  const allocatedAntennaIds = useMemo(
+    () => new Set(otherActive.map((r: any) => r.antenna_id).filter(Boolean)),
+    [otherActive],
+  );
+  const allocatedDemodIds = useMemo(
+    () => new Set(otherActive.map((r: any) => r.demodulator_id).filter(Boolean)),
+    [otherActive],
+  );
+  const allocatedServerIds = useMemo(
+    () => new Set(otherActive.map((r: any) => r.processing_server_id).filter(Boolean)),
+    [otherActive],
+  );
+
+  const serviceable = (matchStr: string) =>
+    equipment.filter((e: any) =>
+      (e.category?.name ?? "").toLowerCase().includes(matchStr) && e.serviceability === "Operational",
+    );
+
+  const availableAntennas = serviceable("antenna").filter(
+    (e: any) => !allocatedAntennaIds.has(e.id) || e.id === row.antenna_id,
+  );
+  const availableDemod = serviceable("demodulat").filter(
+    (e: any) => !allocatedDemodIds.has(e.id) || e.id === row.demodulator_id,
+  );
+  const availableServers = serviceable("processing").filter(
+    (e: any) => !allocatedServerIds.has(e.id) || e.id === row.processing_server_id,
+  );
+
+  const initialLnaType = (() => {
+    const m = row.remarks?.match(/LNA\/LNB:(LNA|LNB)/);
+    return (m?.[1] ?? "LNA") as "LNA" | "LNB";
+  })();
+  const initialDemodType = (() => {
+    const m = row.remarks?.match(/DEMOD_TYPE:([\w-]+)/);
+    return m?.[1] ?? "DVB-S2";
+  })();
+
+  const [form, setForm] = useState({
+    satellite_id: row.satellite_id ?? "",
+    antenna_id: row.antenna_id ?? "",
+    lna_type: initialLnaType,
+    demodulator_type: initialDemodType,
+    demodulator_id: row.demodulator_id ?? "",
+    processing_server_id: row.processing_server_id ?? "",
+    observation_start: row.observation_start
+      ? new Date(row.observation_start).toISOString().slice(0, 16)
+      : "",
+    status: row.status ?? "Planned",
+    remarks: (row.remarks ?? "").replace(/LNA\/LNB:(LNA|LNB)\s*\|\s*/g, "").replace(/DEMOD_TYPE:[\w-]+\s*\|\s*/g, "").trim(),
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    setForm({
+      satellite_id: row.satellite_id ?? "",
+      antenna_id: row.antenna_id ?? "",
+      lna_type: initialLnaType,
+      demodulator_type: initialDemodType,
+      demodulator_id: row.demodulator_id ?? "",
+      processing_server_id: row.processing_server_id ?? "",
+      observation_start: row.observation_start
+        ? new Date(row.observation_start).toISOString().slice(0, 16)
+        : "",
+      status: row.status ?? "Planned",
+      remarks: (row.remarks ?? "").replace(/LNA\/LNB:(LNA|LNB)\s*\|\s*/g, "").replace(/DEMOD_TYPE:[\w-]+(\s*\|\s*)?/g, "").trim(),
+    });
+  }, [open, row.id]);
+
+  function set(k: keyof typeof form, v: string) { setForm((f) => ({ ...f, [k]: v })); }
+
+  const inProgressMissingResources =
+    form.status === "In Progress" &&
+    (!form.antenna_id || !form.demodulator_id || !form.processing_server_id);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (inProgressMissingResources) return;
+    const metaParts = [
+      `LNA/LNB:${form.lna_type}`,
+      `DEMOD_TYPE:${form.demodulator_type}`,
+      form.remarks,
+    ].filter(Boolean).join(" | ");
+    await onUpdate(row.id, {
+      satellite_id: form.satellite_id,
+      antenna_id: form.antenna_id || null,
+      demodulator_id: form.demodulator_id || null,
+      processing_server_id: form.processing_server_id || null,
+      observation_start: form.observation_start || null,
+      status: form.status,
+      remarks: metaParts || null,
+    });
+    toast.success("Engagement updated");
+    setOpen(false);
+  }
+
+  async function handleDelete() {
+    await onRemove(row.id);
+    setOpen(false);
+  }
+
   return (
-    <div className="flex flex-col gap-0.5">
-      <span className={`mono text-[12px] font-bold leading-none ${cls}`}>{value}</span>
-      <span className="mono text-[6.5px] uppercase tracking-[0.15em] text-foreground/70 leading-none">{label}</span>
-    </div>
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="ghost" size="sm" className="h-7 px-2 mono text-[9px] uppercase tracking-wider gap-1">
+          <Pencil className="h-3 w-3" /> Edit
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="mono uppercase tracking-wider text-[12px]">
+            Edit Engagement — {row.satellites?.name ?? "—"}
+          </DialogTitle>
+        </DialogHeader>
+
+        {inProgressMissingResources && (
+          <div className="flex items-start gap-2 rounded-sm border border-amber-400/30 bg-amber-400/5 px-3 py-2">
+            <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+            <p className="mono text-[9px] text-amber-700">
+              "In Progress" requires Antenna, Demodulator, and Processor.
+            </p>
+          </div>
+        )}
+
+        <form onSubmit={submit} className="space-y-3 mt-1">
+          <F label="Satellite">
+            <Select value={form.satellite_id} onValueChange={(v) => set("satellite_id", v)}>
+              <SelectTrigger><SelectValue placeholder="Select satellite" /></SelectTrigger>
+              <SelectContent>{sats.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
+            </Select>
+          </F>
+
+          <F label="Antenna">
+            <Select value={form.antenna_id} onValueChange={(v) => set("antenna_id", v)}>
+              <SelectTrigger><SelectValue placeholder="Select antenna" /></SelectTrigger>
+              <SelectContent>
+                {availableAntennas.map((e: any) => <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </F>
+
+          <F label="LNA / LNB">
+            <div className="flex gap-2 items-center">
+              <div className="flex rounded-sm border border-border overflow-hidden shrink-0">
+                {(["LNA", "LNB"] as const).map((t) => (
+                  <button type="button" key={t} onClick={() => set("lna_type", t)}
+                    className={`px-3 py-1.5 mono text-[9px] uppercase tracking-wider transition-colors ${
+                      form.lna_type === t
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-card text-foreground/75 hover:bg-secondary/50"
+                    }`}>
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </F>
+
+          <div className="grid grid-cols-2 gap-2">
+            <F label="Demodulator Type">
+              <Select value={form.demodulator_type} onValueChange={(v) => set("demodulator_type", v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {DEMOD_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </F>
+            <F label="Demodulator">
+              <Select value={form.demodulator_id} onValueChange={(v) => set("demodulator_id", v)}>
+                <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+                <SelectContent>
+                  {availableDemod.map((e: any) => <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </F>
+          </div>
+
+          <F label="Processor">
+            <Select value={form.processing_server_id} onValueChange={(v) => set("processing_server_id", v)}>
+              <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+              <SelectContent>
+                {availableServers.map((e: any) => <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </F>
+
+          <F label="Scheduled Start">
+            <Input type="datetime-local" value={form.observation_start}
+              onChange={(e) => set("observation_start", e.target.value)} />
+          </F>
+
+          <F label="Status">
+            <Select value={form.status} onValueChange={(v) => set("status", v)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </F>
+
+          <F label="Remarks (optional)">
+            <Input value={form.remarks} onChange={(e) => set("remarks", e.target.value)} />
+          </F>
+
+          <Button type="submit" disabled={inProgressMissingResources}
+            className="w-full mono uppercase tracking-wider text-[10px]">
+            Save Changes
+          </Button>
+
+          <Button type="button" variant="destructive"
+            className="w-full mono uppercase tracking-wider text-[10px]"
+            onClick={handleDelete}>
+            <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete Engagement
+          </Button>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
-interface AddEngagementProps { unitId: string; activeRows: any[]; equipment: any[]; }
+interface AddEngagementProps { unitId: string; activeRows: any[]; equipment: any[]; primary?: boolean; }
 
-function AddEngagement({ unitId, activeRows, equipment }: AddEngagementProps) {
+function AddEngagement({ unitId, activeRows, equipment, primary }: AddEngagementProps) {
   const [open, setOpen] = useState(false);
   const qc = useQueryClient();
   const { data: sats = [] } = useQuery({
@@ -903,8 +1152,15 @@ function AddEngagement({ unitId, activeRows, equipment }: AddEngagementProps) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="sm" className="mono text-[11px] uppercase tracking-wider h-7 px-3">
-          <Plus className="h-3.5 w-3.5 mr-1" /> New Engagement
+        <Button
+          size={primary ? "default" : "sm"}
+          className={`mono uppercase tracking-wider ${
+            primary
+              ? "text-[11px] h-9 px-6 font-bold"
+              : "text-[11px] h-7 px-3"
+          }`}
+        >
+          <Plus className={`${primary ? "h-4 w-4" : "h-3.5 w-3.5"} mr-1.5`} /> New Engagement
         </Button>
       </DialogTrigger>
       <DialogContent className="max-h-[90vh] overflow-y-auto">
@@ -1013,7 +1269,7 @@ function AddEngagement({ unitId, activeRows, equipment }: AddEngagementProps) {
             </F>
           </div>
 
-          <F label={`Processing Server * — ${availableServers.length} available`}>
+          <F label={`Processor * — ${availableServers.length} available`}>
             <Select value={form.processing_server_id} onValueChange={(v) => set("processing_server_id", v)}>
               <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
               <SelectContent>

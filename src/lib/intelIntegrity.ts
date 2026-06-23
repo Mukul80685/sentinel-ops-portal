@@ -1,152 +1,189 @@
-/**
- * INT Repository data integrity — enforces Visibility Matrix + Engagement Status linkage.
- */
-import type { BeamVisibilityEntry, IntelLinkageContext } from "@/lib/intelAnalysisData";
-import { SATELLITE_BEAMS, getUnitIntelName } from "@/lib/intelAnalysisData";
-import { computeSatelliteAnalysis } from "@/lib/engagementEngine";
-
-export type IntelIntegrityResult = {
-  valid: boolean;
-  warnings: string[];
-  scanPolarization: string;
-  scanBand: string;
-  matrixBands: string[];
-  beamMismatchFiltered: string[];
-};
-
-/** Map polarization code → primary band (KU, C, KA, …) */
-export function polarizationToBand(pol: string): string {
-  const u = pol.trim().toUpperCase();
-  if (u.startsWith("KU")) return "KU";
-  if (u.startsWith("KA")) return "KA";
-  if (u.startsWith("C-") || u.startsWith("C ") || u === "C") return "C";
-  if (u.startsWith("S-") || u.startsWith("S ")) return "S";
-  if (u.startsWith("L-") || u.startsWith("L ")) return "L";
-  const head = u.split("-")[0];
-  return head || u;
-}
-
-/** Infer band from beam display name */
-export function beamNameToBand(name: string): string | null {
-  const n = name.toUpperCase();
-  if (n.includes("C-BAND") || n.includes("C BAND")) return "C";
-  if (n.includes("KU ") || n.startsWith("KU") || n.includes("K U")) return "KU";
-  if (n.includes("KA ") || n.startsWith("KA")) return "KA";
-  if (n.includes("SE ASIA") || n.includes("COVERAGE") || n.includes("FOOTPRINT") || n.includes("DTH")) {
-    return null;
-  }
-  return null;
-}
-
-/** Visible bands for satellite — source: Visibility Matrix only */
-export function getMatrixBandsForSatellite(satName: string, ctx: IntelLinkageContext): string[] {
-  const pols = ctx.visibilityBySatName.get(satName) ?? [];
-  const bands = new Set<string>();
-  for (const p of pols) {
-    if (p && p !== "—") bands.add(polarizationToBand(p));
-  }
-  return Array.from(bands);
-}
-
-/** Scan polarization — source: Engagement Status when active, else matrix primary pol */
-export function resolveScanPolarizationFromEngagement(
-  satName: string,
-  ctx: IntelLinkageContext,
-  engagements: any[],
-): string {
-  const eng = engagements.find((e) => e.satellites?.name === satName);
-  if (eng) {
-    const analysis = computeSatelliteAnalysis(eng, []);
-    if (analysis.polarization && analysis.polarization !== "—") {
-      return analysis.polarization;
-    }
-    const m = (eng.remarks as string | null)?.match(/POL:([\w-]+)/);
-    if (m) return m[1];
-  }
-  const matrixPols = ctx.visibilityBySatName.get(satName) ?? [];
-  if (matrixPols.length > 0) return matrixPols[0];
-  return "—";
-}
-
-/**
- * Beam distribution — ONLY beams whose band matches Visibility Matrix for this unit.
- * Excludes mismatched band types (e.g. no C-band when matrix shows KU only).
- */
-export function resolveBeamVisibilityFromMatrix(
-  satName: string,
-  unitId: string,
-  ctx: IntelLinkageContext,
-): { beams: BeamVisibilityEntry[]; filteredOut: string[] } {
-  const unitName = getUnitIntelName(unitId);
-  const visibleBands = getMatrixBandsForSatellite(satName, ctx);
-  const allBeams = SATELLITE_BEAMS[satName] ?? ["Regional Beam 1", "Regional Beam 2"];
-  const filteredOut: string[] = [];
-  const beams: BeamVisibilityEntry[] = [];
-
-  for (const name of allBeams) {
-    const beamBand = beamNameToBand(name);
-    if (beamBand && visibleBands.length > 0 && !visibleBands.includes(beamBand)) {
-      filteredOut.push(name);
-      continue;
-    }
-    beams.push({
-      name,
-      visibleToUnit: visibleBands.length > 0,
-      label: visibleBands.length > 0
-        ? `(Visible to ${unitName})`
-        : "(Not in Visibility Matrix for this unit)",
-    });
-  }
-
-  return { beams, filteredOut };
-}
-
-export function validateIntelReportIntegrity(
-  satName: string,
-  ctx: IntelLinkageContext,
-  engagements: any[],
-  scanPolarization: string,
-  beamEntries: BeamVisibilityEntry[],
-  filteredOutBeams: string[],
-): IntelIntegrityResult {
-  const warnings: string[] = [];
-  const scanBand = scanPolarization !== "—" ? polarizationToBand(scanPolarization) : "";
-  const matrixBands = getMatrixBandsForSatellite(satName, ctx);
-
-  if (matrixBands.length === 0) {
-    warnings.push("No visibility matrix entries for this satellite at the current unit.");
-  }
-
-  if (scanBand && matrixBands.length > 0 && !matrixBands.includes(scanBand)) {
-    warnings.push(
-      `Scan polarization ${scanPolarization} (${scanBand}-band) is not present in the Visibility Matrix (${matrixBands.join(", ")}).`,
-    );
-  }
-
-  for (const beam of beamEntries) {
-    const bb = beamNameToBand(beam.name);
-    if (bb && scanBand && bb !== scanBand) {
-      warnings.push(`Beam "${beam.name}" (${bb}-band) conflicts with active scan band ${scanBand}.`);
-    }
-  }
-
-  if (filteredOutBeams.length > 0) {
-    warnings.push(
-      `${filteredOutBeams.length} beam(s) suppressed — band type not authorized in Visibility Matrix.`,
-    );
-  }
-
-  const eng = ctx.engagementBySatName.get(satName);
-  if (!eng && scanPolarization !== "—") {
-    warnings.push("Scan polarization set without active Engagement Status allocation.");
-  }
-
-  return {
-    valid: warnings.length === 0,
-    warnings,
-    scanPolarization,
-    scanBand,
-    matrixBands,
-    beamMismatchFiltered: filteredOutBeams,
-  };
-}
+/**
+ * INT Repository data integrity — consumes Visibility Matrix SSOT only.
+ */
+import type { BeamVisibilityEntry, IntelLinkageContext } from "@/lib/intelAnalysisData";
+import { getUnitIntelName } from "@/lib/intelAnalysisData";
+import { computeSatelliteAnalysis } from "@/lib/engagementEngine";
+import {
+  bandsFromVisibleBeams,
+  resolveMatrixVisibility,
+  type VisibilityMatrixSnapshot,
+} from "@/lib/visibilityMatrix";
+
+export type IntelIntegrityResult = {
+  valid: boolean;
+  warnings: string[];
+  scanPolarization: string;
+  scanBand: string;
+  matrixBands: string[];
+  beamMismatchFiltered: string[];
+};
+
+/** Map polarization code → primary band (KU, C, KA, …) */
+export function polarizationToBand(pol: string): string {
+  const u = pol.trim().toUpperCase();
+  if (u.startsWith("KU")) return "KU";
+  if (u.startsWith("KA")) return "KA";
+  if (u.startsWith("C-") || u.startsWith("C ") || u === "C") return "C";
+  if (u.startsWith("S-") || u.startsWith("S ")) return "S";
+  if (u.startsWith("L-") || u.startsWith("L ")) return "L";
+  const head = u.split("-")[0];
+  return head || u;
+}
+
+/** Fetch visibility snapshot from master matrix (never compute locally). */
+export function getMatrixSnapshot(
+  satName: string,
+  unitId: string,
+): VisibilityMatrixSnapshot | null {
+  return resolveMatrixVisibility(unitId, satName);
+}
+
+/** Visible bands — derived from matrix visible beams only. */
+export function getMatrixBandsForSatellite(satName: string, unitId: string): string[] {
+  const snap = getMatrixSnapshot(satName, unitId);
+  if (!snap) return [];
+  return bandsFromVisibleBeams(snap.beamsVisibleToUnit);
+}
+
+/** Scan polarization — Engagement when active, else primary band from matrix visible beams. */
+export function resolveScanPolarizationFromEngagement(
+  satName: string,
+  unitId: string,
+  ctx: IntelLinkageContext,
+  engagements: any[],
+): string {
+  const eng = engagements.find((e) => e.satellites?.name === satName);
+  if (eng) {
+    const analysis = computeSatelliteAnalysis(eng, []);
+    if (analysis.polarization && analysis.polarization !== "—") {
+      return analysis.polarization;
+    }
+    const m = (eng.remarks as string | null)?.match(/POL:([\w-]+)/);
+    if (m) return m[1];
+  }
+  const snap = getMatrixSnapshot(satName, unitId);
+  if (snap && snap.beamsVisibleToUnit.length > 0) {
+    const first = snap.beamsVisibleToUnit[0].toLowerCase();
+    if (first.includes("ku")) return "KU-HH";
+    if (first.includes("ka")) return "KA-HH";
+    if (first.includes("c-band") || first.includes("c band")) return "C-HL";
+  }
+  void ctx;
+  return "—";
+}
+
+/**
+ * Beam panels for INT drill-down — inventory + visibility from Visibility Matrix SSOT.
+ */
+export function resolveBeamVisibilityFromMatrix(
+  satName: string,
+  unitId: string,
+  _ctx: IntelLinkageContext,
+): { beams: BeamVisibilityEntry[]; filteredOut: string[]; snapshot: VisibilityMatrixSnapshot | null } {
+  const unitName = getUnitIntelName(unitId);
+  const snap = getMatrixSnapshot(satName, unitId);
+
+  if (!snap) {
+    return { beams: [], filteredOut: [], snapshot: null };
+  }
+
+  const beams: BeamVisibilityEntry[] = [
+    ...snap.beamInventory.map((name) => ({
+      name,
+      visibleToUnit: false,
+      label: `(Inventory — ${name})`,
+    })),
+    ...snap.beamsVisibleToUnit.map((name) => ({
+      name,
+      visibleToUnit: true,
+      label: `(Visible to ${unitName})`,
+    })),
+  ];
+
+  const seen = new Set<string>();
+  const deduped = beams.filter((b) => {
+    if (seen.has(b.name)) return false;
+    seen.add(b.name);
+    return true;
+  });
+
+  return { beams: deduped, filteredOut: [], snapshot: snap };
+}
+
+/** SSOT — beam names visible to a unit (Visibility Matrix). */
+export function getVisibleBeamNamesFromMatrix(
+  satName: string,
+  unitId: string,
+  _ctx?: IntelLinkageContext,
+): string[] {
+  return getMatrixSnapshot(satName, unitId)?.beamsVisibleToUnit ?? [];
+}
+
+/** Hard gate: scan permitted only when matrix reports visible beams > 0. */
+export function canUnitScanSatellite(
+  satName: string,
+  unitId: string,
+  _ctx?: IntelLinkageContext,
+): boolean {
+  const snap = getMatrixSnapshot(satName, unitId);
+  return snap?.canScan ?? false;
+}
+
+export function validateIntelReportIntegrity(
+  satName: string,
+  unitId: string,
+  ctx: IntelLinkageContext,
+  engagements: any[],
+  scanPolarization: string,
+  beamEntries: BeamVisibilityEntry[],
+  filteredOutBeams: string[],
+): IntelIntegrityResult {
+  const warnings: string[] = [];
+  const scanBand = scanPolarization !== "—" ? polarizationToBand(scanPolarization) : "";
+  const matrixBands = getMatrixBandsForSatellite(satName, unitId);
+  const snap = getMatrixSnapshot(satName, unitId);
+
+  if (!snap) {
+    warnings.push("Satellite not found in Visibility Matrix catalog.");
+  } else if (snap.beamsVisibleToUnit.length === 0) {
+    warnings.push("Zero beam visibility — scanning and INT ingestion blocked.");
+  }
+
+  if (scanBand && matrixBands.length > 0 && !matrixBands.includes(scanBand)) {
+    warnings.push(
+      `Scan polarization ${scanPolarization} (${scanBand}-band) is not authorized by visible matrix beams (${matrixBands.join(", ")}).`,
+    );
+  }
+
+  if (filteredOutBeams.length > 0) {
+    warnings.push(
+      `${filteredOutBeams.length} beam(s) suppressed — not authorized in Visibility Matrix.`,
+    );
+  }
+
+  const eng = ctx.engagementBySatName.get(satName);
+  if (!eng && scanPolarization !== "—" && snap?.canScan) {
+    warnings.push("Scan polarization set without active Engagement Status allocation.");
+  }
+
+  void beamEntries;
+  return {
+    valid: warnings.length === 0,
+    warnings,
+    scanPolarization,
+    scanBand,
+    matrixBands,
+    beamMismatchFiltered: filteredOutBeams,
+  };
+}
+
+/** Infer band from beam display name */
+export function beamNameToBand(name: string): string | null {
+  const n = name.toUpperCase();
+  if (n.includes("C-BAND") || n.includes("C BAND")) return "C";
+  if (n.includes("KU ") || n.startsWith("KU")) return "KU";
+  if (n.includes("KA ") || n.startsWith("KA")) return "KA";
+  return null;
+}
+

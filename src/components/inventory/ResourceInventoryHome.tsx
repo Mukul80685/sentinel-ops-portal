@@ -47,14 +47,14 @@ import { listCategories, listUnits, type Unit } from "@/lib/queries";
 
 // NATO phonetic names with preset operational locations
 const UNIT_SLOTS = [
-  { label: "Unit Alpha",   location: "New York" },
-  { label: "Unit Bravo",   location: "London" },
-  { label: "Unit Charlie", location: "Melbourne" },
-  { label: "Unit Delta",   location: "Sydney" },
-  { label: "Unit Echo",    location: "Singapore" },
-  { label: "Unit Foxtrot", location: "Dubai" },
-  { label: "Unit Golf",    location: "Tokyo" },
-  { label: "Unit Hotel",   location: "Frankfurt" },
+  { label: "Unit A", location: "New York" },
+  { label: "Unit B", location: "London" },
+  { label: "Unit C", location: "Melbourne" },
+  { label: "Unit D", location: "Sydney" },
+  { label: "Unit E", location: "Singapore" },
+  { label: "Unit F", location: "Dubai" },
+  { label: "Unit G", location: "Tokyo" },
+  { label: "Unit H", location: "Frankfurt" },
 ] as const;
 
 const RESOURCE_OPTIONS = [

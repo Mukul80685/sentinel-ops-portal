@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "@tanstack/react-router";
-import { ArrowLeft, ExternalLink, Globe, Radar, Satellite } from "lucide-react";
+import { ArrowLeft, ExternalLink, Globe, Radar, Satellite, Star, Cog, Trash2, Navigation } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -14,7 +14,7 @@ import type {
   NonProductiveFrequency,
   ProductiveFrequency,
 } from "@/lib/intelAnalysisData";
-import { getUnitIntelCode, getUnitIntelName } from "@/lib/intelAnalysisData";
+import { getUnitIntelName } from "@/lib/intelAnalysisData";
 import {
   allocateToUnit,
   discardFrequency,
@@ -77,8 +77,20 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
 
   if (!report) return null;
 
-  const { baseProfile, scanSummary, totalBeamsAvailable, beamsVisibleToUnit, scanBand } = report;
-  const unitCode = getUnitIntelCode(report.unitId);
+  const {
+    baseProfile,
+    scanSummary,
+    totalBeamsAvailable,
+    totalBeamCount,
+    beamsVisibleToUnit,
+    scanBand,
+    visibilityBlocked,
+    visibilityConstraint,
+  } = report;
+  const unitName = getUnitIntelName(report.unitId);
+  const blockedMsg =
+    visibilityConstraint ||
+    "Scanning blocked — Visibility Matrix reports zero beams visible to this unit.";
 
   return (
     <>
@@ -108,6 +120,21 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
           </div>
 
           <div className="flex-1 min-h-0 overflow-y-auto px-2 py-1.5 space-y-1.5">
+            {visibilityBlocked && (
+              <div
+                className="rounded border border-amber-500/45 bg-amber-500/10 px-2 py-1.5"
+                role="status"
+              >
+                <p className="mono text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+                  Visibility Constraint — Scan Blocked
+                </p>
+                <p className="mono text-[10px] text-foreground/85 mt-0.5">{blockedMsg}</p>
+                <p className="mono text-[9px] text-foreground/65 mt-0.5">
+                  Frequency lists and analysis remain visible but are inaccessible until matrix visibility is restored.
+                </p>
+              </div>
+            )}
+
             {/* A · Satellite Details */}
             <section className="panel overflow-hidden">
               <div className="px-2 py-1 border-b border-border bg-secondary/25 flex items-center gap-2">
@@ -115,15 +142,6 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
                 <span className="mono text-[10px] font-bold uppercase tracking-wider text-foreground">
                   Satellite Details
                 </span>
-                <Link
-                  to="/visibility"
-                  search={{ unit: report.unitId, satellite: report.satelliteName }}
-                  className="ml-auto inline-flex items-center gap-1 mono text-[9px] text-primary hover:underline"
-                  onClick={onClose}
-                >
-                  View in Satellite Visibility Matrix
-                  <ExternalLink className="h-3 w-3" />
-                </Link>
               </div>
               <dl className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-3 gap-y-1.5 p-2">
                 <Field label="Satellite Name" value={baseProfile.name} emphasis />
@@ -132,15 +150,9 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
                 <Field label="Orbital Position" value={baseProfile.orbitalPosition} />
                 <Field label="Total Transponders" value={baseProfile.totalTransponders} />
               </dl>
-              <div className="px-2 pb-2 border-t border-border/40 pt-1.5">
-                <dt className="mono text-[9px] uppercase tracking-wider text-foreground/75">Total Beams Available</dt>
-                <dd className="mono mt-0.5 text-[10px] text-foreground leading-snug">
-                  {totalBeamsAvailable.join(" · ")}
-                </dd>
-              </div>
             </section>
 
-            {/* B · Scan strip */}
+            {/* B · Scanning Analysis — metrics + beam visibility (matrix-derived) */}
             <section className="panel overflow-hidden">
               <div className="px-2 py-1 border-b border-border bg-secondary/25 flex items-center gap-2">
                 <Radar className="h-3.5 w-3.5 text-primary" />
@@ -148,20 +160,50 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
                   Scanning Analysis Summary
                 </span>
               </div>
-              <div className="flex flex-wrap items-center gap-x-5 gap-y-1 px-2 py-1.5">
-                <StripItem label="Polarization" value={scanSummary.polarization} />
-                <StripItem label="Scan Start Date" value={scanSummary.scanStartDate} />
-                <StripItem label="Frequencies Scanned" value={scanSummary.totalScanned.toLocaleString()} />
-                <StripItem label="Frequencies Analyzed" value={scanSummary.analyzed.toLocaleString()} />
-                <StripItem label="Frequencies Pending" value={scanSummary.pending.toLocaleString()} />
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-1 px-2 py-1.5 border-b border-border/40">
+                {visibilityBlocked ? (
+                  <>
+                    <StripItem label="Polarization" value="N/A" />
+                    <StripItem label="Scan Start Date" value="N/A" />
+                    <StripItem label="Frequencies Scanned" value="N/A" />
+                    <StripItem label="Frequencies Analyzed" value="N/A" />
+                    <StripItem label="Frequencies Pending" value="N/A" />
+                  </>
+                ) : (
+                  <>
+                    <StripItem label="Polarization" value={scanSummary.polarization} />
+                    <StripItem label="Scan Start Date" value={scanSummary.scanStartDate} />
+                    <StripItem label="Frequencies Scanned" value={scanSummary.totalScanned.toLocaleString()} />
+                    <StripItem label="Frequencies Analyzed" value={scanSummary.analyzed.toLocaleString()} />
+                    <StripItem label="Frequencies Pending" value={scanSummary.pending.toLocaleString()} />
+                  </>
+                )}
+              </div>
+              <div className="grid grid-cols-2 divide-x divide-border min-h-[100px]">
+                <BeamPanel
+                  title="Total Beams Available"
+                  beams={totalBeamsAvailable}
+                  countOverride={totalBeamCount}
+                />
+                <BeamPanel
+                  title={`Beams Visible to ${unitName}`}
+                  beams={beamsVisibleToUnit}
+                  highlight
+                  emptyMessage="No beams visible — no Visibility Matrix entries for this unit and satellite."
+                  headerAction={
+                    <Link
+                      to="/visibility"
+                      search={{ unit: report.unitId, satellite: report.satelliteName }}
+                      className="inline-flex items-center gap-1 mono text-[9px] text-primary hover:underline shrink-0"
+                      onClick={onClose}
+                    >
+                      View in Satellite Visibility Matrix
+                      <ExternalLink className="h-3 w-3" />
+                    </Link>
+                  }
+                />
               </div>
             </section>
-
-            {/* Beam panels */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-1.5">
-              <BeamPanel title="Total Beams Available" beams={totalBeamsAvailable} />
-              <BeamPanel title={`Beams Visible To Unit ${unitCode}`} beams={beamsVisibleToUnit} highlight />
-            </div>
 
             {/* C · Frequency tables */}
             <section className="space-y-1.5">
@@ -176,12 +218,14 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
                 title="C1 · Productive Frequencies"
                 section="productive"
                 report={report}
-                headers={["Status", "Frequency ID", "Output Type", "Details of Interception", "Protocol"]}
+                headers={["Frequency ID", "Output Type", "Details of Interception", "Protocol"]}
                 rows={report.productive}
-                renderCells={(f) => [f.frequencyId, f.outputType, f.detailsOfInterception, f.protocolEncountered ?? "—"]}
-                accent="emerald"
+                renderCells={(f) => [f.outputType, f.detailsOfInterception, f.protocolEncountered ?? "—"]}
+                freqId={(f) => f.frequencyId}
                 freqTick={freqTick}
                 userLabel={userLabel}
+                visibilityBlocked={visibilityBlocked}
+                blockedMessage={blockedMsg}
                 onAllocate={(key, freq) => setAllocateOpen({ key, frequency: freq })}
                 onAction={bump}
               />
@@ -190,16 +234,23 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
                 title="C2 · Non-Productive Frequencies"
                 section="non_productive"
                 report={report}
-                headers={["Status", "Frequency ID", "Level", "Protocol", "Remarks"]}
+                headers={["Frequency ID", "Level", "Protocol", "Remarks"]}
                 rows={report.nonProductive}
-                renderCells={(f) => [f.frequencyId, f.level, f.protocolEncountered ?? "—", f.remarks]}
+                renderCells={(f) => [f.level, f.protocolEncountered ?? "—", f.remarks]}
+                freqId={(f) => f.frequencyId}
                 freqTick={freqTick}
                 userLabel={userLabel}
+                visibilityBlocked={visibilityBlocked}
+                blockedMessage={blockedMsg}
                 onAllocate={(key, freq) => setAllocateOpen({ key, frequency: freq })}
                 onAction={bump}
               />
 
-              <NovelProtocolTable protocols={report.novelProtocols} />
+              <NovelProtocolTable
+                protocols={report.novelProtocols}
+                visibilityBlocked={visibilityBlocked}
+                blockedMessage={blockedMsg}
+              />
             </section>
           </div>
         </DialogContent>
@@ -246,17 +297,35 @@ function StripItem({ label, value }: { label: string; value: string }) {
   );
 }
 
-function BeamPanel({ title, beams, highlight }: { title: string; beams: string[]; highlight?: boolean }) {
+function BeamPanel({
+  title,
+  beams,
+  highlight,
+  headerAction,
+  emptyMessage = "None listed.",
+  countOverride,
+}: {
+  title: string;
+  beams: string[];
+  highlight?: boolean;
+  headerAction?: React.ReactNode;
+  emptyMessage?: string;
+  countOverride?: number;
+}) {
+  const displayCount = countOverride ?? beams.length;
   return (
-    <section className={`panel overflow-hidden ${highlight ? "border-primary/30" : ""}`}>
-      <div className="px-2 py-1 border-b border-border bg-secondary/20">
-        <span className="mono text-[10px] font-bold uppercase tracking-wider text-foreground">{title}</span>
-        <span className="mono text-[9px] text-foreground/70 ml-2">({beams.length})</span>
+    <div className={`flex flex-col min-h-0 ${highlight ? "bg-primary/[0.03]" : ""}`}>
+      <div className="px-2 py-1 border-b border-border/40 bg-secondary/15 shrink-0 flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <span className="mono text-[10px] font-bold uppercase tracking-wider text-foreground">{title}</span>
+          <span className="mono text-[9px] text-foreground/70 ml-2">({displayCount})</span>
+        </div>
+        {headerAction}
       </div>
       {beams.length === 0 ? (
-        <p className="px-2 py-1.5 mono text-[11px] text-foreground/70">None listed.</p>
+        <p className="px-2 py-1.5 mono text-[11px] text-foreground/70">{emptyMessage}</p>
       ) : (
-        <ul className="px-2 py-1.5 space-y-0.5 max-h-[120px] overflow-y-auto">
+        <ul className="px-2 py-1.5 space-y-0.5 flex-1 overflow-y-auto max-h-[120px]">
           {beams.map((beam) => (
             <li key={beam} className="mono text-[11px] text-foreground leading-snug flex items-start gap-1">
               <span className="text-primary shrink-0">•</span>
@@ -265,42 +334,48 @@ function BeamPanel({ title, beams, highlight }: { title: string; beams: string[]
           ))}
         </ul>
       )}
-    </section>
+    </div>
   );
 }
 
-function StatusIcons({ stateKey }: { stateKey: string }) {
+function FrequencyStateSymbols({ stateKey }: { stateKey: string }) {
   const state = getFrequencyState(stateKey);
   const { flags } = state;
   if (!flags.important && !flags.allocated && !flags.techAnalysis) {
-    return <span className="text-foreground/30 mono text-[10px]">—</span>;
+    return null;
   }
 
   const icons: { char: string; title: string; entries: AuditEntry[] }[] = [];
   if (flags.important) {
     icons.push({
-      char: "★",
-      title: "Important Frequency",
+      char: "⭐",
+      title: "Added to Important Frequencies",
       entries: state.auditLog.filter((e) => e.action === "mark_important"),
     });
   }
   if (flags.allocated) {
+    const fromOther =
+      state.scannedByUnitId &&
+      state.allocatedToUnitId &&
+      state.scannedByUnitId !== state.allocatedToUnitId;
     icons.push({
-      char: "⇄",
-      title: state.allocatedToUnitLabel ?? "Allocated",
+      char: "📡",
+      title: fromOther
+        ? `${state.allocatedToUnitLabel ?? "Allocated"} (scanned by another unit)`
+        : (state.allocatedToUnitLabel ?? "Allocated to unit"),
       entries: state.auditLog.filter((e) => e.action === "allocate_unit"),
     });
   }
   if (flags.techAnalysis) {
     icons.push({
-      char: "⚙",
-      title: "Technical Analysis",
+      char: "⚙️",
+      title: "Technical Analysis Requested",
       entries: state.auditLog.filter((e) => e.action === "request_tech_analysis"),
     });
   }
 
   return (
-    <span className="inline-flex items-center gap-1 shrink-0">
+    <span className="inline-flex items-center gap-0.5 shrink-0 ml-1">
       {icons.map((icon) => (
         <ActionHistoryPopover key={icon.char} icon={icon.char} title={icon.title} entries={icon.entries} />
       ))}
@@ -376,34 +451,40 @@ function FreqActionMenu({
   }, [onClose]);
 
   const items = [
-    { id: "important", label: "Add To Important Frequencies" },
-    { id: "allocate", label: "Allocate To Another Unit" },
-    { id: "tech", label: "Request Detailed Technical Analysis" },
-    { id: "discard", label: "Discard" },
+    { id: "important", label: "Add to Important Frequencies", icon: Star },
+    { id: "allocate", label: "Allocate to Unit", icon: Navigation },
+    { id: "tech", label: "Request Detailed Technical Analysis", icon: Cog },
+    { id: "discard", label: "Discard", icon: Trash2 },
   ];
 
   return createPortal(
     <div
       ref={ref}
-      className="fixed z-[200] min-w-[240px] rounded-md border border-border bg-popover shadow-lg py-1"
+      className="fixed z-[200] min-w-[280px] rounded-md border border-border bg-popover shadow-lg py-1"
       style={{ left: menu.x, top: menu.y }}
     >
-      <div className="px-2.5 py-1 border-b border-border/50 mono text-[9px] text-foreground/70 truncate">
-        {menu.freqId}
+      <div className="px-2.5 py-1.5 border-b border-border/50 mono text-[9px] font-bold uppercase tracking-wider text-foreground/80 truncate">
+        Frequency Actions
       </div>
-      {items.map((item) => (
-        <button
-          key={item.id}
-          type="button"
-          className="w-full text-left px-2.5 py-1.5 mono text-[11px] text-foreground hover:bg-primary/10 transition-colors"
-          onClick={() => {
-            onAction(item.id);
-            onClose();
-          }}
-        >
-          {item.label}
-        </button>
-      ))}
+      <div className="px-2.5 py-0.5 mono text-[10px] text-foreground truncate">{menu.freqId}</div>
+      {items.map((item) => {
+        const Icon = item.icon;
+        return (
+          <button
+            key={item.id}
+            type="button"
+            className="w-full text-left px-2.5 py-2 mono text-[11px] text-foreground hover:bg-primary/10 transition-colors
+                       flex items-center gap-2"
+            onClick={() => {
+              onAction(item.id);
+              onClose();
+            }}
+          >
+            <Icon className={`h-3.5 w-3.5 shrink-0 ${item.id === "discard" ? "text-destructive" : "text-primary"}`} />
+            {item.label}
+          </button>
+        );
+      })}
     </div>,
     document.body,
   );
@@ -416,9 +497,11 @@ function FrequencyTable<T extends ProductiveFrequency | NonProductiveFrequency>(
   headers,
   rows,
   renderCells,
-  accent,
+  freqId,
   freqTick,
   userLabel,
+  visibilityBlocked,
+  blockedMessage,
   onAllocate,
   onAction,
 }: {
@@ -428,92 +511,122 @@ function FrequencyTable<T extends ProductiveFrequency | NonProductiveFrequency>(
   headers: string[];
   rows: T[];
   renderCells: (row: T) => string[];
-  accent?: "emerald";
+  freqId: (row: T) => string;
   freqTick: number;
   userLabel: string;
+  visibilityBlocked?: boolean;
+  blockedMessage?: string;
   onAllocate: (key: string, freq: string) => void;
   onAction: () => void;
 }) {
   void freqTick;
   const [menu, setMenu] = useState<MenuState | null>(null);
-  const borderCls = accent === "emerald" ? "border-emerald-500/30" : "border-border";
   const unitLabel = getUnitIntelName(report.unitId);
 
-  function openMenu(e: React.MouseEvent, key: string, freqId: string) {
+  const activeRows = rows.filter((row) => {
+    const key = frequencyKey(report.reportId, freqId(row), section);
+    return !getFrequencyState(key).flags.discarded;
+  });
+
+  function openMenu(e: React.MouseEvent, key: string, frequencyId: string) {
     e.preventDefault();
     e.stopPropagation();
-    const x = Math.min(e.clientX, window.innerWidth - 260);
-    const y = Math.min(e.clientY, window.innerHeight - 180);
-    setMenu({ key, freqId, x, y });
+    const x = Math.min(e.clientX, window.innerWidth - 300);
+    const y = Math.min(e.clientY, window.innerHeight - 220);
+    setMenu({ key, freqId: frequencyId, x, y });
   }
 
-  function runAction(key: string, freqId: string, action: string) {
+  function runAction(key: string, frequencyId: string, action: string) {
     if (action === "important") {
       markImportant(key, {
-        frequency: freqId,
+        frequency: frequencyId,
         satelliteName: report.satelliteName,
         unitLabel,
         reportId: report.reportId,
         userLabel,
+        sourceUnitId: report.unitId,
       });
       toast.success("Added to Important Frequencies");
     } else if (action === "allocate") {
-      onAllocate(key, freqId);
+      onAllocate(key, frequencyId);
       return;
     } else if (action === "discard") {
-      discardFrequency(key, userLabel);
-      toast.success("Frequency discarded");
+      discardFrequency(key, userLabel, {
+        frequencyId,
+        satelliteName: report.satelliteName,
+        section,
+        sourceUnitId: report.unitId,
+      });
+      toast.success("Moved to Discard Repository");
     } else if (action === "tech") {
-      requestTechnicalAnalysis(key, userLabel);
+      requestTechnicalAnalysis(key, userLabel, {
+        sourceUnitId: report.unitId,
+        frequencyId,
+        satelliteName: report.satelliteName,
+      });
       toast.success("Technical analysis requested");
     }
     onAction();
   }
 
   return (
-    <div className={`panel overflow-hidden border ${borderCls} w-full`}>
+    <div className="panel overflow-hidden border border-border w-full">
       <div className="px-2 py-1 border-b border-border bg-secondary/20">
         <span className="mono text-[10px] font-bold uppercase tracking-wider text-foreground">{title}</span>
-        <span className="mono text-[9px] text-foreground/70 ml-2">({rows.length})</span>
+        <span className="mono text-[9px] text-foreground/70 ml-2">
+          ({visibilityBlocked ? 0 : activeRows.length})
+        </span>
       </div>
-      {rows.length === 0 ? (
-        <p className="px-2 py-1.5 mono text-[11px] text-foreground">No entries.</p>
-      ) : (
-        <div className="overflow-x-auto max-h-[min(32vh,280px)] w-full">
-          <table className="w-full table-fixed">
-            <colgroup>
-              <col className="w-[72px]" />
-              <col className="w-[16%]" />
-              <col className="w-[12%]" />
-              <col className="w-[34%]" />
-              <col className="w-[18%]" />
-            </colgroup>
-            <thead>
-              <tr className="border-b border-border bg-secondary/15">
-                {headers.map((h) => (
-                  <th
-                    key={h}
-                    className="px-2 py-1 text-left mono text-[9px] uppercase tracking-wider text-foreground font-bold"
-                  >
-                    {h}
-                  </th>
-                ))}
+      <div className="overflow-x-auto max-h-[min(32vh,280px)] w-full">
+        <table className="w-full table-fixed">
+          <colgroup>
+            <col className="w-[22%]" />
+            <col className="w-[14%]" />
+            <col className="w-[38%]" />
+            <col className="w-[26%]" />
+          </colgroup>
+          <thead>
+            <tr className="border-b border-border bg-secondary/15">
+              {headers.map((h) => (
+                <th
+                  key={h}
+                  className="px-2 py-1 text-left mono text-[9px] uppercase tracking-wider text-foreground font-bold"
+                >
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/50">
+            {visibilityBlocked ? (
+              <tr>
+                <td
+                  colSpan={headers.length}
+                  className="px-2 py-3 mono text-[11px] text-foreground/75 italic"
+                >
+                  {blockedMessage ?? "Inaccessible — blocked by visibility constraint."}
+                </td>
               </tr>
-            </thead>
-            <tbody className="divide-y divide-border/50">
-              {rows.map((row) => {
-                const key = frequencyKey(report.reportId, row.frequencyId, section);
-                const state = getFrequencyState(key);
-                const discarded = state.flags.discarded;
+            ) : activeRows.length === 0 ? (
+              <tr>
+                <td colSpan={headers.length} className="px-2 py-1.5 mono text-[11px] text-foreground">
+                  No entries.
+                </td>
+              </tr>
+            ) : (
+              activeRows.map((row) => {
+                const frequencyId = freqId(row);
+                const key = frequencyKey(report.reportId, frequencyId, section);
                 return (
                   <tr
                     key={row.id}
-                    className={`cursor-pointer hover:bg-primary/8 ${discarded ? "opacity-45 line-through" : ""}`}
-                    onClick={(e) => openMenu(e, key, row.frequencyId)}
-                    onContextMenu={(e) => openMenu(e, key, row.frequencyId)}
+                    className="cursor-pointer hover:bg-primary/8"
+                    onClick={(e) => openMenu(e, key, frequencyId)}
+                    onContextMenu={(e) => openMenu(e, key, frequencyId)}
                   >
-                    <td className="px-2 py-1.5 align-top">
-                      <StatusIcons stateKey={key} />
+                    <td className="px-2 py-1.5 mono text-[11px] text-foreground align-top break-words">
+                      <span className="font-bold">{frequencyId}</span>
+                      <FrequencyStateSymbols stateKey={key} />
                     </td>
                     {renderCells(row).map((cell, j) => (
                       <td key={j} className="px-2 py-1.5 mono text-[11px] text-foreground align-top break-words">
@@ -522,11 +635,11 @@ function FrequencyTable<T extends ProductiveFrequency | NonProductiveFrequency>(
                     ))}
                   </tr>
                 );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
 
       {menu && (
         <FreqActionMenu
@@ -539,49 +652,70 @@ function FrequencyTable<T extends ProductiveFrequency | NonProductiveFrequency>(
   );
 }
 
-function NovelProtocolTable({ protocols }: { protocols: IntelDrillDownReport["novelProtocols"] }) {
+function NovelProtocolTable({
+  protocols,
+  visibilityBlocked,
+  blockedMessage,
+}: {
+  protocols: IntelDrillDownReport["novelProtocols"];
+  visibilityBlocked?: boolean;
+  blockedMessage?: string;
+}) {
+  const headers = ["Frequency", "Protocol", "Remarks"];
   return (
     <div className="panel overflow-hidden border border-primary/30 w-full">
       <div className="px-2 py-1 border-b border-border bg-secondary/20">
         <span className="mono text-[10px] font-bold uppercase tracking-wider text-foreground">
           C3 · Newly Encountered Protocols
         </span>
-        <span className="mono text-[9px] text-foreground/70 ml-2">({protocols.length})</span>
+        <span className="mono text-[9px] text-foreground/70 ml-2">
+          ({visibilityBlocked ? 0 : protocols.length})
+        </span>
       </div>
-      {protocols.length === 0 ? (
-        <p className="px-2 py-1.5 mono text-[11px] text-foreground">No novel protocols detected.</p>
-      ) : (
-        <div className="overflow-x-auto w-full">
-          <table className="w-full table-fixed">
-            <colgroup>
-              <col className="w-[22%]" />
-              <col className="w-[22%]" />
-              <col className="w-[56%]" />
-            </colgroup>
-            <thead>
-              <tr className="border-b border-border bg-secondary/15">
-                {["Frequency", "Protocol", "Remarks"].map((h) => (
-                  <th
-                    key={h}
-                    className="px-2 py-1 text-left mono text-[9px] uppercase tracking-wider text-foreground font-bold"
-                  >
-                    {h}
-                  </th>
-                ))}
+      <div className="overflow-x-auto w-full">
+        <table className="w-full table-fixed">
+          <colgroup>
+            <col className="w-[22%]" />
+            <col className="w-[22%]" />
+            <col className="w-[56%]" />
+          </colgroup>
+          <thead>
+            <tr className="border-b border-border bg-secondary/15">
+              {headers.map((h) => (
+                <th
+                  key={h}
+                  className="px-2 py-1 text-left mono text-[9px] uppercase tracking-wider text-foreground font-bold"
+                >
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/50">
+            {visibilityBlocked ? (
+              <tr>
+                <td colSpan={3} className="px-2 py-3 mono text-[11px] text-foreground/75 italic">
+                  {blockedMessage ?? "Analysis disabled — blocked by visibility constraint."}
+                </td>
               </tr>
-            </thead>
-            <tbody className="divide-y divide-border/50">
-              {protocols.map((p, i) => (
+            ) : protocols.length === 0 ? (
+              <tr>
+                <td colSpan={3} className="px-2 py-1.5 mono text-[11px] text-foreground">
+                  No novel protocols detected.
+                </td>
+              </tr>
+            ) : (
+              protocols.map((p, i) => (
                 <tr key={i}>
                   <td className="px-2 py-1.5 mono text-[11px]">{p.frequency}</td>
                   <td className="px-2 py-1.5 mono text-[11px]">{p.protocol}</td>
                   <td className="px-2 py-1.5 mono text-[11px]">{p.remarks}</td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -663,7 +797,7 @@ function AllocateUnitDialog({
                   type="button"
                   className="w-full text-left px-2 py-1.5 rounded-sm border border-border hover:border-primary/40 hover:bg-primary/5"
                   onClick={() => {
-                    allocateToUnit(freqKey, u.unitId, userLabel);
+                    allocateToUnit(freqKey, u.unitId, userLabel, report.unitId);
                     toast.success(`Allocated to Unit ${u.code}`);
                     onDone();
                   }}

@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
@@ -32,6 +32,7 @@ import {
   MapPin,
   Pencil,
   Plus,
+  Radar,
   Radio,
   Satellite as SatIcon,
   Settings2,
@@ -57,188 +58,27 @@ import {
 } from "recharts";
 import { supabase } from "@/integrations/supabase/client";
 import { listUnits } from "@/lib/queries";
+import {
+  GEO_REGIONS,
+  REGION_BEAMS,
+  seedRand,
+  getBeamBreakdown,
+  getVisibleBeams,
+  type GeoSatellite,
+  type GeoRegion,
+} from "@/lib/visibilityMatrix";
+import { INT_UNITS } from "@/lib/intelRepository";
+import { isSatelliteInIntRoster } from "@/lib/intelAnalysisData";
 
-// ─── Static unit roster for visibility layer ─────────────────────────────────
+// ─── Static unit roster for visibility layer (shared naming with INT) ─────────
 
-interface VisibilityUnit {
-  id: string;
-  code: string;
-  name: string;
-  location: string;
-}
+type VisibilityUnit = (typeof INT_UNITS)[number];
 
-const VISIBILITY_UNITS: VisibilityUnit[] = [
-  { id: "alpha",   code: "A", name: "Unit Alpha",   location: "Northern Sector" },
-  { id: "bravo",   code: "B", name: "Unit Bravo",   location: "Eastern Sector" },
-  { id: "charlie", code: "C", name: "Unit Charlie", location: "Western Sector" },
-  { id: "delta",   code: "D", name: "Unit Delta",   location: "Southern Sector" },
-  { id: "echo",    code: "E", name: "Unit Echo",    location: "Central Sector" },
-  { id: "foxtrot", code: "F", name: "Unit Foxtrot", location: "Forward Sector" },
-  { id: "golf",    code: "G", name: "Unit Golf",    location: "Rear Sector" },
-  { id: "hotel",   code: "H", name: "Unit Hotel",   location: "Coastal Sector" },
-];
+const VISIBILITY_UNITS: VisibilityUnit[] = [...INT_UNITS];
 
-// ─── Static GEO satellite data by region ──────────────────────────────────────
+// GeoSatellite / GeoRegion / GEO_REGIONS / REGION_BEAMS / beam helpers — @/lib/visibilityMatrix (SSOT)
 
-interface GeoSatellite {
-  id: string;
-  name: string;
-  orbitType?: string;              // GEO | LEO | MEO
-  position: string;
-  launchDate: string;
-  transponders: string;            // display string e.g. "38 C/Ku-band"
-  cBandTransponders?: string;
-  kuBandTransponders?: string;
-  beamCoverage: string;
-  beamCoverageImageUrl?: string;   // legacy upload field
-  beams?: string[];                // beam breakdown e.g. ["8 Ku Spot Beams","6 Regional Beams"]
-  footprintImageUrl?: string;      // primary footprint/coverage image
-  visibilityNotes?: string;        // free-text notes about unit visibility
-  beamEirp?: Record<string, number>; // beam_name → EIRP value in dBW (user-entered or auto-generated)
-}
-
-interface Region {
-  id: string;
-  label: string;
-  flagCode?: string;    // ISO 3166-1 alpha-2 ("cn", "us") or "eu" → rendered via flagcdn.com
-  emoji?: string;       // fallback globe/symbol emoji for multi-country regions
-  satellites: GeoSatellite[];
-}
-
-const GEO_REGIONS: Region[] = [
-  {
-    id: "china",
-    label: "China",
-    flagCode: "cn",
-    satellites: [
-      { id: "cn-1", name: "ChinaSat 6B",   position: "105.5°E", launchDate: "2007-07-05", transponders: "38 C/Ku-band",    beamCoverage: "Asia / Pacific" },
-      { id: "cn-2", name: "ChinaSat 9",    position: "92.2°E",  launchDate: "2008-06-09", transponders: "22 Ku-band",      beamCoverage: "China (DTH)" },
-      { id: "cn-3", name: "ChinaSat 10",   position: "110.5°E", launchDate: "2011-06-21", transponders: "30 Ku/C-band",    beamCoverage: "Asia / Pacific" },
-      { id: "cn-4", name: "ChinaSat 12",   position: "87.5°E",  launchDate: "2012-05-26", transponders: "32 C/Ku-band",    beamCoverage: "Asia / Indian Ocean" },
-      { id: "cn-5", name: "ChinaSat 15",   position: "101.4°E", launchDate: "2011-03-05", transponders: "22 Ku-band",      beamCoverage: "China / SE Asia" },
-      { id: "cn-6", name: "AsiaSat 5",     position: "100.5°E", launchDate: "2009-08-11", transponders: "26 C/Ku-band",    beamCoverage: "Asia / Pacific / Middle East" },
-      { id: "cn-7", name: "AsiaSat 7",     position: "105.5°E", launchDate: "2011-11-21", transponders: "28 C/Ku-band",    beamCoverage: "Asia / Middle East" },
-      { id: "cn-8", name: "Apstar 6",      position: "134.0°E", launchDate: "2005-04-12", transponders: "24 C/Ku-band",    beamCoverage: "Asia / Pacific" },
-      { id: "cn-9", name: "Apstar 9",      position: "142.0°E", launchDate: "2015-10-17", transponders: "28 C/Ku-band",    beamCoverage: "Asia / Pacific" },
-    ],
-  },
-  {
-    id: "pakistan",
-    label: "Pakistan",
-    flagCode: "pk",
-    satellites: [
-      { id: "pk-1", name: "PAKSAT-1R",   position: "38.0°E",  launchDate: "2011-08-12", transponders: "30 C/Ku-band",    beamCoverage: "South Asia / Middle East / Africa" },
-      { id: "pk-2", name: "PAKSAT MM1",  position: "42.0°E",  launchDate: "2023-01-10", transponders: "14 Ku/Ka-band",   beamCoverage: "South Asia / Middle East" },
-    ],
-  },
-  {
-    id: "turkey",
-    label: "Turkey",
-    flagCode: "tr",
-    satellites: [
-      { id: "tr-1", name: "Turksat 3A",  position: "42.0°E",  launchDate: "2008-06-12", transponders: "32 Ku/Ka-band",   beamCoverage: "Turkey / Europe / Middle East" },
-      { id: "tr-2", name: "Turksat 4A",  position: "42.0°E",  launchDate: "2014-02-14", transponders: "34 Ku/Ka-band",   beamCoverage: "Turkey / Europe / Asia" },
-      { id: "tr-3", name: "Turksat 4B",  position: "50.0°E",  launchDate: "2015-10-16", transponders: "32 Ku/Ka-band",   beamCoverage: "Asia / Middle East / Africa" },
-      { id: "tr-4", name: "Turksat 5A",  position: "31.3°E",  launchDate: "2021-01-08", transponders: "36 Ku/Ka-band",   beamCoverage: "Europe / Middle East / Africa" },
-    ],
-  },
-  {
-    id: "bangladesh",
-    label: "Bangladesh",
-    flagCode: "bd",
-    satellites: [
-      { id: "bd-1", name: "Bangabandhu-1", position: "119.1°E", launchDate: "2018-05-12", transponders: "40 C/Ku-band",   beamCoverage: "South Asia / SE Asia" },
-    ],
-  },
-  {
-    id: "sea",
-    label: "Southeast Asia",
-    emoji: "🌏",
-    satellites: [
-      { id: "sea-1", name: "Measat-3a",  position: "91.5°E",  launchDate: "2009-06-21", transponders: "24 C/Ku-band",    beamCoverage: "Asia / Indian Ocean" },
-      { id: "sea-2", name: "Thaicom 6",  position: "78.5°E",  launchDate: "2014-01-07", transponders: "28 C/Ku-band",    beamCoverage: "Asia / Pacific" },
-      { id: "sea-3", name: "Thaicom 8",  position: "78.5°E",  launchDate: "2016-05-27", transponders: "24 Ku/Ka-band",   beamCoverage: "SE Asia / Indian Ocean" },
-      { id: "sea-4", name: "Telkom-3S",  position: "118.0°E", launchDate: "2017-02-14", transponders: "42 C/Ku/Ka-band", beamCoverage: "SE Asia / Pacific" },
-      { id: "sea-5", name: "PSN VI",     position: "146.0°E", launchDate: "2020-11-22", transponders: "32 C/Ku-band",    beamCoverage: "Indonesia / Pacific" },
-    ],
-  },
-  {
-    id: "middle-east",
-    label: "Middle East",
-    emoji: "🌐",
-    satellites: [
-      { id: "me-1", name: "Arabsat 5C",   position: "20.0°E",  launchDate: "2010-08-04", transponders: "36 C/Ku-band",    beamCoverage: "Middle East / Africa / Europe" },
-      { id: "me-2", name: "Arabsat 6A",   position: "26.0°E",  launchDate: "2019-04-11", transponders: "60 C/Ku/Ka-band", beamCoverage: "Middle East / Africa" },
-      { id: "me-3", name: "Nilesat 201",  position: "7.0°W",   launchDate: "2010-08-04", transponders: "44 Ku-band",      beamCoverage: "Middle East / North Africa" },
-      { id: "me-4", name: "Es'hailSat 1", position: "25.5°E",  launchDate: "2013-08-27", transponders: "24 Ku-band",      beamCoverage: "Qatar / Middle East" },
-      { id: "me-5", name: "Es'hailSat 2", position: "25.5°E",  launchDate: "2018-11-15", transponders: "26 Ku/Ka-band",   beamCoverage: "Middle East / Africa" },
-    ],
-  },
-  {
-    id: "europe",
-    label: "Europe",
-    flagCode: "eu",
-    satellites: [
-      { id: "eu-1", name: "Astra 1M",      position: "19.2°E",  launchDate: "2008-11-05", transponders: "32 Ku-band",      beamCoverage: "Europe / Middle East" },
-      { id: "eu-2", name: "Astra 2E",      position: "28.2°E",  launchDate: "2012-09-29", transponders: "60 Ku/Ka-band",   beamCoverage: "Europe" },
-      { id: "eu-3", name: "Eutelsat 33E",  position: "33.0°E",  launchDate: "2012-09-28", transponders: "40 Ku-band",      beamCoverage: "Europe / Middle East / Africa" },
-      { id: "eu-4", name: "Hotbird 13C",   position: "13.0°E",  launchDate: "2012-06-23", transponders: "64 Ku-band",      beamCoverage: "Europe / N. Africa / Middle East" },
-      { id: "eu-5", name: "Eutelsat 7A",   position: "7.0°E",   launchDate: "2011-09-22", transponders: "38 Ku-band",      beamCoverage: "Europe / Middle East / Africa" },
-      { id: "eu-6", name: "SES-12",        position: "95.0°E",  launchDate: "2018-06-04", transponders: "54 Ku/Ka-band",   beamCoverage: "Asia / Middle East / Pacific" },
-    ],
-  },
-  {
-    id: "africa",
-    label: "Africa",
-    emoji: "🌍",
-    satellites: [
-      { id: "af-1", name: "Intelsat 20",   position: "68.5°E",  launchDate: "2012-08-02", transponders: "60 C/Ku-band",    beamCoverage: "Africa / Middle East / Indian Ocean" },
-      { id: "af-2", name: "AMOS-17",       position: "17.0°E",  launchDate: "2019-08-06", transponders: "55 Ka-band",      beamCoverage: "Africa" },
-      { id: "af-3", name: "Eutelsat 16A",  position: "16.0°E",  launchDate: "2011-04-20", transponders: "40 Ku-band",      beamCoverage: "Africa / Europe" },
-      { id: "af-4", name: "Intelsat 33e",  position: "60.0°E",  launchDate: "2016-08-26", transponders: "56 C/Ku/Ka-band", beamCoverage: "Africa / Asia / Middle East" },
-    ],
-  },
-  {
-    id: "russia",
-    label: "Russia",
-    flagCode: "ru",
-    satellites: [
-      { id: "ru-1", name: "Express-AM5",  position: "140.0°E", launchDate: "2014-12-26", transponders: "42 Ku/Ka-band", beamCoverage: "Russia / Asia" },
-      { id: "ru-2", name: "Express-AM6",  position: "53.0°E",  launchDate: "2014-10-21", transponders: "64 C/Ku-band",  beamCoverage: "Russia / Middle East / Africa" },
-      { id: "ru-3", name: "Express-AT1",  position: "56.0°E",  launchDate: "2014-03-17", transponders: "32 Ku-band",    beamCoverage: "Russia / CIS" },
-      { id: "ru-4", name: "Yamal-402",    position: "55.0°E",  launchDate: "2012-12-08", transponders: "46 Ku-band",    beamCoverage: "Russia / Central Asia" },
-    ],
-  },
-  {
-    id: "usa",
-    label: "USA",
-    flagCode: "us",
-    satellites: [
-      { id: "us-1", name: "AMC-21",        position: "125.0°W", launchDate: "2008-08-14", transponders: "24 Ku/Ka-band",   beamCoverage: "North America" },
-      { id: "us-2", name: "AMC-18",        position: "105.0°W", launchDate: "2006-12-16", transponders: "24 C-band",       beamCoverage: "North America" },
-      { id: "us-3", name: "Intelsat 34",   position: "55.5°W",  launchDate: "2015-08-27", transponders: "64 C/Ku-band",    beamCoverage: "Americas / Atlantic" },
-      { id: "us-4", name: "Intelsat 35e",  position: "34.5°W",  launchDate: "2017-07-02", transponders: "60 C/Ku/Ka-band", beamCoverage: "Americas / Africa / Europe" },
-      { id: "us-5", name: "SES-14",        position: "47.5°W",  launchDate: "2018-01-25", transponders: "40 C/Ku/Ka-band", beamCoverage: "Americas / Atlantic" },
-      { id: "us-6", name: "Galaxy 30",     position: "125.0°W", launchDate: "2020-08-15", transponders: "24 C-band",       beamCoverage: "North America / Pacific" },
-    ],
-  },
-];
-
-// ─── Mock visibility data generator ───────────────────────────────────────────
-
-function seedRand(seed: string) {
-  let h = 2166136261;
-  for (let i = 0; i < seed.length; i++) {
-    h ^= seed.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return () => {
-    h ^= h << 13;
-    h ^= h >>> 17;
-    h ^= h << 5;
-    return ((h >>> 0) % 10000) / 10000;
-  };
-}
+type Region = GeoRegion;
 
 function buildMockVisibility(satId: string, satName: string) {
   const rand = seedRand(satId + satName);
@@ -270,109 +110,6 @@ function buildMockVisibility(satId: string, satName: string) {
     coverage: `${50 + Math.round(rand() * 40)}%`,
   }));
   return { currentPct, timeline, history, passes, access };
-}
-
-// ─── Standardized beam pool — format: "Band Type – Beam NN" ──────────────────
-// Each entry is a complete, display-ready label in professional format.
-
-const REGION_BEAMS: Record<string, string[]> = {
-  "china": [
-    "Ku Regional – Beam 08",
-    "Ku Spot – Beam 11",
-    "C-band Wide Beam",
-    "Ka Spot – Beam 04",
-    "Ku Regional – Beam 13",
-  ],
-  "pakistan": [
-    "Ku Regional – Beam 05",
-    "C-band Wide Beam",
-    "Ka Spot – Beam 02",
-    "Ku Spot – Beam 09",
-  ],
-  "turkey": [
-    "Ku Regional – Beam 07",
-    "Ka Spot – Beam 03",
-    "C-band Regional Beam",
-    "Ku Spot – Beam 14",
-  ],
-  "bangladesh": [
-    "Ku Regional – Beam 06",
-    "C-band Wide Beam",
-    "Ka Spot – Beam 01",
-    "Ku Spot – Beam 10",
-  ],
-  "sea": [
-    "Ku Regional – Beam 09",
-    "C-band Wide Beam",
-    "Ka Spot – Beam 06",
-    "Ku Spot – Beam 15",
-    "C-band Regional Beam",
-  ],
-  "middle-east": [
-    "Ku Regional – Beam 03",
-    "Ka Spot – Beam 07",
-    "C-band Wide Beam",
-    "Ku Spot – Beam 12",
-    "C-band Regional Beam",
-  ],
-  "europe": [
-    "Ku Regional – Beam 10",
-    "Ka Spot – Beam 05",
-    "C-band Wide Beam",
-    "Ku Spot – Beam 16",
-  ],
-  "africa": [
-    "Ku Regional – Beam 02",
-    "C-band Wide Beam",
-    "Ka Spot – Beam 08",
-    "Ku Spot – Beam 17",
-  ],
-  "russia": [
-    "Ku Regional – Beam 04",
-    "C-band Wide Beam",
-    "Ka Spot – Beam 09",
-    "Ku Spot – Beam 18",
-  ],
-  "usa": [
-    "Ku Regional – Beam 01",
-    "C-band Wide Beam",
-    "Ka Spot – Beam 10",
-    "Ku Spot – Beam 19",
-  ],
-};
-
-// Deterministic beam breakdown from transponder data
-function getBeamBreakdown(sat: GeoSatellite): { total: number; beams: string[] } {
-  if (sat.beams && sat.beams.length > 0) {
-    const total = sat.beams.reduce((n, b) => {
-      const m = b.match(/^(\d+)/);
-      return n + (m ? parseInt(m[1]) : 1);
-    }, 0);
-    return { total, beams: sat.beams };
-  }
-  const rand = seedRand(sat.id + "beams");
-  const ku  = 4 + Math.floor(rand() * 6);
-  const reg = 2 + Math.floor(rand() * 4);
-  const c   = 2 + Math.floor(rand() * 3);
-  return {
-    total: ku + reg + c,
-    beams: [`${ku} Ku Spot Beams`, `${reg} Regional Beams`, `${c} C-band Beams`],
-  };
-}
-
-// Deterministic visible beams for a given unit + satellite + region combination
-// Returns 1–3 standardized beam labels from the region pool.
-function getVisibleBeams(unitId: string, satId: string, regionId: string): string[] {
-  const pool  = REGION_BEAMS[regionId] ?? ["Ku Regional – Beam 01", "C-band Wide Beam", "Ka Spot – Beam 02"];
-  const rand  = seedRand(unitId + satId);
-  const count = 1 + Math.floor(rand() * Math.min(3, pool.length - 1));
-  // Deterministic Fisher-Yates to pick distinct entries
-  const idxs = Array.from({ length: pool.length }, (_, i) => i);
-  for (let i = idxs.length - 1; i > 0; i--) {
-    const j = Math.floor(rand() * (i + 1));
-    [idxs[i], idxs[j]] = [idxs[j], idxs[i]];
-  }
-  return idxs.slice(0, count).map((i) => pool[i]);
 }
 
 // Deterministic EIRP lookup / generation for a single beam.
@@ -540,6 +277,7 @@ function VisibilityPage() {
       title="Satellite Visibility Matrices"
       subtitle="Target Country Satellites"
       headerIcon={<SatIcon className="h-4 w-4 shrink-0" />}
+      horizontalNav={null}
     >
       {/* ── Level 1: Unit selection ──────────────────────────────────────── */}
       {!selectedUnitId && (
@@ -766,20 +504,19 @@ function UnitGrid({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="label-eyebrow">Select Unit</div>
 
-      {/* Tile grid — 2 columns mobile, 4 desktop, full-width balanced */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* 4 tiles per row × 2 rows — dense command-center layout */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         {units.map((u) => (
           <div key={u.id} className="relative group/tile">
-            {/* Delete overlay button (delete mode only) */}
             {deleteMode && (
               <button
                 type="button"
                 title="Delete this unit"
                 onClick={() => onDeleteUnit(u.id)}
-                className="absolute -top-1.5 -right-1.5 z-10 h-5 w-5 rounded-full border border-border
+                className="absolute -top-1 -right-1 z-10 h-5 w-5 rounded-full border border-border
                            bg-card text-muted-foreground hover:bg-destructive hover:text-destructive-foreground
                            flex items-center justify-center transition-colors"
               >
@@ -790,23 +527,29 @@ function UnitGrid({
               type="button"
               onClick={() => !deleteMode && onSelect(u)}
               className={`w-full text-left rounded-md border border-border
-                          bg-card shadow-md hover:shadow-lg
+                          bg-card shadow-sm hover:shadow-md
                           transition-all duration-200
                           focus:outline-none focus:ring-2 focus:ring-primary/50
-                          p-4
+                          p-2.5 min-h-[72px]
                           ${deleteMode
                             ? "cursor-default opacity-80"
                             : "hover:-translate-y-0.5 hover:border-primary/40 hover:bg-secondary/40"}`}
             >
-              {/* Accent bar */}
-              <div className="h-0.5 w-8 rounded-full bg-primary mb-3 opacity-60" />
+              <div className="flex items-start justify-between gap-1 mb-1.5">
+                <div className="h-0.5 w-6 rounded-full bg-primary opacity-60" />
+                <Radar
+                  className="h-3 w-3 shrink-0 text-primary/45"
+                  title="Linked to Satellite Visibility Matrix"
+                  aria-label="Visibility matrix participant"
+                />
+              </div>
 
-              <div className="mono text-sm font-bold uppercase tracking-tight leading-tight text-foreground">
+              <div className="mono text-[12px] font-bold uppercase tracking-tight leading-tight text-foreground">
                 {u.name}
               </div>
-              <div className="flex items-center gap-1 mt-1.5 mono text-[10px] text-muted-foreground">
-                <MapPin className="h-3 w-3 shrink-0" />
-                <span>{u.location}</span>
+              <div className="flex items-center gap-1 mt-1 mono text-[9px] text-muted-foreground">
+                <MapPin className="h-2.5 w-2.5 shrink-0" />
+                <span className="truncate">{u.location}</span>
               </div>
             </button>
           </div>
@@ -1130,86 +873,79 @@ function SatelliteTable({
     scrollRef.current?.scrollBy({ left: dir === "left" ? -320 : 320, behavior: "smooth" });
   }
 
-  function scrollTable(dir: "left" | "right") {
-    scrollRef.current?.scrollBy({ left: dir === "left" ? -320 : 320, behavior: "smooth" });
-  }
-
-  // ── Header bar (never scrolls) ──────────────────────────────────────────────
+  // ── Compact header + icon toolbar (single row) ─────────────────────────────
   const headerBar = (
-    <div className="flex items-start gap-3 px-3 py-2 border-b border-border bg-background shrink-0">
-      {/* LEFT — title */}
-      <div className="flex items-center gap-1.5 flex-1 min-w-0 pt-0.5">
-        <SatIcon className="h-3 w-3 shrink-0 text-muted-foreground" />
-        <span className="mono text-[11px] font-bold uppercase tracking-wide text-foreground">
-          {regionLabel} — Satellite Database
-        </span>
-      </div>
-      {/* RIGHT — stacked actions */}
-      <div className="flex flex-col items-end gap-1 shrink-0">
-        {/* Row 1: Import + Export All + Export Filtered */}
-        <div className="flex items-center gap-1.5">
-          <ImportCsvButton regionId={regionId} onImport={onAddSat} />
+    <div className="flex items-center gap-2 px-2 py-1 border-b border-border bg-background shrink-0 min-h-[30px]">
+      <SatIcon className="h-3 w-3 shrink-0 text-muted-foreground" />
+      <span className="mono text-[10px] font-bold uppercase tracking-wide text-foreground whitespace-nowrap">
+        {regionLabel} Sat DB
+      </span>
+      <span className="mono text-[9px] text-muted-foreground whitespace-nowrap hidden sm:inline">
+        · {satellites.length} total
+        {isFiltered && ` · ${filteredSats.length} shown`}
+        {selectedIds.size > 0 && ` · ${selectedIds.size} sel`}
+      </span>
+      <div className="flex-1 min-w-2" />
+      <div className="flex items-center gap-0.5 shrink-0">
+        <ImportCsvButton regionId={regionId} onImport={onAddSat} iconOnly />
+        <button
+          type="button"
+          onClick={() => exportSats(satellites, "all")}
+          title="Export all satellites"
+          className="h-7 w-7 grid place-items-center rounded-sm border border-border
+                     hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+        >
+          <Download className="h-3.5 w-3.5" />
+        </button>
+        {isFiltered && (
           <button
             type="button"
-            onClick={() => exportSats(satellites, "all")}
-            title="Export all satellites"
-            className="h-8 px-2 inline-flex items-center gap-1 rounded-sm border border-border
-                       mono text-[11px] uppercase tracking-wider hover:bg-secondary transition-colors"
+            onClick={() => exportSats(filteredSats, "filtered")}
+            title={`Export filtered results (${filteredSats.length})`}
+            className="h-7 w-7 grid place-items-center rounded-sm border border-primary/40
+                       text-primary hover:bg-primary/10 transition-colors"
           >
-            <Download className="h-3.5 w-3.5" /> Export All
+            <Download className="h-3 w-3" />
           </button>
-          {isFiltered && (
+        )}
+        {satellites.length > 0 && (
+          <>
             <button
               type="button"
-              onClick={() => exportSats(filteredSats, "filtered")}
-              title="Export filtered results"
-              className="h-8 px-2 inline-flex items-center gap-1 rounded-sm border border-primary/40
-                         mono text-[11px] uppercase tracking-wider text-primary hover:bg-primary/10 transition-colors"
+              onClick={() => scrollTable("left")}
+              title="Scroll left"
+              className="h-7 w-7 grid place-items-center rounded-sm border border-border hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
             >
-              <Download className="h-3.5 w-3.5" /> Export Filtered ({filteredSats.length})
+              <ChevronLeft className="h-3.5 w-3.5" />
             </button>
-          )}
-        </div>
-        {/* Row 2: scroll + filter + add */}
-        <div className="flex items-center gap-1.5">
-          {satellites.length > 0 && (
-            <>
-              <button type="button" onClick={() => scrollTable("left")} title="Scroll left"
-                className="h-7 w-7 grid place-items-center rounded-sm border border-border hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground">
-                <ChevronLeft className="h-3.5 w-3.5" />
-              </button>
-              <button type="button" onClick={() => scrollTable("right")} title="Scroll right"
-                className="h-7 w-7 grid place-items-center rounded-sm border border-border hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground">
-                <ChevronRight className="h-3.5 w-3.5" />
-              </button>
-            </>
-          )}
-          <button
-            type="button"
-            onClick={() => setFilterOpen((v) => !v)}
-            className={`h-7 px-2 inline-flex items-center gap-1 rounded-sm border mono text-[11px] uppercase tracking-wider transition-colors
-                        ${filterOpen ? "border-primary/50 bg-primary/10 text-primary" : "border-border hover:bg-secondary text-muted-foreground hover:text-foreground"}`}
-          >
-            <Filter className="h-3 w-3" /> Filter
-          </button>
-          <AddSatelliteDialog regionId={regionId} onAdd={onAddSat} />
-        </div>
+            <button
+              type="button"
+              onClick={() => scrollTable("right")}
+              title="Scroll right"
+              className="h-7 w-7 grid place-items-center rounded-sm border border-border hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+            >
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          </>
+        )}
+        <button
+          type="button"
+          onClick={() => setFilterOpen((v) => !v)}
+          title="Filter satellites"
+          className={`h-7 w-7 grid place-items-center rounded-sm border transition-colors
+                      ${filterOpen
+                        ? "border-primary/50 bg-primary/10 text-primary"
+                        : "border-border hover:bg-secondary text-muted-foreground hover:text-foreground"}`}
+        >
+          <Filter className="h-3.5 w-3.5" />
+        </button>
+        <AddSatelliteDialog regionId={regionId} onAdd={onAddSat} iconOnly />
       </div>
     </div>
   );
 
-  // ── Record counts bar ────────────────────────────────────────────────────────
-  const countsBar = (
-    <div className="px-3 py-1 border-b border-border bg-secondary/20 flex items-center gap-3 shrink-0 mono text-[10px] text-muted-foreground">
-      <span>Total: <span className="text-foreground font-bold">{satellites.length}</span></span>
-      {isFiltered && (
-        <span>Filtered: <span className="text-primary font-bold">{filteredSats.length}</span></span>
-      )}
-      {selectedIds.size > 0 && (
-        <span>Selected: <span className="text-primary font-bold">{selectedIds.size}</span></span>
-      )}
-    </div>
-  );
+  // counts merged into header bar — no separate counts row
+  const countsBar = null;
 
   // ── Filter panel ─────────────────────────────────────────────────────────────
   const filterPanel = filterOpen && (
@@ -1311,6 +1047,7 @@ function SatelliteTable({
         </div>
         <SatelliteEditDialog
           satellite={editingSat}
+          regionId={regionId}
           onClose={() => setEditingSat(null)}
           onSave={(updated) => { onEditSat(updated); setEditingSat(null); }}
         />
@@ -1320,7 +1057,7 @@ function SatelliteTable({
 
   return (
     <>
-      <div className="rounded-md border border-border overflow-hidden flex flex-col" style={{ maxHeight: "70vh" }}>
+      <div className="rounded-md border border-border overflow-hidden flex flex-col" style={{ maxHeight: "78vh" }}>
         {/* Fixed bars — never scroll */}
         {headerBar}
         {countsBar}
@@ -1379,7 +1116,22 @@ function SatelliteTable({
                     <td className="px-2 py-1.5 text-muted-foreground">{idx + 1}</td>
 
                     <td className="px-2 py-1.5">
-                      <div className="font-bold text-foreground uppercase tracking-tight leading-tight">{sat.name}</div>
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <div className="font-bold text-foreground uppercase tracking-tight leading-tight">{sat.name}</div>
+                        {isSatelliteInIntRoster(unitId, sat.name) && (
+                          <Link
+                            to="/intel/$unitId"
+                            params={{ unitId }}
+                            search={{ satellite: sat.name }}
+                            title={`Open ${sat.name} in INT Repository`}
+                            className="inline-flex items-center px-1 py-0 rounded border border-primary/40
+                                       bg-primary/10 mono text-[8px] font-bold uppercase text-primary
+                                       hover:bg-primary/20 transition-colors shrink-0"
+                          >
+                            INT
+                          </Link>
+                        )}
+                      </div>
                       <div className="text-muted-foreground text-[10px]">{sat.orbitType ?? "GEO"}</div>
                     </td>
 
@@ -1690,9 +1442,11 @@ function FootprintModal({
 function ImportCsvButton({
   regionId,
   onImport,
+  iconOnly,
 }: {
   regionId: string;
   onImport: (sat: GeoSatellite) => void;
+  iconOnly?: boolean;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -1765,11 +1519,12 @@ function ImportCsvButton({
         type="button"
         variant="outline"
         size="sm"
-        className="h-8 mono text-[11px] uppercase tracking-wider"
+        className={iconOnly ? "h-7 w-7 p-0" : "h-8 mono text-[11px] uppercase tracking-wider"}
         onClick={() => fileRef.current?.click()}
         title="Import satellite data from CSV file"
       >
-        <Upload className="h-3.5 w-3.5 mr-1" /> Import CSV
+        <Upload className={iconOnly ? "h-3.5 w-3.5" : "h-3.5 w-3.5 mr-1"} />
+        {!iconOnly && " Import CSV"}
       </Button>
     </>
   );
@@ -1793,9 +1548,11 @@ const EMPTY_SAT_FORM = {
 function AddSatelliteDialog({
   regionId,
   onAdd,
+  iconOnly,
 }: {
   regionId: string;
   onAdd: (sat: GeoSatellite) => void;
+  iconOnly?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(EMPTY_SAT_FORM);
@@ -1868,9 +1625,15 @@ function AddSatelliteDialog({
       <DialogTrigger asChild>
         <Button
           size="sm"
-          className="h-8 mono text-[11px] uppercase tracking-wider bg-emerald-700 hover:bg-emerald-600 text-white border-0"
+          title="Add new satellite"
+          className={
+            iconOnly
+              ? "h-7 w-7 p-0 bg-emerald-700 hover:bg-emerald-600 text-white border-0"
+              : "h-8 mono text-[11px] uppercase tracking-wider bg-emerald-700 hover:bg-emerald-600 text-white border-0"
+          }
         >
-          <Plus className="h-3.5 w-3.5 mr-1" /> Add New Satellite
+          <Plus className={iconOnly ? "h-3.5 w-3.5" : "h-3.5 w-3.5 mr-1"} />
+          {!iconOnly && " Add New Satellite"}
         </Button>
       </DialogTrigger>
 

@@ -15,6 +15,7 @@ import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/
 import { Route as AuthenticatedReportsRouteImport } from './routes/_authenticated/reports'
 import { Route as AuthenticatedMinutesRouteImport } from './routes/_authenticated/minutes'
 import { Route as AuthenticatedImportantRouteImport } from './routes/_authenticated/important'
+import { Route as AuthenticatedDiscardedRouteImport } from './routes/_authenticated/discarded'
 import { Route as AuthenticatedControlCenterRouteImport } from './routes/_authenticated/control-center'
 import { Route as AuthenticatedVisibilityIndexRouteImport } from './routes/_authenticated/visibility.index'
 import { Route as AuthenticatedServiceabilityIndexRouteImport } from './routes/_authenticated/serviceability.index'
@@ -61,6 +62,11 @@ const AuthenticatedMinutesRoute = AuthenticatedMinutesRouteImport.update({
 const AuthenticatedImportantRoute = AuthenticatedImportantRouteImport.update({
   id: '/important',
   path: '/important',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedDiscardedRoute = AuthenticatedDiscardedRouteImport.update({
+  id: '/discarded',
+  path: '/discarded',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedControlCenterRoute =
@@ -173,6 +179,7 @@ export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
   '/auth': typeof AuthRoute
   '/control-center': typeof AuthenticatedControlCenterRoute
+  '/discarded': typeof AuthenticatedDiscardedRoute
   '/important': typeof AuthenticatedImportantRoute
   '/minutes': typeof AuthenticatedMinutesRoute
   '/reports': typeof AuthenticatedReportsRoute
@@ -197,6 +204,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/auth': typeof AuthRoute
   '/control-center': typeof AuthenticatedControlCenterRoute
+  '/discarded': typeof AuthenticatedDiscardedRoute
   '/important': typeof AuthenticatedImportantRoute
   '/minutes': typeof AuthenticatedMinutesRoute
   '/reports': typeof AuthenticatedReportsRoute
@@ -224,6 +232,7 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
   '/_authenticated/control-center': typeof AuthenticatedControlCenterRoute
+  '/_authenticated/discarded': typeof AuthenticatedDiscardedRoute
   '/_authenticated/important': typeof AuthenticatedImportantRoute
   '/_authenticated/minutes': typeof AuthenticatedMinutesRoute
   '/_authenticated/reports': typeof AuthenticatedReportsRoute
@@ -252,6 +261,7 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/control-center'
+    | '/discarded'
     | '/important'
     | '/minutes'
     | '/reports'
@@ -276,6 +286,7 @@ export interface FileRouteTypes {
   to:
     | '/auth'
     | '/control-center'
+    | '/discarded'
     | '/important'
     | '/minutes'
     | '/reports'
@@ -302,6 +313,7 @@ export interface FileRouteTypes {
     | '/_authenticated'
     | '/auth'
     | '/_authenticated/control-center'
+    | '/_authenticated/discarded'
     | '/_authenticated/important'
     | '/_authenticated/minutes'
     | '/_authenticated/reports'
@@ -372,6 +384,13 @@ declare module '@tanstack/react-router' {
       path: '/important'
       fullPath: '/important'
       preLoaderRoute: typeof AuthenticatedImportantRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/discarded': {
+      id: '/_authenticated/discarded'
+      path: '/discarded'
+      fullPath: '/discarded'
+      preLoaderRoute: typeof AuthenticatedDiscardedRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/control-center': {
@@ -520,6 +539,7 @@ const AuthenticatedIntelUnitIdRouteWithChildren =
 
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedControlCenterRoute: typeof AuthenticatedControlCenterRoute
+  AuthenticatedDiscardedRoute: typeof AuthenticatedDiscardedRoute
   AuthenticatedImportantRoute: typeof AuthenticatedImportantRoute
   AuthenticatedMinutesRoute: typeof AuthenticatedMinutesRoute
   AuthenticatedReportsRoute: typeof AuthenticatedReportsRoute
@@ -544,6 +564,7 @@ interface AuthenticatedRouteRouteChildren {
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedControlCenterRoute: AuthenticatedControlCenterRoute,
+  AuthenticatedDiscardedRoute: AuthenticatedDiscardedRoute,
   AuthenticatedImportantRoute: AuthenticatedImportantRoute,
   AuthenticatedMinutesRoute: AuthenticatedMinutesRoute,
   AuthenticatedReportsRoute: AuthenticatedReportsRoute,

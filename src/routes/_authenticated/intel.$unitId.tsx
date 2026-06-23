@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
 import { Empty } from "@/components/Empty";
@@ -12,13 +12,16 @@ import {
   buildIntelDrillDownReport,
   buildIntelLinkageContext,
   buildIntelSatelliteTable,
-  formatIntelTimestamp,
+  formatIntelCompactDate,
   hasIntelData,
 } from "@/lib/intelAnalysisData";
 import { INT_UNITS } from "@/lib/intelRepository";
 import { ENGAGEMENTS_ALL_KEY, fetchAllEngagements } from "@/lib/engagementEngine";
 
 export const Route = createFileRoute("/_authenticated/intel/$unitId")({
+  validateSearch: (search: Record<string, unknown>) => ({
+    satellite: typeof search.satellite === "string" ? search.satellite : undefined,
+  }),
   component: IntelUnitView,
 });
 
@@ -45,6 +48,7 @@ function TableSkeleton() {
 
 function IntelUnitView() {
   const { unitId } = Route.useParams();
+  const { satellite: searchSatellite } = Route.useSearch();
   const navigate = useNavigate();
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
 
@@ -84,7 +88,7 @@ function IntelUnitView() {
     queryFn: async () => {
       const { data } = await supabase
         .from("unit_beam_visibility")
-        .select("beam_id, visible, beams:beam_id(band, satellite_id)")
+        .select("beam_id, visible, beams:beam_id(band, satellite_id, satellites:satellite_id(name))")
         .eq("unit_id", dbUnitId)
         .eq("visible", true);
       return data ?? [];
@@ -125,6 +129,13 @@ function IntelUnitView() {
   );
 
   const isLoading = dataAvailable && (engLoading || visLoading || eqLoading);
+
+  useEffect(() => {
+    if (!searchSatellite || !dataAvailable || tableRows.length === 0) return;
+    const target = searchSatellite.trim().toLowerCase();
+    const match = tableRows.find((r) => r.satelliteName.toLowerCase() === target);
+    if (match) setSelectedReportId(match.reportId);
+  }, [searchSatellite, tableRows, dataAvailable]);
 
   if (!unit) {
     return (
@@ -198,57 +209,63 @@ function IntelUnitView() {
               )}
             </div>
 
-            <div className="flex-1 min-h-0 overflow-auto">
-              <table className="w-full table-fixed">
-                <colgroup>
-                  <col className="w-[4%]" />
-                  <col className="w-[26%]" />
-                  <col className="w-[12%]" />
-                  <col className="w-[12%]" />
-                  <col className="w-[12%]" />
-                  <col className="w-[12%]" />
-                  <col className="w-[22%]" />
-                </colgroup>
-                <thead className="sticky top-0 z-10 bg-secondary/30 backdrop-blur-sm">
-                  <tr className="border-b border-border">
-                    <Th>#</Th>
-                    <Th>Satellite</Th>
-                    <Th align="right">Scanned</Th>
-                    <Th align="right">Analyzed</Th>
-                    <Th align="right">Pending</Th>
-                    <Th align="right">Productivity</Th>
-                    <Th>Last Updated</Th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border/50">
-                  {tableRows.map((row, idx) => (
-                    <tr
-                      key={row.reportId}
-                      onClick={() => setSelectedReportId(row.reportId)}
-                      className="cursor-pointer hover:bg-primary/8 transition-colors"
-                    >
-                      <td className="px-2 py-2 mono text-[11px] text-foreground tabular-nums">{idx + 1}</td>
-                      <td className="px-2 py-2 min-w-0">
-                        <div className="mono text-[12px] font-bold text-foreground uppercase truncate">
-                          {row.satelliteName}
-                        </div>
-                        <div className="mono text-[10px] text-foreground/75 truncate">{row.polarization}</div>
-                        {row.engagementStatus && (
-                          <span className="inline-block mt-0.5 mono text-[8px] font-bold uppercase px-1 py-px rounded-sm border border-primary/30 text-primary bg-primary/8">
-                            {row.engagementStatus}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-2 py-2 mono text-[12px] text-foreground text-right font-semibold tabular-nums">
-                        {row.totalScanned.toLocaleString()}
-                      </td>
-                      <td className="px-2 py-2 mono text-[12px] text-foreground text-right font-semibold tabular-nums">
-                        {row.analyzed.toLocaleString()}
-                      </td>
-                      <td className="px-2 py-2 mono text-[12px] text-foreground text-right font-semibold tabular-nums">
-                        {row.pending.toLocaleString()}
-                      </td>
-                      <td className="px-2 py-2 text-right">
+            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-1">
+              {/* Column template: # | satellite (slightly wider) | 3 equal numeric | productivity | date */}
+              <div
+                className="grid items-center gap-x-2 sticky top-0 z-10 bg-secondary/30 backdrop-blur-sm border-b border-border
+                           [grid-template-columns:2rem_minmax(0,1.35fr)_repeat(3,minmax(0,1fr))_minmax(0,1fr)_minmax(0,0.9fr)]"
+              >
+                <Th align="center">#</Th>
+                <Th align="left">Satellite</Th>
+                <Th align="center">Scanned</Th>
+                <Th align="center">Analyzed</Th>
+                <Th align="center">Pending</Th>
+                <Th align="center">Productivity</Th>
+                <Th align="center">Last Updated</Th>
+              </div>
+              <div className="divide-y divide-border/50">
+                {tableRows.map((row, idx) => (
+                  <div
+                    key={row.reportId}
+                    role="row"
+                    tabIndex={0}
+                    onClick={() => setSelectedReportId(row.reportId)}
+                    onKeyDown={(e) => e.key === "Enter" && setSelectedReportId(row.reportId)}
+                    className="grid items-center gap-x-2 cursor-pointer hover:bg-primary/8 transition-colors
+                               [grid-template-columns:2rem_minmax(0,1.35fr)_repeat(3,minmax(0,1fr))_minmax(0,1fr)_minmax(0,0.9fr)]"
+                  >
+                    <div className="px-1 py-2 mono text-[11px] text-foreground tabular-nums text-center">
+                      {idx + 1}
+                    </div>
+                    <div className="px-1 py-2 min-w-0 text-left">
+                      <div className="mono text-[12px] font-bold text-foreground uppercase leading-tight">
+                        {row.satelliteName}
+                      </div>
+                      <div className="mono text-[10px] text-foreground/75 leading-tight">{row.polarization}</div>
+                      {!row.scanEligible && (
+                        <span className="inline-block mt-0.5 mono text-[8px] font-bold uppercase px-1 py-px rounded-sm border border-muted-foreground/30 text-muted-foreground bg-secondary/40">
+                          No visibility
+                        </span>
+                      )}
+                      {row.engagementStatus && row.scanEligible && (
+                        <span className="inline-block mt-0.5 mono text-[8px] font-bold uppercase px-1 py-px rounded-sm border border-primary/30 text-primary bg-primary/8">
+                          {row.engagementStatus}
+                        </span>
+                      )}
+                    </div>
+                    <div className={`px-1 py-2 mono text-[12px] text-center font-semibold tabular-nums ${!row.scanEligible ? "text-muted-foreground" : "text-foreground"}`}>
+                      {row.totalScanned.toLocaleString()}
+                    </div>
+                    <div className={`px-1 py-2 mono text-[12px] text-center font-semibold tabular-nums ${!row.scanEligible ? "text-muted-foreground" : "text-foreground"}`}>
+                      {row.analyzed.toLocaleString()}
+                    </div>
+                    <div className={`px-1 py-2 mono text-[12px] text-center font-semibold tabular-nums ${!row.scanEligible ? "text-muted-foreground" : "text-foreground"}`}>
+                      {row.pending.toLocaleString()}
+                    </div>
+                    <div className="px-1 py-2 text-center">
+                      {row.productivityScore === null ? (
+                        <span className="mono text-[10px] font-bold uppercase text-muted-foreground">N/A</span>
+                      ) : (
                         <span
                           className={`mono text-[12px] font-bold tabular-nums ${
                             row.productivityScore >= 60
@@ -260,14 +277,14 @@ function IntelUnitView() {
                         >
                           {row.productivityScore}%
                         </span>
-                      </td>
-                      <td className="px-2 py-2 mono text-[11px] text-foreground tabular-nums whitespace-nowrap">
-                        {formatIntelTimestamp(row.reportTimestamp)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      )}
+                    </div>
+                    <div className="px-1 py-2 mono text-[11px] text-muted-foreground tabular-nums text-center">
+                      {row.reportTimestamp ? formatIntelCompactDate(row.reportTimestamp) : "—"}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
 
             <div className="shrink-0 px-2.5 py-1 border-t border-border bg-secondary/10">
@@ -290,18 +307,18 @@ function IntelUnitView() {
 
 function Th({
   children,
-  align,
+  align = "left",
 }: {
   children: React.ReactNode;
-  align?: "right";
+  align?: "left" | "center" | "right";
 }) {
+  const alignCls =
+    align === "center" ? "text-center" : align === "right" ? "text-right" : "text-left";
   return (
-    <th
-      className={`px-2 py-2 mono text-[10px] uppercase tracking-wider text-foreground font-bold whitespace-nowrap ${
-        align === "right" ? "text-right" : "text-left"
-      }`}
+    <div
+      className={`px-1 py-2 mono text-[9px] uppercase tracking-wide text-foreground font-bold ${alignCls}`}
     >
       {children}
-    </th>
+    </div>
   );
 }

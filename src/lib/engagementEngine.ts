@@ -26,9 +26,9 @@ export const NON_OPERATIONAL = new Set([
 
 export const CHAIN_CATEGORIES = [
   { label: "Antennas",      match: "antenna",    short: "Antenna"      },
-  { label: "LNA / LNB",    match: "lna",         short: "LNA/LNB"     },
+  { label: "LNB",           match: "lna",         short: "LNB"         },
   { label: "Demodulators",  match: "demodulat",  short: "Demodulator"  },
-  { label: "Proc. Servers", match: "processing", short: "Processor"    },
+  { label: "Processors",    match: "processing", short: "Processor"    },
 ] as const;
 
 export interface CategoryUtil {
@@ -253,12 +253,27 @@ export function formatEngagementDate(value: string | null): string {
   }
 }
 
-export function productivityStatusLabel(pct: number, isPending: boolean): string {
-  if (isPending) return "Pending Allocation";
+export function productivityStatusLabel(pct: number, canAssess: boolean): string {
+  if (!canAssess) return "Could Not Be Assessed";
   if (pct >= 90) return "Near Complete";
   if (pct >= 70) return "High Progress";
   if (pct >= 40) return "In Analysis";
   return "Early Stage";
+}
+
+/** Operational status label for display in the scanning table. */
+export function engagementDisplayStatus(
+  status: string,
+  isPending: boolean,
+  analysisPct: number,
+): string {
+  if (isPending) return "Pending Allocation";
+  if (status === "Completed") return "Completed";
+  if (status === "In Progress") {
+    return analysisPct > 0 ? "Under Analysis" : "Active";
+  }
+  if (status === "Planned") return "Pending Allocation";
+  return status;
 }
 
 export function engColor(pct: number) {
