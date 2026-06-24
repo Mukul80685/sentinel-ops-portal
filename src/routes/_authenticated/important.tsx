@@ -1,8 +1,12 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import {
+  clearImportant,
   getImportantFrequencyRefs,
+  getFrequencyState,
   INTEL_FREQ_EVENT,
 } from "@/lib/intelFrequencyActions";
+import { ImportantFrequencyMetadata } from "@/components/intel/FrequencyStateSymbols";
+import { VISIBILITY_SATELLITE_PROFILES } from "@/lib/intelAnalysisData";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { listSatellites } from "@/lib/queries";
@@ -34,7 +38,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useCanEdit } from "@/lib/auth";
+import { useCanEdit, useAuth } from "@/lib/auth";
 import {
   ChevronDown,
   ChevronUp,
@@ -112,6 +116,8 @@ type FreqRow = {
   created_at: string;
   _mock?: true;
   _satName?: string;
+  _refKey?: string;
+  _polarization?: string;
 };
 
 // Demo rows — shown when the Supabase table is empty (layout preview only).
@@ -200,10 +206,17 @@ function fmtDateCompact(iso: string): string {
   }
 }
 
+function resolveRowPolarization(row: FreqRow, satName: string): string {
+  if (row._polarization) return row._polarization;
+  return VISIBILITY_SATELLITE_PROFILES[satName]?.defaultPolarization ?? "—";
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export function ImportantFrequenciesView() {
   const canEdit  = useCanEdit();
+  const { user } = useAuth();
+  const userLabel = user?.email ?? "Operator";
   const qc       = useQueryClient();
   const [q, setQ]                       = useState("");
   const [sortKey, setSortKey]           = useState<SortKey | null>(null);
@@ -255,20 +268,28 @@ export function ImportantFrequenciesView() {
   // ── Effective row set: DB (or demo rows) + INT cross-module refs ─────────────
   const effectiveRows = useMemo(() => {
     const base = rows.length > 0 ? (rows as FreqRow[]) : MOCK_FREQUENCIES;
-    const refs = getImportantFrequencyRefs().map(
+    const refs = getImportantFrequencyRefs()
+      .filter((ref) => !getFrequencyState(ref.refKey).flags.discarded)
+      .map(
       (ref): FreqRow => ({
         id: ref.id,
         satellite_id: "",
         frequency: ref.frequency,
         band: ref.unitLabel,
-        label: `[INT ref] ${ref.satelliteName}`,
+        label: `[INT ref] ${ref.satelliteName}${ref.beamName ? ` · ${ref.beamName}` : ""}`,
         created_at: ref.createdAt,
         _mock: true,
         _satName: ref.satelliteName,
+        _refKey: ref.refKey,
+        _polarization: ref.polarization,
       }),
     );
-    return [...refs, ...base];
-  }, [rows, refSync]);
+    const dedupedBase = base.filter((r) => {
+      const satName = r._mock ? (r._satName ?? "") : (satMap[r.satellite_id]?.name ?? "");
+      return !refs.some((ref) => ref.frequency === r.frequency && ref._satName === satName);
+    });
+    return [...refs, ...dedupedBase];
+  }, [rows, refSync, satMap]);
 
   // ── Filtering (text search + structured filters) ─────────────────────────────
   const filtered = useMemo(() => {
@@ -371,6 +392,13 @@ export function ImportantFrequenciesView() {
     toast.success("Frequency removed");
     qc.invalidateQueries({ queryKey: ["important"] });
     if (expandedId === id) setExpandedId(null);
+  }
+
+  function removeIntRef(refKey: string, rowId: string) {
+    clearImportant(refKey, userLabel);
+    toast.success("Removed from Important Frequencies");
+    setRefSync((n) => n + 1);
+    if (expandedId === rowId) setExpandedId(null);
   }
 
   function logScan(freqId: string) {
@@ -593,6 +621,11 @@ export function ImportantFrequenciesView() {
                   <div className="mono text-[11px] text-muted-foreground tabular-nums text-center">{idx + 1}</div>
                   <div className="mono text-[11px] font-bold text-foreground uppercase leading-tight min-w-0">
                     {satName}
+                    <ImportantFrequencyMetadata
+                      refKey={row._refKey}
+                      polarization={resolveRowPolarization(row, satName)}
+                      tick={refSync}
+                    />
                   </div>
                   <div className="flex items-center gap-1 min-w-0">
                     <Radio className="h-3 w-3 text-primary shrink-0" />
@@ -623,11 +656,13 @@ export function ImportantFrequenciesView() {
                     >
                       {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                     </button>
-                    {canEdit && !row._mock && (
+                    {canEdit && (
                       <button
                         type="button"
-                        onClick={() => deleteRow(row.id)}
-                        title="Delete frequency entry"
+                        onClick={() =>
+                          row._refKey ? removeIntRef(row._refKey, row.id) : deleteRow(row.id)
+                        }
+                        title="Remove frequency entry"
                         className="h-6 w-6 grid place-items-center rounded-sm border border-destructive/30
                                    hover:bg-destructive/10 transition-colors text-destructive/60 hover:text-destructive"
                       >

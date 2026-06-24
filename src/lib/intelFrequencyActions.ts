@@ -2,9 +2,8 @@
  * INT frequency actions — flags, audit trail, cross-module references (local/mock).
  */
 import { INT_UNITS } from "@/lib/intelRepository";
-import type { IntelLinkageContext } from "@/lib/intelAnalysisData";
-import { buildIntelLinkageContext, hasIntelData } from "@/lib/intelAnalysisData";
-import { canUnitScanSatellite } from "@/lib/intelIntegrity";
+import { hasIntelData } from "@/lib/intelAnalysisData";
+import { evaluateFrequencyAllocationEligibility } from "@/lib/intelIntegrity";
 import { computeBottleneckEngagement, fetchAllEngagements, buildAllocatedIds } from "@/lib/engagementEngine";
 
 export const INTEL_FREQ_EVENT = "ssacc-intel-freq-update";
@@ -13,9 +12,13 @@ export type FrequencySection = "productive" | "non_productive";
 
 export type FrequencyActionType =
   | "mark_important"
+  | "clear_important"
   | "allocate_unit"
+  | "clear_allocation"
   | "discard"
+  | "restore_frequency"
   | "request_tech_analysis"
+  | "clear_tech_analysis"
   | "admin_override";
 
 export type FrequencyFlags = {
@@ -42,6 +45,10 @@ export type FrequencyActionState = {
   allocatedToUnitLabel?: string;
   /** Unit that originally scanned / reported this frequency */
   scannedByUnitId?: string;
+  satelliteName?: string;
+  frequencyId?: string;
+  beamName?: string;
+  frequencyBand?: string;
   auditLog: AuditEntry[];
 };
 
@@ -50,6 +57,8 @@ export type DiscardedFreqRef = {
   refKey: string;
   frequencyId: string;
   satelliteName: string;
+  beamName?: string;
+  band?: string;
   classification: FrequencySection;
   sourceUnitId?: string;
   discardedAt: string;
@@ -64,6 +73,9 @@ export type ImportantFreqRef = {
   satelliteName: string;
   unitLabel: string;
   sourceReportId: string;
+  beamName?: string;
+  band?: string;
+  polarization?: string;
   createdAt: string;
   notes: string;
 };
@@ -73,9 +85,25 @@ export type AnalysisQueueEntry = {
   refKey: string;
   frequencyId: string;
   satelliteName: string;
+  beamName?: string;
+  band?: string;
   sourceUnitId?: string;
   requestedAt: string;
   status: "ANALYSIS_REQUESTED";
+  userLabel: string;
+};
+
+export type AllocationRecord = {
+  id: string;
+  refKey: string;
+  frequencyId: string;
+  satelliteName: string;
+  beamName: string;
+  band: string;
+  fromUnitId: string;
+  toUnitId: string;
+  toUnitLabel: string;
+  allocatedAt: string;
   userLabel: string;
 };
 
@@ -83,6 +111,7 @@ const STORAGE_ACTIONS = "ssacc_intel_freq_actions";
 const STORAGE_IMPORTANT = "ssacc_intel_important_refs";
 const STORAGE_DISCARDED = "ssacc_intel_discarded_refs";
 const STORAGE_ANALYSIS_QUEUE = "ssacc_intel_analysis_queue";
+const STORAGE_ALLOCATIONS = "ssacc_intel_allocations";
 const STORAGE_OVERRIDES = "ssacc_intel_integrity_overrides";
 
 /** Discarded entries expire after 90 days */
@@ -158,13 +187,30 @@ function setFrequencyState(key: string, state: FrequencyActionState) {
 
 export function markImportant(
   key: string,
-  meta: { frequency: string; satelliteName: string; unitLabel: string; reportId: string; userLabel: string; sourceUnitId?: string },
+  meta: {
+    frequency: string;
+    satelliteName: string;
+    unitLabel: string;
+    reportId: string;
+    userLabel: string;
+    sourceUnitId?: string;
+    beamName?: string;
+    band?: string;
+    polarization?: string;
+  },
 ): FrequencyActionState {
   let state = getFrequencyState(key);
+  if (state.flags.important) {
+    return state;
+  }
   state = {
     ...state,
     flags: { ...state.flags, important: true },
     scannedByUnitId: meta.sourceUnitId ?? state.scannedByUnitId,
+    satelliteName: meta.satelliteName,
+    frequencyId: meta.frequency,
+    beamName: meta.beamName ?? state.beamName,
+    frequencyBand: meta.band ?? state.frequencyBand,
   };
   state = appendAudit(state, { action: "mark_important", userLabel: meta.userLabel, note: "Added to Important Frequencies" });
 
@@ -177,6 +223,9 @@ export function markImportant(
       satelliteName: meta.satelliteName,
       unitLabel: meta.unitLabel,
       sourceReportId: meta.reportId,
+      beamName: meta.beamName,
+      band: meta.band,
+      polarization: meta.polarization,
       createdAt: new Date().toISOString(),
       notes: `INT ref · ${meta.reportId}`,
     });
@@ -188,11 +237,38 @@ export function markImportant(
   return state;
 }
 
+export function clearImportant(key: string, userLabel: string): FrequencyActionState {
+  let state = getFrequencyState(key);
+  if (!state.flags.important) return state;
+
+  state = {
+    ...state,
+    flags: { ...state.flags, important: false },
+  };
+  state = appendAudit(state, {
+    action: "clear_important",
+    userLabel,
+    note: "Removed from Important Frequencies",
+  });
+
+  const refs = loadJson<ImportantFreqRef[]>(STORAGE_IMPORTANT, []).filter((r) => r.refKey !== key);
+  saveJson(STORAGE_IMPORTANT, refs);
+  setFrequencyState(key, state);
+  emitUpdate();
+  return state;
+}
+
 export function allocateToUnit(
   key: string,
   targetUnitId: string,
   userLabel: string,
-  scannedByUnitId?: string,
+  meta: {
+    scannedByUnitId?: string;
+    satelliteName: string;
+    frequencyId: string;
+    beamName: string;
+    band: string;
+  },
 ): FrequencyActionState {
   const unit = INT_UNITS.find((u) => u.id === targetUnitId);
   let state = getFrequencyState(key);
@@ -201,15 +277,61 @@ export function allocateToUnit(
     flags: { ...state.flags, allocated: true },
     allocatedToUnitId: targetUnitId,
     allocatedToUnitLabel: unit ? `Unit ${unit.code}` : targetUnitId,
-    scannedByUnitId: scannedByUnitId ?? state.scannedByUnitId,
+    scannedByUnitId: meta.scannedByUnitId ?? state.scannedByUnitId,
+    satelliteName: meta.satelliteName,
+    frequencyId: meta.frequencyId,
+    beamName: meta.beamName,
+    frequencyBand: meta.band,
   };
   state = appendAudit(state, {
     action: "allocate_unit",
     userLabel,
     unitId: targetUnitId,
     unitLabel: unit ? `Unit ${unit.code}` : targetUnitId,
+    note: `Beam: ${meta.beamName}`,
   });
   setFrequencyState(key, state);
+
+  const allocs = loadJson<AllocationRecord[]>(STORAGE_ALLOCATIONS, []);
+  allocs.unshift({
+    id: crypto.randomUUID(),
+    refKey: key,
+    frequencyId: meta.frequencyId,
+    satelliteName: meta.satelliteName,
+    beamName: meta.beamName,
+    band: meta.band,
+    fromUnitId: meta.scannedByUnitId ?? "",
+    toUnitId: targetUnitId,
+    toUnitLabel: unit ? `Unit ${unit.code}` : targetUnitId,
+    allocatedAt: new Date().toISOString(),
+    userLabel,
+  });
+  saveJson(STORAGE_ALLOCATIONS, allocs);
+  emitUpdate();
+
+  return state;
+}
+
+export function clearAllocation(key: string, userLabel: string): FrequencyActionState {
+  let state = getFrequencyState(key);
+  if (!state.flags.allocated) return state;
+
+  state = {
+    ...state,
+    flags: { ...state.flags, allocated: false },
+    allocatedToUnitId: undefined,
+    allocatedToUnitLabel: undefined,
+  };
+  state = appendAudit(state, {
+    action: "clear_allocation",
+    userLabel,
+    note: "Unit allocation removed",
+  });
+  setFrequencyState(key, state);
+
+  const allocs = loadJson<AllocationRecord[]>(STORAGE_ALLOCATIONS, []).filter((a) => a.refKey !== key);
+  saveJson(STORAGE_ALLOCATIONS, allocs);
+  emitUpdate();
   return state;
 }
 
@@ -222,10 +344,21 @@ export function discardFrequency(
     section: FrequencySection;
     sourceUnitId?: string;
     reason?: string;
+    beamName?: string;
+    band?: string;
   },
 ): FrequencyActionState {
   let state = getFrequencyState(key);
-  state = { ...state, flags: { ...state.flags, discarded: true } };
+  if (state.flags.discarded) return state;
+
+  state = {
+    ...state,
+    flags: { ...state.flags, discarded: true },
+    satelliteName: meta?.satelliteName ?? state.satelliteName,
+    frequencyId: meta?.frequencyId ?? state.frequencyId,
+    beamName: meta?.beamName ?? state.beamName,
+    frequencyBand: meta?.band ?? state.frequencyBand,
+  };
   const note = meta?.reason ?? "Removed from active analytical consideration";
   state = appendAudit(state, { action: "discard", userLabel, note });
   setFrequencyState(key, state);
@@ -238,6 +371,8 @@ export function discardFrequency(
         refKey: key,
         frequencyId: meta.frequencyId,
         satelliteName: meta.satelliteName,
+        beamName: meta.beamName,
+        band: meta.band,
         classification: meta.section,
         sourceUnitId: meta.sourceUnitId,
         discardedAt: new Date().toISOString(),
@@ -249,6 +384,29 @@ export function discardFrequency(
     }
   }
 
+  return state;
+}
+
+export function restoreFrequency(key: string, userLabel: string): FrequencyActionState {
+  let state = getFrequencyState(key);
+  if (!state.flags.discarded) return state;
+
+  state = {
+    ...state,
+    flags: { ...state.flags, discarded: false },
+  };
+  state = appendAudit(state, {
+    action: "restore_frequency",
+    userLabel,
+    note: "Restored to active INT repository",
+  });
+  setFrequencyState(key, state);
+
+  const refs = purgeExpiredDiscards(loadJson<DiscardedFreqRef[]>(STORAGE_DISCARDED, [])).filter(
+    (r) => r.refKey !== key,
+  );
+  saveJson(STORAGE_DISCARDED, refs);
+  emitUpdate();
   return state;
 }
 
@@ -268,13 +426,25 @@ export function getDiscardedFrequencyRefs(): DiscardedFreqRef[] {
 export function requestTechnicalAnalysis(
   key: string,
   userLabel: string,
-  meta?: { sourceUnitId?: string; frequencyId?: string; satelliteName?: string },
+  meta?: {
+    sourceUnitId?: string;
+    frequencyId?: string;
+    satelliteName?: string;
+    beamName?: string;
+    band?: string;
+  },
 ): FrequencyActionState {
   let state = getFrequencyState(key);
+  if (state.flags.techAnalysis) return state;
+
   state = {
     ...state,
     flags: { ...state.flags, techAnalysis: true },
     scannedByUnitId: meta?.sourceUnitId ?? state.scannedByUnitId,
+    satelliteName: meta?.satelliteName ?? state.satelliteName,
+    frequencyId: meta?.frequencyId ?? state.frequencyId,
+    beamName: meta?.beamName ?? state.beamName,
+    frequencyBand: meta?.band ?? state.frequencyBand,
   };
   state = appendAudit(state, {
     action: "request_tech_analysis",
@@ -289,6 +459,8 @@ export function requestTechnicalAnalysis(
       refKey: key,
       frequencyId: meta?.frequencyId ?? key,
       satelliteName: meta?.satelliteName ?? "",
+      beamName: meta?.beamName,
+      band: meta?.band,
       sourceUnitId: meta?.sourceUnitId,
       requestedAt: new Date().toISOString(),
       status: "ANALYSIS_REQUESTED",
@@ -300,6 +472,34 @@ export function requestTechnicalAnalysis(
 
   setFrequencyState(key, state);
   return state;
+}
+
+export function clearTechnicalAnalysis(key: string, userLabel: string): FrequencyActionState {
+  let state = getFrequencyState(key);
+  if (!state.flags.techAnalysis) return state;
+
+  state = {
+    ...state,
+    flags: { ...state.flags, techAnalysis: false },
+  };
+  state = appendAudit(state, {
+    action: "clear_tech_analysis",
+    userLabel,
+    note: "Technical analysis removed",
+  });
+
+  const queue = loadJson<AnalysisQueueEntry[]>(STORAGE_ANALYSIS_QUEUE, []);
+  const filtered = queue.filter((q) => q.refKey !== key);
+  if (filtered.length !== queue.length) {
+    saveJson(STORAGE_ANALYSIS_QUEUE, filtered);
+  }
+
+  setFrequencyState(key, state);
+  return state;
+}
+
+export function getAllocationRecords(): AllocationRecord[] {
+  return loadJson<AllocationRecord[]>(STORAGE_ALLOCATIONS, []);
 }
 
 export function getAnalysisQueue(): AnalysisQueueEntry[] {
@@ -324,10 +524,18 @@ export function getAuditActionLabel(entry: AuditEntry): string {
       return `Allocated to ${entry.unitLabel ?? "Unit"}`;
     case "mark_important":
       return "Added to Important Frequencies";
+    case "clear_important":
+      return "Removed from Important Frequencies";
     case "request_tech_analysis":
       return "Technical Analysis Requested";
+    case "clear_tech_analysis":
+      return "Technical Analysis Removed";
+    case "clear_allocation":
+      return "Allocation Removed";
     case "discard":
       return "Discarded";
+    case "restore_frequency":
+      return "Restored to Repository";
     case "admin_override":
       return "Admin Override";
     default: {
@@ -361,43 +569,50 @@ export type EligibleUnit = {
   code: string;
   name: string;
   reason: string;
+  matchingBeams: string[];
+  band: string;
 };
 
-/** Units with engagement capacity + visibility for satellite/band */
+/** Units with matrix beam+band visibility + engagement capacity for this frequency. */
 export async function getEligibleAllocationUnits(
   satelliteName: string,
-  scanBand: string,
+  frequencyId: string,
   dbUnits: { id: string; code: string; name: string }[],
   allEngagements: any[],
-  visibilityFetcher: (dbUnitId: string) => Promise<any[]>,
   equipmentFetcher: (dbUnitId: string) => Promise<any[]>,
 ): Promise<EligibleUnit[]> {
   const eligible: EligibleUnit[] = [];
+  const NON_OP = new Set(["Non-Serviceable", "Under Repair", "Partially Serviceable"]);
 
   for (const intelUnit of INT_UNITS) {
     if (!hasIntelData(intelUnit.id)) continue;
+
+    const visibility = evaluateFrequencyAllocationEligibility(satelliteName, intelUnit.id, frequencyId);
+    if (!visibility.eligible) continue;
+
     const db = dbUnits.find((u) => u.code === intelUnit.code);
     const dbId = db?.id;
     if (!dbId) continue;
 
     const unitEng = allEngagements.filter((e: any) => e.unit_id === dbId);
-    const visibilityRows = await visibilityFetcher(dbId);
     const equipment = await equipmentFetcher(dbId);
-    const ctx = buildIntelLinkageContext(intelUnit.id, unitEng, visibilityRows, equipment);
-
-    const hasVisibility = canUnitScanSatellite(satelliteName, intelUnit.id, ctx);
+    const hasOperational = equipment.some((e: any) => e.serviceability === "Operational");
+    const allFaulty = equipment.length > 0 && equipment.every((e: any) => NON_OP.has(e.serviceability));
+    const resourcesServiceable = equipment.length === 0 ? true : hasOperational && !allFaulty;
 
     const activeEngs = unitEng.filter((e: any) => e.status === "In Progress" || e.status === "Paused");
     const allocatedIds = buildAllocatedIds(activeEngs);
     const { pct } = computeBottleneckEngagement(equipment, allocatedIds);
-    const hasCapacity = pct < 100 && ctx.resourcesServiceable;
+    const hasCapacity = pct < 100 && resourcesServiceable;
 
-    if (hasVisibility && hasCapacity) {
+    if (hasCapacity) {
       eligible.push({
         unitId: intelUnit.id,
         code: intelUnit.code,
         name: intelUnit.name,
-        reason: `Capacity ${100 - pct}% · ${scanBand}-band visible`,
+        reason: `${visibility.reason} · Capacity ${100 - pct}%`,
+        matchingBeams: visibility.matchingBeams,
+        band: visibility.band,
       });
     }
   }

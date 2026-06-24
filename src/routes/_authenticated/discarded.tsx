@@ -3,11 +3,25 @@ import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import {
   getDiscardedFrequencyRefs,
+  getFrequencyState,
   INTEL_FREQ_EVENT,
+  restoreFrequency,
   type DiscardedFreqRef,
 } from "@/lib/intelFrequencyActions";
 import { getUnitIntelName } from "@/lib/intelAnalysisData";
-import { Trash2 } from "lucide-react";
+import { useAuth } from "@/lib/auth";
+import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Trash2, RotateCcw } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/discarded")({
   component: DiscardedFrequenciesPage,
@@ -43,7 +57,10 @@ function DiscardedFrequenciesPage() {
 }
 
 export function DiscardedFrequenciesView() {
+  const { user } = useAuth();
+  const userLabel = user?.email ?? "Operator";
   const [tick, setTick] = useState(0);
+  const [restoreTarget, setRestoreTarget] = useState<DiscardedFreqRef | null>(null);
 
   useEffect(() => {
     const h = () => setTick((n) => n + 1);
@@ -55,6 +72,13 @@ export function DiscardedFrequenciesView() {
     void tick;
     return getDiscardedFrequencyRefs();
   }, [tick]);
+
+  function confirmRestore() {
+    if (!restoreTarget) return;
+    restoreFrequency(restoreTarget.refKey, userLabel);
+    toast.success("Frequency restored to INT repository");
+    setRestoreTarget(null);
+  }
 
   return (
     <>
@@ -74,11 +98,11 @@ export function DiscardedFrequenciesView() {
       ) : (
         <div className="rounded-md border border-border overflow-x-hidden">
           <div
-            className="grid [grid-template-columns:minmax(0,1.2fr)_minmax(0,1fr)_5.5rem_minmax(0,0.9fr)_minmax(0,1fr)]
+            className="grid [grid-template-columns:minmax(0,1.1fr)_minmax(0,0.9fr)_minmax(0,0.8fr)_5.5rem_minmax(0,0.75fr)_minmax(0,1fr)_4.5rem]
                         gap-x-2 items-center border-b border-border bg-secondary/50 px-2 py-1.5"
           >
-            {["Frequency ID", "Satellite", "Discarded", "Classification", "Reason"].map((h) => (
-              <div key={h} className="mono text-[9px] uppercase tracking-wider text-muted-foreground font-bold">
+            {["Frequency ID", "Satellite", "Beam / Band", "Discarded", "Classification", "Reason", "Restore"].map((h) => (
+              <div key={h || "actions"} className="mono text-[9px] uppercase tracking-wider text-muted-foreground font-bold">
                 {h}
               </div>
             ))}
@@ -86,11 +110,15 @@ export function DiscardedFrequenciesView() {
           {entries.map((row) => (
             <div
               key={row.id}
-              className="grid [grid-template-columns:minmax(0,1.2fr)_minmax(0,1fr)_5.5rem_minmax(0,0.9fr)_minmax(0,1fr)]
-                          gap-x-2 items-start border-b border-border px-2 py-1.5 hover:bg-secondary/15"
+              className="grid [grid-template-columns:minmax(0,1.1fr)_minmax(0,0.9fr)_minmax(0,0.8fr)_5.5rem_minmax(0,0.75fr)_minmax(0,1fr)_4.5rem]
+                          gap-x-2 items-start border-b border-border px-2 py-1.5"
             >
               <div className="mono text-[11px] font-bold text-foreground break-words">{row.frequencyId}</div>
               <div className="mono text-[11px] text-foreground break-words">{row.satelliteName}</div>
+              <div className="mono text-[10px] text-foreground/85 break-words">
+                {row.beamName ?? getFrequencyState(row.refKey).beamName ?? "—"}
+                {row.band && <span className="text-muted-foreground"> · {row.band}</span>}
+              </div>
               <div className="mono text-[10px] text-muted-foreground tabular-nums">{fmtDate(row.discardedAt)}</div>
               <div className="mono text-[10px] text-foreground">{classificationLabel(row.classification)}</div>
               <div className="mono text-[10px] text-foreground/80 break-words leading-snug">
@@ -101,10 +129,59 @@ export function DiscardedFrequenciesView() {
                   </span>
                 )}
               </div>
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  title="Restore to INT repository"
+                  aria-label={`Restore ${row.frequencyId}`}
+                  onClick={() => setRestoreTarget(row)}
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm border border-primary/30
+                             hover:bg-primary/10 text-primary transition-colors mono text-[9px] font-bold uppercase"
+                >
+                  <RotateCcw className="h-3 w-3 shrink-0" />
+                  Restore
+                </button>
+              </div>
             </div>
           ))}
         </div>
       )}
+
+      <AlertDialog open={!!restoreTarget} onOpenChange={(open) => !open && setRestoreTarget(null)}>
+        <AlertDialogContent className="max-w-sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="mono text-sm uppercase tracking-wide">Confirm Restore</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-1.5 pt-1">
+                <p className="mono text-[11px] text-foreground">
+                  <span className="text-muted-foreground">Action: </span>
+                  Restore to INT Repository
+                </p>
+                <p className="mono text-[11px] text-foreground">
+                  <span className="text-muted-foreground">Frequency ID: </span>
+                  {restoreTarget?.frequencyId}
+                </p>
+                <p className="mono text-[11px] text-foreground">
+                  <span className="text-muted-foreground">Satellite: </span>
+                  {restoreTarget?.satelliteName}
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="mono text-[11px] uppercase tracking-wider">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="mono text-[11px] uppercase tracking-wider"
+              onClick={(e) => {
+                e.preventDefault();
+                confirmRestore();
+              }}
+            >
+              Confirm
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <div className="mt-3 flex items-center gap-1.5 mono text-[9px] text-muted-foreground">
         <Trash2 className="h-3 w-3" />

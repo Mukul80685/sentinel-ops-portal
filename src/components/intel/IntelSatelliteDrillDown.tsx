@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { Link } from "@tanstack/react-router";
 import { ArrowLeft, ExternalLink, Globe, Radar, Satellite, Star, Cog, Trash2, Navigation } from "lucide-react";
 import {
@@ -8,25 +7,36 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { IntRepositoryFrequencyCell } from "@/components/intel/FrequencyStateSymbols";
 import type {
   IntelDrillDownReport,
   NonProductiveFrequency,
   ProductiveFrequency,
 } from "@/lib/intelAnalysisData";
 import { getUnitIntelName } from "@/lib/intelAnalysisData";
+import { evaluateFrequencyAllocationEligibility } from "@/lib/intelIntegrity";
 import {
   allocateToUnit,
+  clearAllocation,
+  clearImportant,
+  clearTechnicalAnalysis,
   discardFrequency,
-  formatAuditShortDate,
   frequencyKey,
-  getAuditActionLabel,
   getEligibleAllocationUnits,
   getFrequencyState,
   INTEL_FREQ_EVENT,
   markImportant,
   requestTechnicalAnalysis,
-  type AuditEntry,
   type FrequencySection,
 } from "@/lib/intelFrequencyActions";
 import { useAuth } from "@/lib/auth";
@@ -47,13 +57,45 @@ type MenuState = {
   freqId: string;
   x: number;
   y: number;
+  techActive: boolean;
+  importantActive: boolean;
+  allocatedActive: boolean;
 };
+
+type PendingAction = {
+  action: string;
+  key: string;
+  frequencyId: string;
+  actionLabel: string;
+};
+
+function resolveFrequencyBeamContext(report: IntelDrillDownReport, frequencyId: string) {
+  const ctx = evaluateFrequencyAllocationEligibility(
+    report.satelliteName,
+    report.unitId,
+    frequencyId,
+  );
+  return { band: ctx.band, beamName: ctx.matchingBeams[0] ?? report.beamsVisibleToUnit[0] ?? "—" };
+}
 
 export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
   const { user } = useAuth();
   const userLabel = user?.email ?? "Operator";
   const [freqTick, setFreqTick] = useState(0);
   const [allocateOpen, setAllocateOpen] = useState<{ key: string; frequency: string } | null>(null);
+  const parentCloseGuardRef = useRef(false);
+  const prevAllocateRef = useRef<typeof allocateOpen>(null);
+
+  useEffect(() => {
+    const wasOpen = prevAllocateRef.current;
+    prevAllocateRef.current = allocateOpen;
+    if (!wasOpen || allocateOpen) return;
+    parentCloseGuardRef.current = true;
+    const t = window.setTimeout(() => {
+      parentCloseGuardRef.current = false;
+    }, 200);
+    return () => window.clearTimeout(t);
+  }, [allocateOpen]);
 
   const { data: allEngagements = [] } = useQuery({
     queryKey: ENGAGEMENTS_ALL_KEY,
@@ -83,7 +125,6 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
     totalBeamsAvailable,
     totalBeamCount,
     beamsVisibleToUnit,
-    scanBand,
     visibilityBlocked,
     visibilityConstraint,
   } = report;
@@ -94,10 +135,17 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
 
   return (
     <>
-      <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <Dialog
+        open={open}
+        onOpenChange={(o) => {
+          if (!o && !allocateOpen && !parentCloseGuardRef.current) onClose();
+        }}
+      >
         <DialogContent
           className="max-w-[98vw] w-full sm:max-w-6xl h-[94vh] max-h-[94vh] overflow-hidden flex flex-col p-0 gap-0
                      sm:rounded-lg border-border shadow-2xl"
+          onPointerDownOutside={preventDialogDismissOnFreqMenu}
+          onInteractOutside={preventDialogDismissOnFreqMenu}
         >
           <div className="shrink-0 border-b border-border bg-card px-3 py-1.5">
             <DialogHeader className="space-y-0 text-left">
@@ -113,6 +161,9 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
                 <Satellite className="h-4 w-4 text-primary" />
                 {report.satelliteName}
               </DialogTitle>
+              <p className="mono text-[10px] text-foreground/75 leading-tight mt-0.5">
+                {visibilityBlocked ? "—" : scanSummary.polarization}
+              </p>
               <p className="mono text-[10px] text-foreground/80">
                 Intelligence Analysis · {getUnitIntelName(report.unitId)}
               </p>
@@ -235,6 +286,7 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
                 section="non_productive"
                 report={report}
                 headers={["Frequency ID", "Level", "Protocol", "Remarks"]}
+                columnWidths={["24%", "11%", "18%", "47%"]}
                 rows={report.nonProductive}
                 renderCells={(f) => [f.level, f.protocolEncountered ?? "—", f.remarks]}
                 freqId={(f) => f.frequencyId}
@@ -253,26 +305,25 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
               />
             </section>
           </div>
+
+          {allocateOpen && (
+            <AllocateUnitDialog
+              open={!!allocateOpen}
+              onClose={() => setAllocateOpen(null)}
+              freqKey={allocateOpen.key}
+              frequency={allocateOpen.frequency}
+              report={report}
+              dbUnits={dbUnits}
+              allEngagements={allEngagements}
+              userLabel={userLabel}
+              onDone={() => {
+                bump();
+                setAllocateOpen(null);
+              }}
+            />
+          )}
         </DialogContent>
       </Dialog>
-
-      {allocateOpen && (
-        <AllocateUnitDialog
-          open={!!allocateOpen}
-          onClose={() => setAllocateOpen(null)}
-          freqKey={allocateOpen.key}
-          frequency={allocateOpen.frequency}
-          report={report}
-          scanBand={scanBand}
-          dbUnits={dbUnits}
-          allEngagements={allEngagements}
-          userLabel={userLabel}
-          onDone={() => {
-            bump();
-            setAllocateOpen(null);
-          }}
-        />
-      )}
     </>
   );
 }
@@ -338,89 +389,60 @@ function BeamPanel({
   );
 }
 
-function FrequencyStateSymbols({ stateKey }: { stateKey: string }) {
-  const state = getFrequencyState(stateKey);
-  const { flags } = state;
-  if (!flags.important && !flags.allocated && !flags.techAnalysis) {
-    return null;
+function preventDialogDismissOnFreqMenu(e: Event) {
+  const t = e.target as HTMLElement | null;
+  if (t?.closest("[data-freq-action-menu]")) {
+    e.preventDefault();
   }
-
-  const icons: { char: string; title: string; entries: AuditEntry[] }[] = [];
-  if (flags.important) {
-    icons.push({
-      char: "⭐",
-      title: "Added to Important Frequencies",
-      entries: state.auditLog.filter((e) => e.action === "mark_important"),
-    });
-  }
-  if (flags.allocated) {
-    const fromOther =
-      state.scannedByUnitId &&
-      state.allocatedToUnitId &&
-      state.scannedByUnitId !== state.allocatedToUnitId;
-    icons.push({
-      char: "📡",
-      title: fromOther
-        ? `${state.allocatedToUnitLabel ?? "Allocated"} (scanned by another unit)`
-        : (state.allocatedToUnitLabel ?? "Allocated to unit"),
-      entries: state.auditLog.filter((e) => e.action === "allocate_unit"),
-    });
-  }
-  if (flags.techAnalysis) {
-    icons.push({
-      char: "⚙️",
-      title: "Technical Analysis Requested",
-      entries: state.auditLog.filter((e) => e.action === "request_tech_analysis"),
-    });
-  }
-
-  return (
-    <span className="inline-flex items-center gap-0.5 shrink-0 ml-1">
-      {icons.map((icon) => (
-        <ActionHistoryPopover key={icon.char} icon={icon.char} title={icon.title} entries={icon.entries} />
-      ))}
-    </span>
-  );
 }
 
-function ActionHistoryPopover({
-  icon,
-  title,
-  entries,
+function ActionConfirmDialog({
+  pending,
+  satelliteName,
+  onConfirm,
+  onCancel,
 }: {
-  icon: string;
-  title: string;
-  entries: AuditEntry[];
+  pending: PendingAction | null;
+  satelliteName: string;
+  onConfirm: () => void;
+  onCancel: () => void;
 }) {
   return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          className="mono text-[13px] leading-none text-primary hover:text-primary/80 cursor-pointer px-0.5"
-          title={title}
-          onClick={(e) => e.stopPropagation()}
-        >
-          {icon}
-        </button>
-      </PopoverTrigger>
-      <PopoverContent className="w-64 p-2" align="start" onClick={(e) => e.stopPropagation()}>
-        <p className="mono text-[9px] font-bold uppercase tracking-wider text-foreground mb-1.5">{title}</p>
-        {entries.length === 0 ? (
-          <p className="mono text-[10px] text-foreground/70">No history recorded.</p>
-        ) : (
-          <ul className="space-y-2">
-            {entries.map((entry) => (
-              <li key={entry.id} className="border-b border-border/50 pb-1.5 last:border-0 last:pb-0">
-                <div className="mono text-[10px] font-semibold text-foreground">{getAuditActionLabel(entry)}</div>
-                <div className="mono text-[10px] text-foreground/80">{formatAuditShortDate(entry.timestamp)}</div>
-                <div className="mono text-[9px] text-foreground/60">By: {entry.userLabel}</div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </PopoverContent>
-    </Popover>
+    <AlertDialog open={!!pending} onOpenChange={(open) => !open && onCancel()}>
+      <AlertDialogContent className="max-w-sm">
+        <AlertDialogHeader>
+          <AlertDialogTitle className="mono text-sm uppercase tracking-wide">Confirm Action</AlertDialogTitle>
+          <AlertDialogDescription asChild>
+            <div className="space-y-1.5 pt-1">
+              <p className="mono text-[11px] text-foreground">
+                <span className="text-muted-foreground">Action: </span>
+                {pending?.actionLabel}
+              </p>
+              <p className="mono text-[11px] text-foreground">
+                <span className="text-muted-foreground">Frequency ID: </span>
+                {pending?.frequencyId}
+              </p>
+              <p className="mono text-[11px] text-foreground">
+                <span className="text-muted-foreground">Satellite: </span>
+                {satelliteName}
+              </p>
+            </div>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel className="mono text-[11px] uppercase tracking-wider">Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            className="mono text-[11px] uppercase tracking-wider"
+            onClick={(e) => {
+              e.preventDefault();
+              onConfirm();
+            }}
+          >
+            Confirm
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
@@ -431,37 +453,52 @@ function FreqActionMenu({
 }: {
   menu: MenuState;
   onClose: () => void;
-  onAction: (action: string) => void;
+  onAction: (action: string, label: string) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    function handleClick(e: MouseEvent) {
+    function handleOutside(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) onClose();
     }
     function handleKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
     }
-    document.addEventListener("mousedown", handleClick);
+    // Use click (not mousedown) so menu button click completes before outside-close runs
+    document.addEventListener("click", handleOutside, true);
     document.addEventListener("keydown", handleKey);
     return () => {
-      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("click", handleOutside, true);
       document.removeEventListener("keydown", handleKey);
     };
   }, [onClose]);
 
   const items = [
-    { id: "important", label: "Add to Important Frequencies", icon: Star },
-    { id: "allocate", label: "Allocate to Unit", icon: Navigation },
-    { id: "tech", label: "Request Detailed Technical Analysis", icon: Cog },
+    {
+      id: "important",
+      label: menu.importantActive ? "Remove from Important Frequencies" : "Add to Important Frequencies",
+      icon: Star,
+    },
+    {
+      id: "allocate",
+      label: menu.allocatedActive ? "Remove Unit Allocation" : "Allocate to Unit",
+      icon: Navigation,
+    },
+    {
+      id: "tech",
+      label: menu.techActive ? "Remove Technical Analysis" : "Request Detailed Technical Analysis",
+      icon: Cog,
+    },
     { id: "discard", label: "Discard", icon: Trash2 },
   ];
 
-  return createPortal(
+  return (
     <div
       ref={ref}
+      data-freq-action-menu
       className="fixed z-[200] min-w-[280px] rounded-md border border-border bg-popover shadow-lg py-1"
       style={{ left: menu.x, top: menu.y }}
+      onPointerDown={(e) => e.stopPropagation()}
     >
       <div className="px-2.5 py-1.5 border-b border-border/50 mono text-[9px] font-bold uppercase tracking-wider text-foreground/80 truncate">
         Frequency Actions
@@ -475,8 +512,11 @@ function FreqActionMenu({
             type="button"
             className="w-full text-left px-2.5 py-2 mono text-[11px] text-foreground hover:bg-primary/10 transition-colors
                        flex items-center gap-2"
-            onClick={() => {
-              onAction(item.id);
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onAction(item.id, item.label);
               onClose();
             }}
           >
@@ -485,8 +525,7 @@ function FreqActionMenu({
           </button>
         );
       })}
-    </div>,
-    document.body,
+    </div>
   );
 }
 
@@ -504,6 +543,7 @@ function FrequencyTable<T extends ProductiveFrequency | NonProductiveFrequency>(
   blockedMessage,
   onAllocate,
   onAction,
+  columnWidths,
 }: {
   title: string;
   section: FrequencySection;
@@ -518,9 +558,10 @@ function FrequencyTable<T extends ProductiveFrequency | NonProductiveFrequency>(
   blockedMessage?: string;
   onAllocate: (key: string, freq: string) => void;
   onAction: () => void;
+  columnWidths?: [string, string, string, string];
 }) {
-  void freqTick;
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [pending, setPending] = useState<PendingAction | null>(null);
   const unitLabel = getUnitIntelName(report.unitId);
 
   const activeRows = rows.filter((row) => {
@@ -529,26 +570,57 @@ function FrequencyTable<T extends ProductiveFrequency | NonProductiveFrequency>(
   });
 
   function openMenu(e: React.MouseEvent, key: string, frequencyId: string) {
+    if (visibilityBlocked) return;
     e.preventDefault();
     e.stopPropagation();
     const x = Math.min(e.clientX, window.innerWidth - 300);
     const y = Math.min(e.clientY, window.innerHeight - 220);
-    setMenu({ key, freqId: frequencyId, x, y });
+    const state = getFrequencyState(key);
+    setMenu({
+      key,
+      freqId: frequencyId,
+      x,
+      y,
+      techActive: state.flags.techAnalysis,
+      importantActive: state.flags.important,
+      allocatedActive: state.flags.allocated,
+    });
+  }
+
+  function queueAction(action: string, actionLabel: string) {
+    if (!menu) return;
+    setPending({ action, key: menu.key, frequencyId: menu.freqId, actionLabel });
+    setMenu(null);
   }
 
   function runAction(key: string, frequencyId: string, action: string) {
+    const beamCtx = resolveFrequencyBeamContext(report, frequencyId);
     if (action === "important") {
-      markImportant(key, {
-        frequency: frequencyId,
-        satelliteName: report.satelliteName,
-        unitLabel,
-        reportId: report.reportId,
-        userLabel,
-        sourceUnitId: report.unitId,
-      });
-      toast.success("Added to Important Frequencies");
+      if (getFrequencyState(key).flags.important) {
+        clearImportant(key, userLabel);
+        toast.success("Removed from Important Frequencies");
+      } else {
+        markImportant(key, {
+          frequency: frequencyId,
+          satelliteName: report.satelliteName,
+          unitLabel,
+          reportId: report.reportId,
+          userLabel,
+          sourceUnitId: report.unitId,
+          beamName: beamCtx.beamName,
+          band: beamCtx.band,
+          polarization: report.scanSummary.polarization,
+        });
+        toast.success("Added to Important Frequencies");
+      }
     } else if (action === "allocate") {
-      onAllocate(key, frequencyId);
+      if (getFrequencyState(key).flags.allocated) {
+        clearAllocation(key, userLabel);
+        toast.success("Allocation removed");
+      } else {
+        onAllocate(key, frequencyId);
+      }
+      onAction();
       return;
     } else if (action === "discard") {
       discardFrequency(key, userLabel, {
@@ -556,18 +628,30 @@ function FrequencyTable<T extends ProductiveFrequency | NonProductiveFrequency>(
         satelliteName: report.satelliteName,
         section,
         sourceUnitId: report.unitId,
+        beamName: beamCtx.beamName,
+        band: beamCtx.band,
       });
       toast.success("Moved to Discard Repository");
     } else if (action === "tech") {
-      requestTechnicalAnalysis(key, userLabel, {
-        sourceUnitId: report.unitId,
-        frequencyId,
-        satelliteName: report.satelliteName,
-      });
-      toast.success("Technical analysis requested");
+      const wasActive = getFrequencyState(key).flags.techAnalysis;
+      if (wasActive) {
+        clearTechnicalAnalysis(key, userLabel);
+        toast.success("Technical analysis removed");
+      } else {
+        requestTechnicalAnalysis(key, userLabel, {
+          sourceUnitId: report.unitId,
+          frequencyId,
+          satelliteName: report.satelliteName,
+          beamName: beamCtx.beamName,
+          band: beamCtx.band,
+        });
+        toast.success("Technical analysis requested");
+      }
     }
     onAction();
   }
+
+  const cols = columnWidths ?? ["22%", "14%", "38%", "26%"];
 
   return (
     <div className="panel overflow-hidden border border-border w-full">
@@ -580,10 +664,10 @@ function FrequencyTable<T extends ProductiveFrequency | NonProductiveFrequency>(
       <div className="overflow-x-auto max-h-[min(32vh,280px)] w-full">
         <table className="w-full table-fixed">
           <colgroup>
-            <col className="w-[22%]" />
-            <col className="w-[14%]" />
-            <col className="w-[38%]" />
-            <col className="w-[26%]" />
+            <col style={{ width: cols[0] }} />
+            <col style={{ width: cols[1] }} />
+            <col style={{ width: cols[2] }} />
+            <col style={{ width: cols[3] }} />
           </colgroup>
           <thead>
             <tr className="border-b border-border bg-secondary/15">
@@ -620,16 +704,18 @@ function FrequencyTable<T extends ProductiveFrequency | NonProductiveFrequency>(
                 return (
                   <tr
                     key={row.id}
-                    className="cursor-pointer hover:bg-primary/8"
+                    className="cursor-pointer select-none"
+                    onMouseDown={(e) => {
+                      if (e.button === 0) e.preventDefault();
+                    }}
                     onClick={(e) => openMenu(e, key, frequencyId)}
                     onContextMenu={(e) => openMenu(e, key, frequencyId)}
                   >
-                    <td className="px-2 py-1.5 mono text-[11px] text-foreground align-top break-words">
-                      <span className="font-bold">{frequencyId}</span>
-                      <FrequencyStateSymbols stateKey={key} />
+                    <td className="px-1.5 py-1.5 mono text-[11px] text-foreground align-top break-words">
+                      <IntRepositoryFrequencyCell stateKey={key} frequencyId={frequencyId} tick={freqTick} />
                     </td>
                     {renderCells(row).map((cell, j) => (
-                      <td key={j} className="px-2 py-1.5 mono text-[11px] text-foreground align-top break-words">
+                      <td key={j} className="px-1.5 py-1.5 mono text-[11px] text-foreground align-top break-words">
                         {cell}
                       </td>
                     ))}
@@ -645,9 +731,19 @@ function FrequencyTable<T extends ProductiveFrequency | NonProductiveFrequency>(
         <FreqActionMenu
           menu={menu}
           onClose={() => setMenu(null)}
-          onAction={(action) => runAction(menu.key, menu.freqId, action)}
+          onAction={(action, label) => queueAction(action, label)}
         />
       )}
+
+      <ActionConfirmDialog
+        pending={pending}
+        satelliteName={report.satelliteName}
+        onConfirm={() => {
+          if (pending) runAction(pending.key, pending.frequencyId, pending.action);
+          setPending(null);
+        }}
+        onCancel={() => setPending(null)}
+      />
     </div>
   );
 }
@@ -726,7 +822,6 @@ function AllocateUnitDialog({
   freqKey,
   frequency,
   report,
-  scanBand,
   dbUnits,
   allEngagements,
   userLabel,
@@ -737,31 +832,25 @@ function AllocateUnitDialog({
   freqKey: string;
   frequency: string;
   report: IntelDrillDownReport;
-  scanBand: string;
   dbUnits: { id: string; code: string; name: string }[];
   allEngagements: any[];
   userLabel: string;
   onDone: () => void;
 }) {
-  const [eligible, setEligible] = useState<{ unitId: string; code: string; name: string; reason: string }[]>([]);
+  const [eligible, setEligible] = useState<
+    { unitId: string; code: string; name: string; reason: string; matchingBeams: string[]; band: string }[]
+  >([]);
   const [loading, setLoading] = useState(true);
+  const freqCtx = resolveFrequencyBeamContext(report, frequency);
 
   useEffect(() => {
     if (!open) return;
     setLoading(true);
     getEligibleAllocationUnits(
       report.satelliteName,
-      scanBand || "KU",
+      frequency,
       dbUnits,
       allEngagements,
-      async (dbUnitId) => {
-        const { data } = await supabase
-          .from("unit_beam_visibility")
-          .select("beam_id, visible, beams:beam_id(band, satellite_id)")
-          .eq("unit_id", dbUnitId)
-          .eq("visible", true);
-        return data ?? [];
-      },
       async (dbUnitId) => {
         const { data } = await supabase
           .from("equipment")
@@ -773,22 +862,27 @@ function AllocateUnitDialog({
       setEligible(u);
       setLoading(false);
     });
-  }, [open, report.satelliteName, scanBand, dbUnits, allEngagements]);
+  }, [open, report.satelliteName, frequency, dbUnits, allEngagements]);
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle className="mono text-sm uppercase">Allocate To Another Unit</DialogTitle>
+          <DialogTitle className="mono text-sm uppercase">Allocate To Unit</DialogTitle>
         </DialogHeader>
-        <p className="mono text-[11px] text-foreground mb-2">{frequency}</p>
+        <p className="mono text-[11px] text-foreground mb-1">{frequency}</p>
         <p className="mono text-[9px] text-foreground/70 mb-2">
-          Units must have beam visibility and available engagement capacity.
+          {freqCtx.band}-band · beam context: {freqCtx.beamName}
+        </p>
+        <p className="mono text-[9px] text-foreground/70 mb-2">
+          Only units with satellite visibility, matching {freqCtx.band}-band beam access, and engagement capacity are listed.
         </p>
         {loading ? (
-          <p className="mono text-[11px]">Loading eligible units…</p>
+          <p className="mono text-[11px]">Evaluating eligible units…</p>
         ) : eligible.length === 0 ? (
-          <p className="mono text-[11px] text-amber-700">No eligible units meet visibility and capacity criteria.</p>
+          <p className="mono text-[11px] text-amber-700">
+            No units meet all visibility, beam, band, and capacity criteria for this frequency.
+          </p>
         ) : (
           <ul className="space-y-1 max-h-48 overflow-y-auto">
             {eligible.map((u) => (
@@ -797,7 +891,13 @@ function AllocateUnitDialog({
                   type="button"
                   className="w-full text-left px-2 py-1.5 rounded-sm border border-border hover:border-primary/40 hover:bg-primary/5"
                   onClick={() => {
-                    allocateToUnit(freqKey, u.unitId, userLabel, report.unitId);
+                    allocateToUnit(freqKey, u.unitId, userLabel, {
+                      scannedByUnitId: report.unitId,
+                      satelliteName: report.satelliteName,
+                      frequencyId: frequency,
+                      beamName: u.matchingBeams[0] ?? freqCtx.beamName,
+                      band: u.band,
+                    });
                     toast.success(`Allocated to Unit ${u.code}`);
                     onDone();
                   }}
