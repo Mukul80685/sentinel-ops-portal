@@ -117,13 +117,14 @@ function EquipmentDetail() {
     window.open(url, "_blank");
   }
 
-  if (!form) return <AppShell title="Equipment" subtitle="Loading" showBack horizontalNav={<InventoryModuleNav />}><div className="text-muted-foreground">Loading…</div></AppShell>;
+  if (!form) return <AppShell title="Equipment" subtitle="Loading" showBack sidebarVariant="secondary" horizontalNav={<InventoryModuleNav />}><div className="text-muted-foreground">Loading…</div></AppShell>;
 
   return (
     <AppShell
       title={form.name}
       subtitle="Equipment Record"
       showBack
+      sidebarVariant="secondary"
       horizontalNav={<InventoryModuleNav />}
       actions={
         canEdit ? (

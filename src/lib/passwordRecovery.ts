@@ -37,8 +37,8 @@ export const MOCK_AUTH_EVENT = "ssacc-mock-auth";
 
 const NOTIFICATION_DAYS = 15;
 
-/** Seed demo operators — extend or replace via backend sync */
-export const DEMO_RECOVERY_USERS: RecoveryUserProfile[] = [
+/** Seed demo operators — internal only; never surface in recovery UI */
+const DEMO_RECOVERY_USERS: RecoveryUserProfile[] = [
   {
     userId: "SSACC@ENTITYA",
     serviceNumber: "IC80685A",
@@ -112,16 +112,34 @@ export function registerRecoveryProfile(
   saveJson(STORAGE_PROFILES, profiles);
 }
 
-/** Register a default recovery profile when a new account is created */
-export function registerRecoveryProfileForSignup(username: string, fullName: string): void {
-  const suffix = username.trim().split("@")[0]?.slice(0, 6).toUpperCase() || "ENTITYX";
-  const svcSuffix = suffix.replace(/[^A-Z0-9]/g, "").slice(0, 1) || "X";
+/** Whether profile has a configured security challenge (question + answer). */
+export function profileHasSecurityChallenge(profile: RecoveryUserProfile): boolean {
+  return (
+    profile.securityQuestion.trim().length > 0 && profile.securityAnswer.trim().length > 0
+  );
+}
+
+/** Recovery flow includes security step only when a valid challenge is stored. */
+export function recoveryRequiresSecurityStep(profile: RecoveryUserProfile): boolean {
+  return profileHasSecurityChallenge(profile);
+}
+
+/** Register recovery profile when a new account is created */
+export function registerRecoveryProfileForSignup(
+  username: string,
+  recovery: {
+    userId: string;
+    serviceNumber: string;
+    securityQuestion: string;
+    securityAnswer: string;
+  },
+): void {
   registerRecoveryProfile(
-    `SSACC@${suffix}`,
-    `IC80685${svcSuffix}`,
+    recovery.userId,
+    recovery.serviceNumber,
     username,
-    "What was your first posting location?",
-    fullName.trim().split(/\s+/)[0]?.toLowerCase() || "ssacc",
+    recovery.securityQuestion,
+    recovery.securityAnswer,
   );
 }
 
@@ -143,7 +161,7 @@ export function lookupRecoveryUser(userId: string): RecoveryUserProfile | null {
 
 export function verifySecurityAnswer(userId: string, answer: string): boolean {
   const user = lookupRecoveryUser(userId);
-  if (!user) return false;
+  if (!user || !profileHasSecurityChallenge(user)) return false;
   return user.securityAnswer === normalizeAnswer(answer);
 }
 

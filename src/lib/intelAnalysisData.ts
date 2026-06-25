@@ -1,6 +1,10 @@
 /**
  * INT Repository — hierarchical analysis data, fake datasets, and cross-module linkage.
  */
+import {
+  isIntGenerationComplete,
+  isIntGenerationInProgress,
+} from "@/lib/operationalSync";
 import { computeSatelliteAnalysis } from "@/lib/engagementEngine";
 import {
   canUnitScanSatellite,
@@ -303,13 +307,14 @@ export function buildIntelLinkageContext(
   engagements: any[],
   visibilityRows: any[],
   equipmentRows: any[],
+  intelRows: any[] = [],
 ): IntelLinkageContext {
   const engagementBySatName = new Map<string, EngagementScanLink>();
 
   for (const eng of engagements) {
     const name = eng.satellites?.name as string | undefined;
     if (!name) continue;
-    const analysis = computeSatelliteAnalysis(eng, []);
+    const analysis = computeSatelliteAnalysis(eng, intelRows);
     engagementBySatName.set(name, {
       status: eng.status as string,
       id: eng.id as string,
@@ -393,15 +398,27 @@ function buildScanCounts(
   const eng = ctx.engagementBySatName.get(satName);
 
   if (eng && ctx.resourcesServiceable) {
+    const complete = isIntGenerationComplete(eng.scanned, eng.analyzed, eng.pending);
+    const inProgress = isIntGenerationInProgress(
+      eng.scanned,
+      eng.analyzed,
+      eng.pending,
+      eng.status,
+    );
     return {
       totalScanned: eng.scanned,
       analyzed: eng.analyzed,
       pending: eng.pending,
-      processingStatus:
-        eng.status === "In Progress" ? "Active Scanning"
-        : eng.status === "Paused" ? "Scan Paused"
-        : "Queued",
-      engagementStatus: eng.status,
+      processingStatus: complete
+        ? "Analysis Complete"
+        : eng.status === "In Progress"
+          ? "Active Scanning"
+          : eng.status === "Paused"
+            ? "Scan Paused"
+            : inProgress
+              ? "Processing"
+              : "Queued",
+      engagementStatus: complete ? null : eng.status,
     };
   }
 
@@ -438,9 +455,20 @@ export function buildIntelSatelliteTable(
   const roster = UNIT_SATELLITE_ROSTER[unitId];
   if (!roster) return [];
 
+  const rosterSet = new Set(roster.map((s) => s.toLowerCase()));
+  const extraFromEngagements: string[] = [];
+  for (const eng of engagements) {
+    const name = eng.satellites?.name as string | undefined;
+    if (!name || rosterSet.has(name.toLowerCase())) continue;
+    if (canUnitScanSatellite(name, unitId, ctx)) {
+      extraFromEngagements.push(name);
+    }
+  }
+
+  const allSatellites = [...roster, ...extraFromEngagements];
   const now = INTEL_MOCK_EPOCH_MS;
 
-  return roster.map((satName, idx) => {
+  return allSatellites.map((satName, idx) => {
     const eligible = canUnitScanSatellite(satName, unitId, ctx);
     const counts = buildScanCounts(unitId, satName, ctx);
 

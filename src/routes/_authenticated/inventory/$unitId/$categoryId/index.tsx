@@ -69,6 +69,7 @@ function EquipmentList() {
     <AppShell
       title={headerTitle}
       showBack
+      sidebarVariant="secondary"
       horizontalNav={<InventoryModuleNav />}
       actions={
         canEdit ? (

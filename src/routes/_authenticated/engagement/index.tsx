@@ -6,14 +6,19 @@ import { listUnits } from "@/lib/queries";
 import { supabase } from "@/integrations/supabase/client";
 import {
   buildAllocatedIds,
-  buildUnitScanSnapshot,
   computeBottleneckEngagement,
-  countFleetActiveScans,
   ENGAGEMENTS_ALL_KEY,
   engColor,
   fetchAllEngagements,
 } from "@/lib/engagementEngine";
 import { INT_UNITS } from "@/lib/intelRepository";
+import { hasIntelData } from "@/lib/intelAnalysisData";
+import {
+  buildSyncedUnitScanSnapshot,
+  formatLiveEngagementSatelliteLabel,
+  resolveIntUnitSlug,
+  validateOperationalSync,
+} from "@/lib/operationalSync";
 import { ChevronRight } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/engagement/")({
@@ -42,6 +47,37 @@ export function EngagementDashboardView() {
     staleTime: 30 * 1000,
   });
 
+  const intelDbUnitIds = useMemo(
+    () =>
+      INT_UNITS.filter((u) => hasIntelData(u.id))
+        .map(
+          (u) =>
+            units.find(
+              (d) => d.code === u.code || d.code?.replace(/^GATE[-\s]?/i, "") === u.code,
+            )?.id,
+        )
+        .filter(Boolean) as string[],
+    [units],
+  );
+
+  const { data: intelRows = [] } = useQuery({
+    queryKey: ["intel-records-all", intelDbUnitIds],
+    queryFn: async () => {
+      if (intelDbUnitIds.length === 0) return [];
+      const { data } = await supabase
+        .from("intel_records")
+        .select("id, unit_id, satellite_id, band, analysis_report, summary, updated_at, observation_date");
+      return (data ?? []).filter((r) => intelDbUnitIds.includes(r.unit_id));
+    },
+    enabled: intelDbUnitIds.length > 0,
+    staleTime: 30_000,
+  });
+
+  const syncIssues = useMemo(
+    () => validateOperationalSync({ engagements, dbUnits: units, intelRows }),
+    [engagements, units, intelRows],
+  );
+
   const rows = useMemo(() => {
     return units.map((u) => {
       const unitEq = equipment.filter((e: any) => e.unit_id === u.id);
@@ -50,20 +86,47 @@ export function EngagementDashboardView() {
       );
       const allocatedIds = buildAllocatedIds(activeEngs);
       const { pct } = computeBottleneckEngagement(unitEq, allocatedIds);
-      const scan = buildUnitScanSnapshot(engagements, u.id);
+      const intSlug = resolveIntUnitSlug(u.id, u.code);
+      const scan = buildSyncedUnitScanSnapshot(engagements, u.id, intSlug, intelRows);
+      const satDisplay = formatLiveEngagementSatelliteLabel(scan.satellites, 2);
 
-      return { unit: u, pct, scan };
+      return { unit: u, pct, scan, satDisplay };
     });
-  }, [units, equipment, engagements]);
+  }, [units, equipment, engagements, intelRows]);
+
+  const totalActive = useMemo(
+    () => rows.reduce((sum, r) => sum + r.scan.activeCount, 0),
+    [rows],
+  );
 
   if (units.length === 0) {
     return <Empty title="No units registered" />;
   }
 
-  const totalActive = countFleetActiveScans(engagements);
-
   return (
     <>
+      {syncIssues.length > 0 && (
+        <div
+          className="panel mb-3 px-3 py-2 border-amber-500/40 bg-amber-500/8"
+          role="status"
+        >
+          <p className="mono text-[9px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+            Operational Sync Validation — {syncIssues.length} issue{syncIssues.length !== 1 ? "s" : ""}
+          </p>
+          <ul className="mt-1 space-y-0.5 max-h-24 overflow-y-auto">
+            {syncIssues.slice(0, 5).map((issue, i) => (
+              <li key={`${issue.code}-${i}`} className="mono text-[9px] text-foreground/85 leading-snug">
+                [{issue.code}] {issue.message}
+                {issue.satelliteName ? ` (${issue.satelliteName})` : ""}
+              </li>
+            ))}
+            {syncIssues.length > 5 && (
+              <li className="mono text-[8px] text-muted-foreground">+{syncIssues.length - 5} more</li>
+            )}
+          </ul>
+        </div>
+      )}
+
       <div className="panel mb-3 px-3 py-2 flex items-center gap-4 flex-wrap">
         <FleetStat label="Units" value={units.length} />
         <div className="h-4 w-px bg-border hidden sm:block" />
@@ -71,7 +134,7 @@ export function EngagementDashboardView() {
       </div>
 
       <div className="grid gap-3 grid-cols-2 sm:grid-cols-4">
-        {rows.map(({ unit, pct, scan }) => (
+        {rows.map(({ unit, pct, scan, satDisplay }) => (
           <div key={unit.id} className="panel flex flex-col overflow-hidden">
             <div className="flex flex-col items-center gap-2 px-3 pt-3 pb-2">
               <div className="text-center w-full">
@@ -91,18 +154,19 @@ export function EngagementDashboardView() {
                     No active scans
                   </div>
                 ) : (
-                  <ul className="space-y-1">
-                    {scan.satellites.slice(0, 4).map((sat) => (
-                      <li key={sat.engagementId} className="mono text-[8px] text-foreground truncate text-center">
-                        {sat.name}
-                      </li>
-                    ))}
-                    {scan.satellites.length > 4 && (
-                      <li className="mono text-[7px] text-foreground/80 text-center">
-                        +{scan.satellites.length - 4} more
-                      </li>
+                  <div className="text-center">
+                    <p
+                      className="mono text-[8px] text-foreground leading-snug truncate px-0.5"
+                      title={scan.satellites.map((s) => s.name).join(", ")}
+                    >
+                      {satDisplay.label}
+                    </p>
+                    {satDisplay.total > 0 && (
+                      <p className="mono text-[7px] text-foreground/70 mt-0.5">
+                        {satDisplay.total} active satellite{satDisplay.total !== 1 ? "s" : ""}
+                      </p>
                     )}
-                  </ul>
+                  </div>
                 )}
               </div>
             </div>

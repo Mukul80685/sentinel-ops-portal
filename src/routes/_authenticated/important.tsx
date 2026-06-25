@@ -44,6 +44,7 @@ import {
   ChevronUp,
   ChevronsUpDown,
   Download,
+  FileText,
   Filter,
   Plus,
   Radio,
@@ -211,6 +212,23 @@ function resolveRowPolarization(row: FreqRow, satName: string): string {
   return VISIBILITY_SATELLITE_PROFILES[satName]?.defaultPolarization ?? "—";
 }
 
+/** MHz value only — strips INT drill-down polarization prefix from stored frequency IDs. */
+function displayFrequencyMhz(stored: string): string {
+  const v = stored.trim();
+  const prefixed = v.match(/^(?:[A-Z0-9]+(?:-[A-Z0-9]+)*)-([\d.]+\s*MHz(?:\s*\([^)]*\))?)$/i);
+  if (prefixed) return prefixed[1].trim();
+  const suffixed = v.match(/^([\d.]+\s*MHz)\s*\([A-Z0-9-]+\)$/i);
+  if (suffixed) return suffixed[1].trim();
+  return v;
+}
+
+const TOOLBAR_ICON_BTN =
+  "h-9 w-9 grid place-items-center rounded-sm border transition-colors shrink-0";
+const TOOLBAR_ICON_BTN_IDLE =
+  `${TOOLBAR_ICON_BTN} border-border hover:bg-secondary text-muted-foreground hover:text-foreground`;
+const TOOLBAR_ICON_BTN_ACTIVE =
+  `${TOOLBAR_ICON_BTN} border-primary/50 bg-primary/10 text-primary`;
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export function ImportantFrequenciesView() {
@@ -376,6 +394,13 @@ export function ImportantFrequenciesView() {
     setAdvancedOpen(false);
   }
 
+  function downloadPublicExcelTemplate() {
+    const ws = XLSX.utils.aoa_to_sheet([TABLE_HEADERS as unknown as string[]]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Important Frequencies");
+    XLSX.writeFile(wb, "important-frequencies-template.xlsx");
+  }
+
   async function clearAllEntries() {
     const { error } = await supabase.from("important_frequencies").delete().neq("id", "00000000-0000-0000-0000-000000000000");
     if (error) { toast.error(error.message); return; }
@@ -438,36 +463,53 @@ export function ImportantFrequenciesView() {
             />
           </div>
 
-          <button
-            type="button"
-            onClick={() => setFilterOpen((v) => !v)}
-            className={`h-9 px-3 inline-flex items-center gap-1.5 rounded-sm border mono text-[11px] uppercase tracking-wider transition-colors shrink-0
-                        ${filterOpen ? "border-primary/50 bg-primary/10 text-primary" : "border-border hover:bg-secondary text-muted-foreground hover:text-foreground"}`}
-          >
-            <Filter className="h-3.5 w-3.5" /> Filter
-          </button>
-
-          <button
-            type="button"
-            onClick={() => exportRows(effectiveRows, "all")}
-            className="h-9 px-3 inline-flex items-center gap-1.5 rounded-sm border border-border mono text-[11px] uppercase tracking-wider hover:bg-secondary transition-colors shrink-0"
-          >
-            <Download className="h-3.5 w-3.5" /> Export All
-          </button>
-          {isFiltered && (
+          <div className="flex items-center gap-0.5 shrink-0">
+            {canEdit && (
+              <ImportFrequencyButton
+                iconOnly
+                sats={sats}
+                onImported={() => qc.invalidateQueries({ queryKey: ["important"] })}
+              />
+            )}
             <button
               type="button"
-              onClick={() => exportRows(sorted, "filtered")}
-              className="h-9 px-3 inline-flex items-center gap-1.5 rounded-sm border border-primary/40 mono text-[11px] uppercase tracking-wider text-primary hover:bg-primary/10 transition-colors shrink-0"
+              onClick={() => exportRows(effectiveRows, "all")}
+              title="Export all frequencies"
+              className={TOOLBAR_ICON_BTN_IDLE}
             >
-              <Download className="h-3.5 w-3.5" /> Export Filtered ({sorted.length})
+              <Upload className="h-3.5 w-3.5" />
             </button>
-          )}
+            {isFiltered && (
+              <button
+                type="button"
+                onClick={() => exportRows(sorted, "filtered")}
+                title={`Export filtered results (${sorted.length})`}
+                className={`${TOOLBAR_ICON_BTN} border-primary/40 text-primary hover:bg-primary/10`}
+              >
+                <Upload className="h-3 w-3" />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={downloadPublicExcelTemplate}
+              title="Public Excel file (import template)"
+              className={TOOLBAR_ICON_BTN_IDLE}
+            >
+              <FileText className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilterOpen((v) => !v)}
+              title="Filter frequencies"
+              className={filterOpen ? TOOLBAR_ICON_BTN_ACTIVE : TOOLBAR_ICON_BTN_IDLE}
+            >
+              <Filter className="h-3.5 w-3.5" />
+            </button>
+          </div>
         </div>
 
         {canEdit && (
           <div className="flex items-center gap-2 shrink-0 ml-auto">
-            <ImportFrequencyButton sats={sats} onImported={() => qc.invalidateQueries({ queryKey: ["important"] })} />
             <Button
               size="sm"
               className="h-9 px-5 mono text-[11px] uppercase tracking-wider font-bold shadow-md
@@ -552,7 +594,7 @@ export function ImportantFrequenciesView() {
               onClick={() => exportRows(sorted.filter((r) => selectedIds.has(r.id)), "selected")}
               className="inline-flex items-center gap-1 text-primary hover:text-primary/80 transition-colors"
             >
-              <Download className="h-3 w-3" /> Export Selected
+              <Upload className="h-3 w-3" /> Export Selected
             </button>
             <span className="text-muted-foreground/40">·</span>
             <button type="button" onClick={() => setSelectedIds(new Set(visibleIds))}
@@ -629,7 +671,7 @@ export function ImportantFrequenciesView() {
                   </div>
                   <div className="flex items-center gap-1 min-w-0">
                     <Radio className="h-3 w-3 text-primary shrink-0" />
-                    <span className="mono text-[11px] font-bold text-foreground">{row.frequency}</span>
+                    <span className="mono text-[11px] font-bold text-foreground">{displayFrequencyMhz(row.frequency)}</span>
                   </div>
                   <div className="mono text-[11px] text-foreground">{row.band || "—"}</div>
                   <div className="mono text-[10px] text-muted-foreground tabular-nums whitespace-nowrap">{fmtDateCompact(row.created_at)}</div>
@@ -679,7 +721,7 @@ export function ImportantFrequenciesView() {
                             {/* Header */}
                             <div className="label-eyebrow flex items-center gap-1.5">
                               <Radio className="h-2.5 w-2.5" />
-                              Frequency: <span className="text-foreground font-bold">{row.frequency}</span>
+                              Frequency: <span className="text-foreground font-bold">{displayFrequencyMhz(row.frequency)}</span>
                               {satName !== "—" && (
                                 <span className="text-muted-foreground/60">— {satName}</span>
                               )}
@@ -1102,23 +1144,36 @@ async function readSpreadsheetRows(file: File): Promise<string[][]> {
 function ImportFrequencyButton({
   sats,
   onImported,
+  iconOnly,
 }: {
   sats: any[];
   onImported: () => void;
+  iconOnly?: boolean;
 }) {
   return (
     <ImportFrequencyFileInput
       sats={sats}
       onImported={onImported}
+      iconOnly={iconOnly}
       trigger={
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-9 mono text-[11px] uppercase tracking-wider border-primary/40 hover:bg-primary/10"
-        >
-          <Upload className="h-3.5 w-3.5 mr-1" /> Import CSV / Excel
-        </Button>
+        iconOnly ? (
+          <button
+            type="button"
+            title="Import CSV / Excel"
+            className={`${TOOLBAR_ICON_BTN_IDLE} border-primary/40 hover:bg-primary/10`}
+          >
+            <Download className="h-3.5 w-3.5" />
+          </button>
+        ) : (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-9 mono text-[11px] uppercase tracking-wider border-primary/40 hover:bg-primary/10"
+          >
+            <Download className="h-3.5 w-3.5 mr-1" /> Import CSV / Excel
+          </Button>
+        )
       }
     />
   );
@@ -1128,11 +1183,13 @@ function ImportFrequencyFileInput({
   sats,
   onImported,
   compact,
+  iconOnly,
   trigger,
 }: {
   sats: any[];
   onImported: () => void;
   compact?: boolean;
+  iconOnly?: boolean;
   trigger?: React.ReactNode;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -1248,9 +1305,10 @@ function ImportFrequencyFileInput({
           className={`w-full mono text-[10px] uppercase tracking-wider ${compact ? "h-8" : "h-9"}`}
           disabled={busy}
           onClick={() => fileRef.current?.click()}
+          title="Import CSV / Excel"
         >
-          <Upload className="h-3.5 w-3.5 mr-1" />
-          {busy ? "Importing…" : "Browse File"}
+          <Download className={iconOnly ? "h-3.5 w-3.5" : "h-3.5 w-3.5 mr-1"} />
+          {!iconOnly && (busy ? "Importing…" : "Browse File")}
         </Button>
       )}
     </>

@@ -12,7 +12,8 @@ import {
   Clock,
   Trash2,
 } from "lucide-react";
-import { useAuth, useIsAdmin } from "@/lib/auth";
+import { performSignOut, useAuth, useIsAdmin } from "@/lib/auth";
+import { TIMEZONES, type IanaTimezone } from "@/lib/appTimezones";
 import { PasswordResetNotice } from "@/components/auth/PasswordResetNotice";
 import { Button } from "@/components/ui/button";
 import {
@@ -49,35 +50,6 @@ const standardNavItems = [
   { key: "discarded",  label: "Discarded Frequencies", icon: Trash2, adminTo: "/discarded",       userTo: "/discarded" },
   { key: "minutes",    label: "Recent Discussions",  icon: Clock,     adminTo: "/minutes",           userTo: "/minutes" },
 ] as const;
-
-// ─── Timezone registry (IANA) ─────────────────────────────────────────────────
-
-export const TIMEZONES = [
-  { group: "India",          label: "Indian Standard Time (IST) — New Delhi / Kolkata", iana: "Asia/Kolkata" },
-  { group: "China",          label: "China Standard Time (CST)",                         iana: "Asia/Shanghai" },
-  { group: "Pakistan",       label: "Pakistan Standard Time (PKT)",                      iana: "Asia/Karachi" },
-  { group: "Bangladesh",     label: "Bangladesh Standard Time (BST)",                    iana: "Asia/Dhaka" },
-  { group: "Russia",         label: "Moscow Time",                                       iana: "Europe/Moscow" },
-  { group: "Russia",         label: "Vladivostok Time",                                  iana: "Asia/Vladivostok" },
-  { group: "Russia",         label: "Yekaterinburg Time",                                iana: "Asia/Yekaterinburg" },
-  { group: "Europe",         label: "Greenwich Mean Time (GMT / UK)",                    iana: "Europe/London" },
-  { group: "Europe",         label: "Central European Time (CET)",                       iana: "Europe/Paris" },
-  { group: "Europe",         label: "Eastern European Time (EET)",                       iana: "Europe/Helsinki" },
-  { group: "Middle East",    label: "Gulf Standard Time (GST)",                          iana: "Asia/Dubai" },
-  { group: "Middle East",    label: "Arabia Standard Time (AST)",                        iana: "Asia/Riyadh" },
-  { group: "Turkey",         label: "Turkey Time (TRT)",                                 iana: "Europe/Istanbul" },
-  { group: "Southeast Asia", label: "Thailand Time (THA)",                               iana: "Asia/Bangkok" },
-  { group: "Southeast Asia", label: "Vietnam Time (ICT)",                                iana: "Asia/Ho_Chi_Minh" },
-  { group: "Southeast Asia", label: "Singapore Time (SGT)",                              iana: "Asia/Singapore" },
-  { group: "Southeast Asia", label: "Malaysia Time (MYT)",                               iana: "Asia/Kuala_Lumpur" },
-  { group: "Southeast Asia", label: "Philippines Time (PHT)",                            iana: "Asia/Manila" },
-  { group: "USA",            label: "Eastern Time (ET)",                                 iana: "America/New_York" },
-  { group: "USA",            label: "Central Time (CT)",                                 iana: "America/Chicago" },
-  { group: "USA",            label: "Mountain Time (MT)",                                iana: "America/Denver" },
-  { group: "USA",            label: "Pacific Time (PT)",                                 iana: "America/Los_Angeles" },
-] as const;
-
-export type IanaTimezone = typeof TIMEZONES[number]["iana"];
 
 // ─── Live clocks ───────────────────────────────────────────────────────────────
 
@@ -373,7 +345,6 @@ function PrimaryNavSidebar({
   mode,
   setMode,
   isAdmin,
-  signOut,
   pathname,
   stamp,
   onClockClick,
@@ -381,7 +352,6 @@ function PrimaryNavSidebar({
   mode: "admin" | "user";
   setMode: (fn: (m: "admin" | "user") => "admin" | "user") => void;
   isAdmin: boolean;
-  signOut: () => Promise<void>;
   pathname: string;
   stamp: TzStamp;
   onClockClick: () => void;
@@ -434,7 +404,7 @@ function PrimaryNavSidebar({
           <Settings className="h-3 w-3 shrink-0" />
           Settings
         </Link>
-        <button type="button" onClick={() => signOut()} className={secondaryCtrlCls}>
+        <button type="button" onClick={() => void performSignOut()} className={secondaryCtrlCls}>
           <Power className="h-3 w-3 shrink-0" />
           Sign Out
         </button>
@@ -451,7 +421,6 @@ function SecondarySidebar({
   mode,
   setMode,
   isAdmin,
-  signOut,
   pathname,
   resolveSecondaryTo,
   stamp,
@@ -460,14 +429,13 @@ function SecondarySidebar({
   mode: "admin" | "user";
   setMode: (fn: (m: "admin" | "user") => "admin" | "user") => void;
   isAdmin: boolean;
-  signOut: () => Promise<void>;
   pathname: string;
   resolveSecondaryTo: (item: (typeof standardNavItems)[number]) => string;
   stamp: TzStamp;
   onClockClick: () => void;
 }) {
   return (
-    <>
+    <div className="flex flex-col h-full">
       {/* TOP — User toggle + 4 nav items, evenly distributed vertically */}
       <nav className="flex-1 flex flex-col justify-between px-1.5 py-3">
         <button
@@ -518,12 +486,12 @@ function SecondarySidebar({
       {/* BOTTOM — Clock (live) + Sign Out */}
       <div className="border-t border-border px-2 py-1.5 space-y-0.5">
         <SidebarClock stamp={stamp} onClockClick={onClockClick} muted />
-        <button type="button" onClick={() => signOut()} className={secondaryCtrlCls}>
+        <button type="button" onClick={() => void performSignOut()} className={secondaryCtrlCls}>
           <Power className="h-3 w-3 shrink-0" />
           Sign Out
         </button>
       </div>
-    </>
+    </div>
   );
 }
 
@@ -559,7 +527,7 @@ export function AppShell({
   actions?: ReactNode;
   children: ReactNode;
 }) {
-  const { signOut, user } = useAuth();
+  const { user } = useAuth();
   const isAdmin = useIsAdmin();
   const router = useRouter();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -586,7 +554,6 @@ export function AppShell({
             mode={mode}
             setMode={setMode}
             isAdmin={isAdmin}
-            signOut={signOut}
             pathname={pathname}
             resolveSecondaryTo={resolveSecondaryTo}
             stamp={tzStamp}
@@ -597,7 +564,6 @@ export function AppShell({
             mode={mode}
             setMode={setMode}
             isAdmin={isAdmin}
-            signOut={signOut}
             pathname={pathname}
             stamp={tzStamp}
             onClockClick={() => setDtOpen(true)}

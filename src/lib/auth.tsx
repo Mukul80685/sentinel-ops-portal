@@ -7,6 +7,9 @@ import {
   MOCK_AUTH_EVENT,
   type MockSession,
 } from "@/lib/passwordRecovery";
+import { performSignOut } from "@/lib/signOutSession";
+
+export { performSignOut };
 
 export type AppRole = "admin" | "operator" | "viewer";
 
@@ -56,14 +59,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const onMockAuth = () => refreshMockSession();
     window.addEventListener(MOCK_AUTH_EVENT, onMockAuth);
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_evt, s) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
       setSession(s);
       if (s?.user) {
-        clearMockSession();
-        setMockSession(null);
+        // Only drop mock session on explicit Supabase sign-in — not on INITIAL_SESSION
+        // with a stale token, which would silently revoke recovery-override access.
+        if (event === "SIGNED_IN") {
+          clearMockSession();
+          setMockSession(null);
+        }
         setTimeout(() => loadRoles(s.user.id), 0);
       } else if (!getMockSession()) {
         setRoles([]);
+      } else {
+        setRoles(["operator"]);
       }
     });
     supabase.auth.getSession().then(({ data }) => {
@@ -97,9 +106,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         roles,
         loading,
         signOut: async () => {
-          clearMockSession();
           setMockSession(null);
-          await supabase.auth.signOut();
+          setSession(null);
+          setRoles([]);
+          await performSignOut();
         },
       }}
     >

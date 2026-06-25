@@ -110,9 +110,22 @@ function IntelUnitView() {
     staleTime: 30_000,
   });
 
+  const { data: intelRows = [] } = useQuery({
+    queryKey: ["intel-eng", dbUnitId],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("intel_records")
+        .select("id, unit_id, satellite_id, band, analysis_report, summary, updated_at, observation_date, remarks")
+        .eq("unit_id", dbUnitId);
+      return data ?? [];
+    },
+    enabled: dataAvailable && !!dbUnitId,
+    staleTime: 30_000,
+  });
+
   const linkageCtx = useMemo(
-    () => buildIntelLinkageContext(resolvedUnitId, unitEngagements, visibilityRows, equipment),
-    [resolvedUnitId, unitEngagements, visibilityRows, equipment],
+    () => buildIntelLinkageContext(resolvedUnitId, unitEngagements, visibilityRows, equipment, intelRows),
+    [resolvedUnitId, unitEngagements, visibilityRows, equipment, intelRows],
   );
 
   const tableRows = useMemo(

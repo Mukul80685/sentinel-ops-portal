@@ -64,6 +64,19 @@ export function IntelRepositoryView() {
     staleTime: 5 * 60 * 1000,
   });
 
+  const { data: allIntelRows = [] } = useQuery({
+    queryKey: ["intel-records-all", intelDbUnitIds],
+    queryFn: async () => {
+      if (intelDbUnitIds.length === 0) return [];
+      const { data } = await supabase
+        .from("intel_records")
+        .select("id, unit_id, satellite_id, band, analysis_report, summary, updated_at, observation_date");
+      return (data ?? []).filter((r) => intelDbUnitIds.includes(r.unit_id));
+    },
+    enabled: intelDbUnitIds.length > 0,
+    staleTime: 30_000,
+  });
+
   const unitStatsMap = useMemo(() => {
     const map = new Map<string, ReturnType<typeof summarizeIntelSatelliteRows>>();
 
@@ -78,13 +91,14 @@ export function IntelRepositoryView() {
       const unitEng = engagements.filter((e: any) => e.unit_id === dbId);
       const unitEq = allEquipment.filter((e: any) => e.unit_id === dbId);
       const unitVis = allVisibility.filter((v: any) => v.unit_id === dbId);
-      const ctx = buildIntelLinkageContext(unit.id, unitEng, unitVis, unitEq);
+      const unitIntel = allIntelRows.filter((r: any) => r.unit_id === dbId);
+      const ctx = buildIntelLinkageContext(unit.id, unitEng, unitVis, unitEq, unitIntel);
       const rows = buildIntelSatelliteTable(unit.id, ctx, unitEng);
       map.set(unit.id, summarizeIntelSatelliteRows(rows));
     }
 
     return map;
-  }, [engagements, dbUnits, allEquipment, allVisibility]);
+  }, [engagements, dbUnits, allEquipment, allVisibility, allIntelRows]);
 
   return (
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">

@@ -4,8 +4,8 @@ import { useState } from "react";
 import { useIsAdmin } from "@/lib/auth";
 
 const navItems = [
-  { key: "units",     label: "Units",                icon: Landmark, adminTo: "/admin/units",      userTo: "/admin/units" },
-  { key: "sats",      label: "Satellites",           icon: Satellite, adminTo: "/admin/satellites", userTo: "/admin/satellites" },
+  { key: "units",     label: "Units",                icon: Landmark, adminTo: "/admin/units",      userTo: "/inventory" },
+  { key: "sats",      label: "Satellites",           icon: Satellite, adminTo: "/admin/satellites", userTo: "/visibility" },
   { key: "reports",   label: "Reports and Returns",  icon: FileText,  adminTo: "/reports",           userTo: "/reports" },
   { key: "minutes",   label: "Recent Discussions",   icon: Clock,     adminTo: "/minutes",           userTo: "/minutes" },
 ] as const;

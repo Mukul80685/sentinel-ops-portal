@@ -63,6 +63,7 @@ function InventoryCategories() {
     <AppShell
       title={headerTitle}
       showBack
+      sidebarVariant="secondary"
       horizontalNav={<InventoryModuleNav />}
     >
       {/* Square icon tiles — 3 columns × 2 rows for 6 categories */}
