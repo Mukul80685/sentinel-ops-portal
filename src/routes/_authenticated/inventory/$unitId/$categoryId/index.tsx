@@ -1,7 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
-import { InventoryModuleNav } from "@/components/inventory/InventoryModuleNav";
 import { Empty } from "@/components/Empty";
 import { supabase } from "@/integrations/supabase/client";
 import { useCanEdit } from "@/lib/auth";
@@ -69,8 +68,7 @@ function EquipmentList() {
     <AppShell
       title={headerTitle}
       showBack
-      sidebarVariant="secondary"
-      horizontalNav={<InventoryModuleNav />}
+      horizontalNav={null}
       actions={
         canEdit ? (
           <AddDetailsDialog

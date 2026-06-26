@@ -1,7 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
-import { InventoryModuleNav } from "@/components/inventory/InventoryModuleNav";
 import { supabase } from "@/integrations/supabase/client";
 import { fileUrl, signedUrl, uploadFile } from "@/lib/storage";
 import { statusClass } from "@/lib/queries";
@@ -117,15 +116,14 @@ function EquipmentDetail() {
     window.open(url, "_blank");
   }
 
-  if (!form) return <AppShell title="Equipment" subtitle="Loading" showBack sidebarVariant="secondary" horizontalNav={<InventoryModuleNav />}><div className="text-muted-foreground">Loading…</div></AppShell>;
+  if (!form) return <AppShell title="Equipment" subtitle="Loading" showBack horizontalNav={null}><div className="text-muted-foreground">Loading…</div></AppShell>;
 
   return (
     <AppShell
       title={form.name}
       subtitle="Equipment Record"
       showBack
-      sidebarVariant="secondary"
-      horizontalNav={<InventoryModuleNav />}
+      horizontalNav={null}
       actions={
         canEdit ? (
           <div className="flex gap-2">

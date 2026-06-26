@@ -159,6 +159,11 @@ export function lookupRecoveryUser(userId: string): RecoveryUserProfile | null {
   return loadProfiles()[id] ?? null;
 }
 
+export function findRecoveryProfileByEmail(email: string): RecoveryUserProfile | null {
+  const norm = email.trim().toLowerCase();
+  return Object.values(loadProfiles()).find((p) => p.accountKey.trim().toLowerCase() === norm) ?? null;
+}
+
 export function verifySecurityAnswer(userId: string, answer: string): boolean {
   const user = lookupRecoveryUser(userId);
   if (!user || !profileHasSecurityChallenge(user)) return false;

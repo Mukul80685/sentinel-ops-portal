@@ -1,11 +1,152 @@
 import { expect, test } from "@playwright/test";
 import {
+  computeUnitCapability,
+  countServiceableChainCapacity,
+} from "../src/lib/liveEngagementModel";
+import {
   formatLiveEngagementSatelliteLabel,
   isIntGenerationComplete,
   isIntGenerationInProgress,
   shouldShowOnLiveEngagement,
   validateOperationalSync,
 } from "../src/lib/operationalSync";
+
+const mkEq = (
+  id: string,
+  unitId: string,
+  category: string,
+  serviceability = "Operational",
+) => ({
+  id,
+  unit_id: unitId,
+  serviceability,
+  category: { name: category },
+});
+
+test.describe("Live engagement constraint model", () => {
+  test("zero processors → NON_OPERATIONAL, no active satellites, 0% occupancy", () => {
+    const unitId = "unit-echo";
+    const equipment = [
+      mkEq("a1", unitId, "Antenna"),
+      mkEq("l1", unitId, "LNA/LNB"),
+      mkEq("d1", unitId, "Demodulator"),
+      mkEq("p1", unitId, "Processing Server", "Non-Serviceable"),
+    ];
+    const cap = countServiceableChainCapacity(equipment);
+    expect(cap.processors).toBe(0);
+    expect(cap.totalChains).toBe(0);
+
+    const capability = computeUnitCapability(
+      unitId,
+      "E",
+      [
+        {
+          id: "eng-1",
+          unit_id: unitId,
+          status: "In Progress",
+          satellite_id: "sat-1",
+          antenna_id: "a1",
+          demodulator_id: "d1",
+          processing_server_id: "p1",
+          satellites: { name: "ChinaSat 6B" },
+        },
+      ],
+      equipment,
+      [],
+    );
+
+    expect(capability.feasibilityStatus).toBe("NON_OPERATIONAL");
+    expect(capability.activeChains).toBe(0);
+    expect(capability.occupancyPct).toBe(0);
+    expect(capability.snapshot.activeCount).toBe(0);
+  });
+
+  test("maxActiveScans caps satellite assignments", () => {
+    const unitId = "unit-alpha";
+    const equipment = [
+      mkEq("a1", unitId, "Antenna"),
+      mkEq("a2", unitId, "Antenna"),
+      mkEq("l1", unitId, "LNA/LNB"),
+      mkEq("d1", unitId, "Demodulator"),
+      mkEq("d2", unitId, "Demodulator"),
+      mkEq("p1", unitId, "Processing Server"),
+      mkEq("p2", unitId, "Processing Server"),
+    ];
+    const cap = countServiceableChainCapacity(equipment);
+    expect(cap.totalChains).toBe(1);
+
+    const capability = computeUnitCapability(
+      unitId,
+      "A",
+      [
+        {
+          id: "e1",
+          unit_id: unitId,
+          status: "In Progress",
+          satellite_id: "s1",
+          antenna_id: "a1",
+          demodulator_id: "d1",
+          processing_server_id: "p1",
+          satellites: { name: "ChinaSat 6B" },
+        },
+        {
+          id: "e2",
+          unit_id: unitId,
+          status: "In Progress",
+          satellite_id: "s2",
+          antenna_id: "a2",
+          demodulator_id: "d2",
+          processing_server_id: "p2",
+          satellites: { name: "Apstar-7" },
+        },
+      ],
+      equipment,
+      [],
+    );
+
+    expect(capability.maxPossibleScans).toBe(1);
+    expect(capability.activeChains).toBe(1);
+    expect(capability.occupancyPct).toBe(100);
+    expect(capability.constraintViolations.some((v) => v.includes("exceed"))).toBe(true);
+  });
+
+  test("occupancy = activeChains / totalChains", () => {
+    const unitId = "unit-bravo";
+    const equipment = [
+      mkEq("a1", unitId, "Antenna"),
+      mkEq("a2", unitId, "Antenna"),
+      mkEq("l1", unitId, "LNA/LNB"),
+      mkEq("l2", unitId, "LNA/LNB"),
+      mkEq("d1", unitId, "Demodulator"),
+      mkEq("d2", unitId, "Demodulator"),
+      mkEq("p1", unitId, "Processing Server"),
+      mkEq("p2", unitId, "Processing Server"),
+    ];
+
+    const capability = computeUnitCapability(
+      unitId,
+      "B",
+      [
+        {
+          id: "e1",
+          unit_id: unitId,
+          status: "In Progress",
+          satellite_id: "s1",
+          antenna_id: "a1",
+          demodulator_id: "d1",
+          processing_server_id: "p1",
+          satellites: { name: "ChinaSat 6B" },
+        },
+      ],
+      equipment,
+      [],
+    );
+
+    expect(capability.totalChains).toBe(2);
+    expect(capability.activeChains).toBe(1);
+    expect(capability.occupancyPct).toBe(50);
+  });
+});
 
 test.describe("Operational sync logic", () => {
   test("Rule 3 — auto-removes completed INT work from live engagement eligibility", () => {

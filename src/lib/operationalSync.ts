@@ -6,10 +6,10 @@
 import {
   computeSatelliteAnalysis,
   isActiveScanStatus,
-  scanStatusLabel,
   type ScanningSatellite,
   type UnitScanSnapshot,
 } from "@/lib/engagementEngine";
+import { computeUnitCapability } from "@/lib/liveEngagementModel";
 import { canUnitScanSatellite } from "@/lib/intelIntegrity";
 import { hasIntelData, isSatelliteInIntRoster } from "@/lib/intelAnalysisData";
 import { INT_UNITS } from "@/lib/intelRepository";
@@ -81,42 +81,24 @@ export function shouldShowOnLiveEngagement(
   return isIntGenerationInProgress(scanned, analyzed, pending, status);
 }
 
-/** Live Engagement snapshot — visibility-gated and progress-filtered. */
+/** Live Engagement snapshot — derived from constraint-validated UnitCapability. */
 export function buildSyncedUnitScanSnapshot(
   engagements: any[],
   unitDbId: string,
   intUnitSlug: string | null,
   intelRows: any[] = [],
+  equipment: any[] = [],
+  unitCode?: string,
 ): UnitScanSnapshot {
-  const satellites: ScanningSatellite[] = [];
-
-  for (const eng of engagements) {
-    if (eng.unit_id !== unitDbId) continue;
-    const name = (eng.satellites?.name as string | undefined) ?? "Unassigned";
-    const analysis = computeSatelliteAnalysis(eng, intelRows);
-
-    if (
-      !shouldShowOnLiveEngagement(
-        name,
-        intUnitSlug,
-        analysis.scanned,
-        analysis.analyzed,
-        analysis.pending,
-        eng.status as string,
-      )
-    ) {
-      continue;
-    }
-
-    satellites.push({
-      engagementId: eng.id as string,
-      name,
-      status: eng.status as string,
-      displayStatus: scanStatusLabel(eng.status as string),
-    });
-  }
-
-  return { activeCount: satellites.length, satellites };
+  void intUnitSlug;
+  const cap = computeUnitCapability(
+    unitDbId,
+    unitCode,
+    engagements,
+    equipment,
+    intelRows,
+  );
+  return cap.snapshot;
 }
 
 /** Rule 5 — compact satellite list for unit tiles (e.g. "Apstar-7, Chinasat-12, +5"). */

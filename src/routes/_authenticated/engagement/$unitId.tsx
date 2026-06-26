@@ -17,7 +17,6 @@ import {
 } from "@/components/ui/dialog";
 import {
   buildAllocatedIds,
-  computeBottleneckEngagement,
   computeSatelliteAnalysis,
   engColor,
   engagementDisplayStatus,
@@ -28,7 +27,12 @@ import {
   ACTIVE_SCAN_STATUSES,
   QUEUED_SCAN_STATUS,
   ENGAGEMENTS_ALL_KEY,
+  fetchAllEngagements,
 } from "@/lib/engagementEngine";
+import {
+  assignmentsToEngagementRows,
+  computeUnitCapability,
+} from "@/lib/liveEngagementModel";
 import { INT_UNITS } from "@/lib/intelRepository";
 import { ccModuleBackLink } from "@/lib/controlCenter";
 import { AlertTriangle, Pencil, Plus, Trash2 } from "lucide-react";
@@ -469,6 +473,12 @@ function EngagementUnit() {
     },
   });
 
+  const { data: allEngagements = [] } = useQuery({
+    queryKey: ENGAGEMENTS_ALL_KEY,
+    queryFn: fetchAllEngagements,
+    staleTime: 30 * 1000,
+  });
+
   const enrichedRows = useMemo(
     () => attachEquipmentToEngagements(rows, equipmentRaw),
     [rows, equipmentRaw],
@@ -486,7 +496,24 @@ function EngagementUnit() {
     staleTime: 30 * 1000,
   });
 
-  const inProgressRows = useMemo(
+  const capability = useMemo(
+    () =>
+      computeUnitCapability(
+        unitId,
+        unit?.code,
+        allEngagements.length > 0 ? allEngagements : rows,
+        equipmentRaw,
+        intelRows,
+      ),
+    [unitId, unit?.code, allEngagements, rows, equipmentRaw, intelRows],
+  );
+
+  const validatedActiveRows = useMemo(
+    () => assignmentsToEngagementRows(capability, enrichedRows),
+    [capability, enrichedRows],
+  );
+
+  const rawInProgressRows = useMemo(
     () => enrichedRows.filter((r: any) => ACTIVE_SCAN_STATUSES.has(r.status)),
     [enrichedRows],
   );
@@ -495,12 +522,12 @@ function EngagementUnit() {
     [enrichedRows],
   );
 
-  const allocatedIds = useMemo(() => buildAllocatedIds(inProgressRows), [inProgressRows]);
-
-  const { pct: utilPct } = useMemo(
-    () => computeBottleneckEngagement(equipmentRaw, allocatedIds),
-    [equipmentRaw, allocatedIds],
+  const allocatedIds = useMemo(
+    () => buildAllocatedIds(validatedActiveRows),
+    [validatedActiveRows],
   );
+
+  const utilPct = capability.occupancyPct;
 
   // Per-category stats including "Other"
   const resourceStats = useMemo(() => {
@@ -532,11 +559,11 @@ function EngagementUnit() {
 
   const analysisByEngId = useMemo(() => {
     const map = new Map<string, ReturnType<typeof computeSatelliteAnalysis>>();
-    for (const r of inProgressRows as any[]) {
-      map.set(r.id, computeSatelliteAnalysis(r, intelRows));
+    for (const a of capability.assignments) {
+      map.set(a.engagementId, a.analysis);
     }
     return map;
-  }, [inProgressRows, intelRows]);
+  }, [capability.assignments]);
 
   async function update(id: string, patch: any) {
     const { error } = await supabase.from("engagements").update(patch).eq("id", id);
@@ -581,7 +608,7 @@ function EngagementUnit() {
         location={unitLocation}
         canEdit={canEdit}
         newEngagement={
-          <AddEngagement unitId={unitId} activeRows={inProgressRows} equipment={equipmentRaw} primary />
+          <AddEngagement unitId={unitId} activeRows={rawInProgressRows} equipment={equipmentRaw} primary />
         }
       />
 
@@ -592,11 +619,11 @@ function EngagementUnit() {
             Satellite Scanning – Under Progress
           </span>
           <span className="mono text-[7.5px] uppercase tracking-[0.15em] text-foreground/70">
-            {inProgressRows.length} sessions
+            {validatedActiveRows.length} sessions
           </span>
         </div>
 
-        {inProgressRows.length === 0 ? (
+        {validatedActiveRows.length === 0 ? (
           <div className="px-4 py-5 text-center mono text-[9px] text-foreground/70 uppercase tracking-wider">
             No active scanning sessions
           </div>
@@ -615,7 +642,7 @@ function EngagementUnit() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {inProgressRows.map((r: any, idx: number) => {
+                {validatedActiveRows.map((r: any, idx: number) => {
                   const { isPending, missing } = resourceCompleteness(r);
                   const analysis =
                     analysisByEngId.get(r.id) ?? computeSatelliteAnalysis(r, intelRows);
@@ -724,7 +751,7 @@ function EngagementUnit() {
                         {canEdit && (
                           <EditEngagement
                             row={r}
-                            activeRows={inProgressRows}
+                            activeRows={rawInProgressRows}
                             equipment={equipmentRaw}
                             onUpdate={update}
                             onRemove={remove}
@@ -786,7 +813,7 @@ function EngagementUnit() {
                       {canEdit && (
                         <EditEngagement
                           row={r}
-                          activeRows={inProgressRows}
+                          activeRows={rawInProgressRows}
                           equipment={equipmentRaw}
                           onUpdate={update}
                           onRemove={remove}

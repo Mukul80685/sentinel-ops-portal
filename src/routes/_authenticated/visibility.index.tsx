@@ -28,7 +28,7 @@ import {
   Filter,
   Globe,
   ImageIcon,
-  Map,
+  Map as MapIcon,
   MapPin,
   Pencil,
   Plus,
@@ -64,10 +64,18 @@ import {
   seedRand,
   getBeamBreakdown,
   getVisibleBeams,
+  findGeoSatelliteEntry,
   type GeoSatellite,
   type GeoRegion,
 } from "@/lib/visibilityMatrix";
+import {
+  getVisibilityOverlay,
+  patchVisibilityOverlay,
+  VISIBILITY_OVERLAY_EVENT,
+} from "@/lib/visibilityOverlay";
+import { mergeRegionsWithOverlay, useVisibleSatelliteCounts } from "@/lib/satelliteCatalog";
 import { INT_UNITS } from "@/lib/intelRepository";
+import { unitTileTitle, UNIT_SLOTS, type UnitSlot } from "@/lib/priorityAllocation";
 import { isSatelliteInIntRoster } from "@/lib/intelAnalysisData";
 
 // ─── Static unit roster for visibility layer (shared naming with INT) ─────────
@@ -158,6 +166,7 @@ export const Route = createFileRoute("/_authenticated/visibility/")({
   validateSearch: (search: Record<string, unknown>) => ({
     unit: typeof search.unit === "string" ? search.unit : undefined,
     satellite: typeof search.satellite === "string" ? search.satellite : undefined,
+    region: typeof search.region === "string" ? search.region : undefined,
   }),
   component: VisibilityPage,
 });
@@ -165,14 +174,15 @@ export const Route = createFileRoute("/_authenticated/visibility/")({
 // ─── Main page component ───────────────────────────────────────────────────────
 
 function VisibilityPage() {
-  const { unit: searchUnit, satellite: searchSatellite } = Route.useSearch();
-  const deepLinkApplied = useRef(false);
+  const { unit: searchUnit, satellite: searchSatellite, region: searchRegion } = Route.useSearch();
 
   // Three-level hierarchy: unit → region → satellite
   const [localUnits, setLocalUnits] = useState<VisibilityUnit[]>(VISIBILITY_UNITS);
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
   const [activeRegionId, setActiveRegionId] = useState<string | null>(null);
-  const [activeSat, setActiveSat]  = useState<GeoSatellite | null>(null);
+  const [activeSat, setActiveSat] = useState<GeoSatellite | null>(null);
+  /** Deep-link target — highlights row in region table; does not open detail modal. */
+  const [focusSatelliteId, setFocusSatelliteId] = useState<string | null>(null);
 
   const selectedUnit = localUnits.find((u) => u.id === selectedUnitId) ?? null;
 
@@ -184,32 +194,35 @@ function VisibilityPage() {
     if (selectedUnitId === id) setSelectedUnitId(null);
   }
 
-  // User-added satellites keyed by region.id
-  const [addedSats, setAddedSats]   = useState<Record<string, GeoSatellite[]>>({});
-  // User-edited overrides keyed by satellite id
-  const [editedSats, setEditedSats] = useState<Record<string, GeoSatellite>>({});
+  // User-added / edited satellites — SSOT via visibilityOverlay (synced with Satellites sidebar)
+  const [overlayVersion, setOverlayVersion] = useState(0);
+
+  useEffect(() => {
+    const refresh = () => setOverlayVersion((v) => v + 1);
+    window.addEventListener(VISIBILITY_OVERLAY_EVENT, refresh);
+    return () => window.removeEventListener(VISIBILITY_OVERLAY_EVENT, refresh);
+  }, []);
 
   function handleAddSat(regionId: string, sat: GeoSatellite) {
-    setAddedSats((prev) => ({
-      ...prev,
-      [regionId]: [...(prev[regionId] ?? []), sat],
-    }));
+    const overlay = getVisibilityOverlay();
+    patchVisibilityOverlay({
+      addedSats: {
+        ...overlay.addedSats,
+        [regionId]: [...(overlay.addedSats[regionId] ?? []), sat],
+      },
+    });
   }
 
   function handleEditSat(updated: GeoSatellite) {
-    setEditedSats((prev) => ({ ...prev, [updated.id]: updated }));
+    const overlay = getVisibilityOverlay();
+    patchVisibilityOverlay({
+      editedSats: { ...overlay.editedSats, [updated.id]: updated },
+    });
   }
 
-  // Merge static + user-added, then apply any edits
   const mergedRegions = useMemo(
-    () =>
-      GEO_REGIONS.map((r) => ({
-        ...r,
-        satellites: [...r.satellites, ...(addedSats[r.id] ?? [])].map(
-          (s) => editedSats[s.id] ?? s,
-        ),
-      })),
-    [addedSats, editedSats],
+    () => mergeRegionsWithOverlay(),
+    [overlayVersion],
   );
 
   const activeRegion = useMemo(
@@ -251,26 +264,47 @@ function VisibilityPage() {
   );
 
   useEffect(() => {
-    if (deepLinkApplied.current) return;
-    if (!searchUnit && !searchSatellite) return;
-    deepLinkApplied.current = true;
+    if (!searchUnit && !searchSatellite && !searchRegion) return;
+
+    if (searchUnit && !localUnits.some((u) => u.id === searchUnit)) {
+      return;
+    }
 
     if (searchUnit) {
       setSelectedUnitId(searchUnit);
     }
 
-    if (searchSatellite) {
-      const target = searchSatellite.toLowerCase();
+    if (searchSatellite || searchRegion) {
+      const geoEntry = searchSatellite ? findGeoSatelliteEntry(searchSatellite) : null;
+      const targetRegionId = searchRegion ?? geoEntry?.regionId;
+      const targetSatId = geoEntry?.sat.id;
+      const targetName = searchSatellite?.trim().toLowerCase();
+
+      let matched = false;
       for (const region of mergedRegions) {
-        const sat = region.satellites.find((s) => s.name.toLowerCase() === target);
+        if (targetRegionId && region.id !== targetRegionId) continue;
+        const sat = region.satellites.find(
+          (s) =>
+            (targetSatId && s.id === targetSatId) ||
+            (targetName && s.name.trim().toLowerCase() === targetName),
+        );
         if (sat) {
           setActiveRegionId(region.id);
-          setActiveSat(sat);
+          setFocusSatelliteId(sat.id);
+          matched = true;
           break;
         }
       }
+
+      if (!matched && targetRegionId) {
+        const regionExists = mergedRegions.some((r) => r.id === targetRegionId);
+        if (regionExists) setActiveRegionId(targetRegionId);
+      }
+    } else {
+      setActiveRegionId(null);
+      setFocusSatelliteId(null);
     }
-  }, [searchUnit, searchSatellite, mergedRegions]);
+  }, [searchUnit, searchSatellite, searchRegion, mergedRegions, localUnits]);
 
   return (
     <AppShell
@@ -281,12 +315,14 @@ function VisibilityPage() {
     >
       {/* ── Level 1: Unit selection ──────────────────────────────────────── */}
       {!selectedUnitId && (
-        <UnitGrid
-          units={localUnits}
-          onSelect={(u) => setSelectedUnitId(u.id)}
-          onAddUnit={handleAddUnit}
-          onDeleteUnit={handleDeleteUnit}
-        />
+        <div className="flex flex-col h-[calc(100dvh-7.5rem)] min-h-0 -m-4 sm:-m-6 p-4 sm:p-6 overflow-hidden">
+          <UnitGrid
+            units={localUnits}
+            onSelect={(u) => setSelectedUnitId(u.id)}
+            onAddUnit={handleAddUnit}
+            onDeleteUnit={handleDeleteUnit}
+          />
+        </div>
       )}
 
       {/* ── Level 2: Region selection (inside a unit) ────────────────────── */}
@@ -303,12 +339,16 @@ function VisibilityPage() {
       {selectedUnitId && activeRegion && (
         <RegionDetail
           region={activeRegion}
-          onBack={() => setActiveRegionId(null)}
-          onSelectSat={setActiveSat}
+          onBack={() => {
+            setActiveRegionId(null);
+            setFocusSatelliteId(null);
+          }}
           onAddSat={(sat) => handleAddSat(activeRegion.id, sat)}
           onEditSat={handleEditSat}
           unitName={selectedUnit?.name}
           unitId={selectedUnitId}
+          highlightSatelliteId={focusSatelliteId}
+          onHighlightConsumed={() => setFocusSatelliteId(null)}
         />
       )}
 
@@ -487,6 +527,7 @@ function UnitGrid({
   const [addOpen,      setAddOpen]      = useState(false);
   const [newName,      setNewName]      = useState("");
   const [newLoc,       setNewLoc]       = useState("");
+  const visibleCounts = useVisibleSatelliteCounts();
 
   function handleAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -504,60 +545,59 @@ function UnitGrid({
   }
 
   return (
-    <div className="space-y-3">
-      <div className="label-eyebrow">Select Unit</div>
+    <div className="flex flex-col flex-1 min-h-0 h-full">
+      <div className="grid grid-cols-2 sm:grid-cols-4 grid-rows-4 sm:grid-rows-2 gap-2 flex-1 min-h-0 h-full auto-rows-fr">
+        {units.map((u) => {
+          const title = (UNIT_SLOTS as readonly string[]).includes(u.id) ? unitTileTitle(u.id as UnitSlot) : u.name;
+          const count = visibleCounts[u.id] ?? 0;
 
-      {/* 4 tiles per row × 2 rows — dense command-center layout */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        {units.map((u) => (
-          <div key={u.id} className="relative group/tile">
-            {deleteMode && (
+          return (
+            <div key={u.id} className="relative group/tile h-full min-h-0">
+              {deleteMode && (
+                <button
+                  type="button"
+                  title="Delete this unit"
+                  onClick={() => onDeleteUnit(u.id)}
+                  className="absolute -top-1 -right-1 z-10 h-5 w-5 rounded-full border border-border
+                             bg-card text-muted-foreground hover:bg-destructive hover:text-destructive-foreground
+                             flex items-center justify-center transition-colors"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
               <button
                 type="button"
-                title="Delete this unit"
-                onClick={() => onDeleteUnit(u.id)}
-                className="absolute -top-1 -right-1 z-10 h-5 w-5 rounded-full border border-border
-                           bg-card text-muted-foreground hover:bg-destructive hover:text-destructive-foreground
-                           flex items-center justify-center transition-colors"
+                onClick={() => !deleteMode && onSelect(u)}
+                className={`tile text-center flex flex-col justify-between focus:outline-none focus:border-primary p-3 h-full min-h-0 w-full ${
+                  deleteMode
+                    ? "cursor-default opacity-80"
+                    : "hover:border-primary cursor-pointer"
+                }`}
               >
-                <X className="h-3 w-3" />
+                <div className="min-w-0">
+                  <div className="mono text-[14px] sm:text-[15px] font-bold uppercase leading-tight">
+                    {title}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground mono mt-1 truncate">
+                    {u.location}
+                  </div>
+                </div>
+                <div className="flex flex-col items-center justify-center flex-1 py-2 min-h-[3rem]">
+                  <span className="mono text-[26px] sm:text-[32px] font-bold text-primary leading-none tabular-nums">
+                    {count}
+                  </span>
+                  <span className="mono text-[10px] sm:text-[11px] text-muted-foreground mt-1 uppercase tracking-wider">
+                    Satellite{count !== 1 ? "s" : ""}
+                  </span>
+                </div>
               </button>
-            )}
-            <button
-              type="button"
-              onClick={() => !deleteMode && onSelect(u)}
-              className={`w-full text-left rounded-md border border-border
-                          bg-card shadow-sm hover:shadow-md
-                          transition-all duration-200
-                          focus:outline-none focus:ring-2 focus:ring-primary/50
-                          p-2.5 min-h-[72px]
-                          ${deleteMode
-                            ? "cursor-default opacity-80"
-                            : "hover:-translate-y-0.5 hover:border-primary/40 hover:bg-secondary/40"}`}
-            >
-              <div className="flex items-start justify-between gap-1 mb-1.5">
-                <div className="h-0.5 w-6 rounded-full bg-primary opacity-60" />
-                <Radar
-                  className="h-3 w-3 shrink-0 text-primary/45"
-                  title="Linked to Satellite Visibility Matrix"
-                  aria-label="Visibility matrix participant"
-                />
-              </div>
-
-              <div className="mono text-[12px] font-bold uppercase tracking-tight leading-tight text-foreground">
-                {u.name}
-              </div>
-              <div className="flex items-center gap-1 mt-1 mono text-[9px] text-muted-foreground">
-                <MapPin className="h-2.5 w-2.5 shrink-0" />
-                <span className="truncate">{u.location}</span>
-              </div>
-            </button>
-          </div>
-        ))}
+            </div>
+          );
+        })}
       </div>
 
       {/* ── Advanced Features — bottom-right (mirrors Resource Inventory) ── */}
-      <div className="mt-4 flex items-center justify-end gap-2">
+      <div className="mt-3 flex items-center justify-end gap-2 shrink-0">
         {deleteMode && (
           <Button
             type="button"
@@ -654,7 +694,7 @@ function UnitGrid({
 
 // ─── Region icon fallbacks for multi-country regions ─────────────────────────
 const REGION_ICON: Record<string, React.ReactNode> = {
-  "sea":         <Map     className="h-9 w-9 text-muted-foreground" />,
+  "sea":         <MapIcon className="h-9 w-9 text-muted-foreground" />,
   "middle-east": <Compass className="h-9 w-9 text-muted-foreground" />,
   "africa":      <Globe   className="h-9 w-9 text-muted-foreground" />,
 };
@@ -742,19 +782,21 @@ function RegionGrid({
 function RegionDetail({
   region,
   onBack,
-  onSelectSat,
   onAddSat,
   onEditSat,
   unitName,
   unitId,
+  highlightSatelliteId,
+  onHighlightConsumed,
 }: {
   region: Region;
   onBack: () => void;
-  onSelectSat: (s: GeoSatellite) => void;
   onAddSat: (sat: GeoSatellite) => void;
   onEditSat: (sat: GeoSatellite) => void;
   unitName?: string;
   unitId: string;
+  highlightSatelliteId?: string | null;
+  onHighlightConsumed?: () => void;
 }) {
   return (
     <div className="space-y-3">
@@ -786,6 +828,8 @@ function RegionDetail({
         unitId={unitId}
         onAddSat={onAddSat}
         onEditSat={onEditSat}
+        highlightSatelliteId={highlightSatelliteId}
+        onHighlightConsumed={onHighlightConsumed}
       />
     </div>
   );
@@ -814,6 +858,8 @@ function SatelliteTable({
   unitId,
   onAddSat,
   onEditSat,
+  highlightSatelliteId,
+  onHighlightConsumed,
 }: {
   satellites: GeoSatellite[];
   regionId: string;
@@ -821,12 +867,16 @@ function SatelliteTable({
   unitId: string;
   onAddSat: (s: GeoSatellite) => void;
   onEditSat: (s: GeoSatellite) => void;
+  highlightSatelliteId?: string | null;
+  onHighlightConsumed?: () => void;
 }) {
   const [editingSat,  setEditingSat]  = useState<GeoSatellite | null>(null);
   const [filterOpen,  setFilterOpen]  = useState(false);
   const [filter,      setFilter]      = useState<SatFilter>(EMPTY_SAT_FILTER);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
+  const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
+  const highlightApplied = useRef<string | null>(null);
 
   // ── Derived: filtered satellite list ────────────────────────────────────────
   const filteredSats = useMemo(() => {
@@ -842,6 +892,22 @@ function SatelliteTable({
       return true;
     });
   }, [satellites, filter]);
+
+  useEffect(() => {
+    if (!highlightSatelliteId) {
+      highlightApplied.current = null;
+      return;
+    }
+    if (highlightApplied.current === highlightSatelliteId) return;
+    const row = rowRefs.current.get(highlightSatelliteId);
+    if (!row) return;
+    highlightApplied.current = highlightSatelliteId;
+    requestAnimationFrame(() => {
+      row.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    const timer = window.setTimeout(() => onHighlightConsumed?.(), 6000);
+    return () => window.clearTimeout(timer);
+  }, [highlightSatelliteId, filteredSats, onHighlightConsumed]);
 
   const isFiltered = filteredSats.length !== satellites.length;
   const visibleIds = filteredSats.map((s) => s.id);
@@ -1103,10 +1169,23 @@ function SatelliteTable({
                 const { total: bt, beams } = getBeamBreakdown(sat);
                 const visibleBeams = getVisibleBeams(unitId, sat.id, regionId);
                 const checked = selectedIds.has(sat.id);
+                const highlighted = highlightSatelliteId === sat.id;
 
                 return (
-                  <tr key={sat.id}
-                    className={`transition-colors align-top ${checked ? "bg-primary/8" : "hover:bg-secondary/30"}`}>
+                  <tr
+                    key={sat.id}
+                    ref={(el) => {
+                      if (el) rowRefs.current.set(sat.id, el);
+                      else rowRefs.current.delete(sat.id);
+                    }}
+                    className={`transition-colors align-top ${
+                      highlighted
+                        ? "bg-primary/15 ring-1 ring-inset ring-primary/50"
+                        : checked
+                          ? "bg-primary/8"
+                          : "hover:bg-secondary/30"
+                    }`}
+                  >
 
                     <td className="px-2 py-1.5">
                       <input type="checkbox" checked={checked} onChange={() => toggleId(sat.id)}

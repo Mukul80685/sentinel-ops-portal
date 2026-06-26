@@ -205,6 +205,55 @@ export function getBeamBreakdown(sat: GeoSatellite): { total: number; beams: str
   };
 }
 
+/** Parse transponder counts — shared by Visibility Metrics and Priority & Allocation. */
+export function parseSatelliteTransponders(
+  sat: GeoSatellite,
+): { total: number; cBand?: string; kuBand?: string } {
+  const cNum = sat.cBandTransponders ? parseInt(sat.cBandTransponders) || 0 : 0;
+  const kuNum = sat.kuBandTransponders ? parseInt(sat.kuBandTransponders) || 0 : 0;
+  if (cNum || kuNum) {
+    return {
+      total: cNum + kuNum,
+      cBand: cNum > 0 ? String(cNum) : undefined,
+      kuBand: kuNum > 0 ? String(kuNum) : undefined,
+    };
+  }
+  const totalMatch = sat.transponders.match(/^(\d+)/);
+  const total = totalMatch ? parseInt(totalMatch[1]) : 0;
+  const tl = sat.transponders.toLowerCase();
+  if (tl.includes("c") && tl.includes("ku")) {
+    const half = Math.floor(total / 2);
+    return { total, cBand: String(half), kuBand: String(total - half) };
+  }
+  if (tl.includes("ku")) return { total, kuBand: String(total) };
+  if (tl.includes("c")) return { total, cBand: String(total) };
+  return { total };
+}
+
+/** Human-readable transponder label — e.g. "19 C-band + 19 Ku-band". */
+export function formatSatelliteTransponders(sat: GeoSatellite): string {
+  const tp = parseSatelliteTransponders(sat);
+  const parts: string[] = [];
+  if (tp.cBand) parts.push(`${tp.cBand} C-band`);
+  if (tp.kuBand) parts.push(`${tp.kuBand} Ku-band`);
+  if (parts.length > 0) return parts.join(" + ");
+  return sat.transponders || "—";
+}
+
+/** Count satellites with at least one visible beam for a unit. */
+export function countVisibleSatellitesForUnit(
+  unitId: string,
+  regions: GeoRegion[],
+): number {
+  let count = 0;
+  for (const region of regions) {
+    for (const sat of region.satellites) {
+      if (getVisibleBeams(unitId, sat.id, region.id).length > 0) count += 1;
+    }
+  }
+  return count;
+}
+
 /** Deterministic visible beams — matches Visibility Matrix "Visible Beams" column. */
 export function getVisibleBeams(unitId: string, satId: string, regionId: string): string[] {
   const pool = REGION_BEAMS[regionId] ?? ["Ku Regional – Beam 01", "C-band Wide Beam", "Ka Spot – Beam 02"];
@@ -233,7 +282,9 @@ export type VisibilityMatrixSnapshot = {
   source: "visibility_matrix";
 };
 
-function findGeoSatelliteEntry(satelliteName: string): { sat: GeoSatellite; regionId: string } | null {
+export function findGeoSatelliteEntry(
+  satelliteName: string,
+): { sat: GeoSatellite; regionId: string } | null {
   const norm = satelliteName.trim().toLowerCase();
   for (const region of GEO_REGIONS) {
     const sat = region.satellites.find((s) => s.name.trim().toLowerCase() === norm);

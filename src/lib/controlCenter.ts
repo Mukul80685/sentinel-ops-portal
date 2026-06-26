@@ -47,7 +47,7 @@ export const CONTROL_CENTER_MODULES: ControlCenterModuleMeta[] = [
   {
     id: "priority",
     title: "Satellite Priority & Allocation",
-    subtitle: "Select Unit",
+    subtitle: "",
     icon: ListOrdered,
     description: "Tasking priorities and satellite assignment engine.",
   },

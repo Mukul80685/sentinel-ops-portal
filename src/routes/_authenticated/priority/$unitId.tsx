@@ -1,208 +1,404 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
 import { ccModuleBackLink } from "@/lib/controlCenter";
-import { Empty } from "@/components/Empty";
-import { listSatellites, priorityClass, exportCsv } from "@/lib/queries";
+import { exportCsv } from "@/lib/queries";
 import { supabase } from "@/integrations/supabase/client";
 import { useCanEdit } from "@/lib/auth";
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Plus, Trash2, Download } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Plus, Download, ArrowUpDown, Settings2 } from "lucide-react";
 import { toast } from "sonner";
+import {
+  addAllocationForUnit,
+  allocationRowsToCsv,
+  clearUserAllocationsForUnit,
+  getAllocationsForUnit,
+  getUserAllocationCount,
+  sortAllocationRows,
+  unitCodeToSlot,
+  unitShortLabel,
+  type AllocationSortKey,
+  type SortDir,
+} from "@/lib/priorityAllocation";
+import { flattenSatelliteCatalog } from "@/lib/satelliteCatalog";
 
 export const Route = createFileRoute("/_authenticated/priority/$unitId")({
   component: PriorityUnit,
 });
 
-const PRIORITIES = ["Critical", "High", "Medium", "Low"] as const;
+const SORTABLE_COLUMNS: { key: AllocationSortKey; label: string; cls?: string }[] = [
+  { key: "priority", label: "Priority", cls: "w-16" },
+  { key: "satelliteName", label: "Satellite Name", cls: "min-w-[130px]" },
+  { key: "launchDate", label: "Launch Date", cls: "min-w-[100px]" },
+];
+
+const STATIC_COLUMNS: { label: string; cls?: string }[] = [
+  { label: "Country", cls: "min-w-[100px]" },
+  { label: "Orbital Position", cls: "min-w-[110px]" },
+  { label: "Transponders", cls: "min-w-[140px]" },
+  { label: "Beam Details", cls: "min-w-[160px]" },
+];
+
+function StaticTh({ label, cls }: { label: string; cls?: string }) {
+  return (
+    <th
+      className={`text-left px-3 py-2 text-[10px] uppercase tracking-wider border-r border-border whitespace-nowrap ${cls ?? ""}`}
+    >
+      {label}
+    </th>
+  );
+}
+
+function SortTh({
+  col,
+  label,
+  cls,
+  sortKey,
+  sortDir,
+  onSort,
+}: {
+  col: AllocationSortKey;
+  label: string;
+  cls?: string;
+  sortKey: AllocationSortKey;
+  sortDir: SortDir;
+  onSort: (col: AllocationSortKey) => void;
+}) {
+  const active = sortKey === col;
+  return (
+    <th
+      className={`text-left px-3 py-2 text-[10px] uppercase tracking-wider border-r border-border cursor-pointer hover:bg-secondary/60 select-none whitespace-nowrap ${cls ?? ""}`}
+      onClick={() => onSort(col)}
+    >
+      <span className="inline-flex items-center gap-1">
+        {label}
+        <ArrowUpDown className={`h-3 w-3 ${active ? "text-primary" : "text-muted-foreground/50"}`} />
+        {active && (
+          <span className="text-[8px] text-primary">{sortDir === "asc" ? "↑" : "↓"}</span>
+        )}
+      </span>
+    </th>
+  );
+}
+
+/** Vertical scroll in body; single sticky horizontal scroll track at bottom. */
+function StickyHorizontalTable({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const innerRef = useRef<HTMLDivElement>(null);
+  const [scrollWidth, setScrollWidth] = useState(0);
+  const [scrollLeft, setScrollLeft] = useState(0);
+
+  useEffect(() => {
+    const inner = innerRef.current;
+    if (!inner) return;
+
+    const measure = () => setScrollWidth(inner.scrollWidth);
+    measure();
+
+    const ro = new ResizeObserver(measure);
+    ro.observe(inner);
+    window.addEventListener("resize", measure);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [children]);
+
+  return (
+    <div className={`flex flex-col min-h-0 ${className ?? ""}`}>
+      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+        <div
+          ref={innerRef}
+          className="min-w-max"
+          style={{ transform: `translateX(-${scrollLeft}px)` }}
+        >
+          {children}
+        </div>
+      </div>
+      <div
+        ref={trackRef}
+        onScroll={(e) => setScrollLeft(e.currentTarget.scrollLeft)}
+        className="sticky bottom-0 z-10 shrink-0 overflow-x-auto overflow-y-hidden border-t border-border bg-card/95 backdrop-blur-sm h-4"
+        aria-label="Horizontal table scroll"
+      >
+        <div style={{ width: scrollWidth, height: 1 }} />
+      </div>
+    </div>
+  );
+}
 
 function PriorityUnit() {
   const { unitId } = Route.useParams();
   const canEdit = useCanEdit();
-  const qc = useQueryClient();
+  const [sortKey, setSortKey] = useState<AllocationSortKey>("priority");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const { data: unit } = useQuery({
     queryKey: ["unit", unitId],
-    queryFn: async () => (await supabase.from("units").select("*").eq("id", unitId).maybeSingle()).data,
+    queryFn: async () =>
+      (await supabase.from("units").select("*").eq("id", unitId).maybeSingle()).data,
   });
 
-  const { data: rows = [] } = useQuery({
-    queryKey: ["alloc", unitId],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("allocations")
-        .select("*, satellites:satellite_id(id,name,orbital_position)")
-        .eq("unit_id", unitId);
-      if (error) throw error;
-      return (data ?? []).sort((a: any, b: any) => a.satellites.orbital_position - b.satellites.orbital_position);
-    },
-  });
+  const slot = unit?.code ? unitCodeToSlot(unit.code) : null;
+  const shortLabel = unit?.code ? unitShortLabel(unit.code) : "Unit";
 
-  async function update(id: string, patch: any) {
-    const { error } = await supabase.from("allocations").update(patch).eq("id", id);
-    if (error) return toast.error(error.message);
-    qc.invalidateQueries({ queryKey: ["alloc", unitId] });
-  }
+  const rows = useMemo(() => {
+    if (!slot) return [];
+    void refreshKey;
+    return getAllocationsForUnit(slot);
+  }, [slot, refreshKey]);
 
-  async function remove(id: string) {
-    if (!confirm("Remove allocation?")) return;
-    const { error } = await supabase.from("allocations").delete().eq("id", id);
-    if (error) return toast.error(error.message);
-    qc.invalidateQueries({ queryKey: ["alloc", unitId] });
+  const sortedRows = useMemo(
+    () => sortAllocationRows(rows, sortKey, sortDir),
+    [rows, sortKey, sortDir],
+  );
+
+  const userAddedCount = useMemo(() => {
+    if (!slot) return 0;
+    void refreshKey;
+    return getUserAllocationCount(slot);
+  }, [slot, refreshKey]);
+
+  function handleSort(col: AllocationSortKey) {
+    if (sortKey === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(col);
+      setSortDir("asc");
+    }
   }
 
   function exportData() {
-    exportCsv(
-      rows.map((r: any) => ({
-        Satellite: r.satellites.name,
-        "Orbital Position": r.satellites.orbital_position,
-        Priority: r.priority,
-        EIRP: r.eirp ?? "",
-        "Observation Requirement": r.observation_requirement ?? "",
-        "Allocation Date": r.allocation_date,
-        Remarks: r.remarks ?? "",
-      })),
-      `priority-${unit?.code ?? unitId}.csv`,
-    );
+    if (sortedRows.length === 0) {
+      toast.error("No records to export.");
+      return;
+    }
+    exportCsv(allocationRowsToCsv(sortedRows), `priority-${unit?.code ?? unitId}.csv`);
+    toast.success("CSV exported.");
+  }
+
+  function handleAdded() {
+    setRefreshKey((k) => k + 1);
+  }
+
+  function handleClearUserAllocations() {
+    if (!slot) return;
+    const removed = clearUserAllocationsForUnit(slot);
+    if (removed === 0) {
+      toast.error("No user-added allocations to clear.");
+      return;
+    }
+    toast.success(`Removed ${removed} user-added allocation${removed !== 1 ? "s" : ""}.`);
+    setRefreshKey((k) => k + 1);
+    setAdvancedOpen(false);
   }
 
   return (
     <AppShell
-      title={unit ? `${unit.code} — Allocations` : "Allocations"}
-      subtitle="Priority & Allocation"
+      title={`Satellite Priority & Allocation – ${shortLabel}`}
+      subtitle={`Priority of Satellites Allocated to ${shortLabel}`}
+      headerTitleClassName="mono text-[0.8rem] sm:text-[0.95rem] font-bold tracking-tight uppercase whitespace-normal leading-snug"
       showBack
       backLink={ccModuleBackLink("priority")}
       horizontalNav={null}
-      actions={
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={exportData} className="mono text-[11px] uppercase tracking-wider h-8">
-            <Download className="h-3.5 w-3.5 mr-1" /> CSV
-          </Button>
-          {canEdit && <AddAllocation unitId={unitId} existingIds={rows.map((r: any) => r.satellite_id)} />}
-        </div>
-      }
     >
-      {rows.length === 0 ? (
-        <Empty title="No satellites allocated" hint={canEdit ? "Use ADD SATELLITE to allocate." : ""} />
-      ) : (
-        <div className="panel overflow-auto">
-          <table className="min-w-full text-sm mono">
-            <thead className="bg-secondary">
-              <tr>
-                <Th>Satellite</Th><Th>Orbit</Th><Th>Priority</Th><Th>EIRP</Th>
-                <Th>Observation Requirement</Th><Th>Allocation Date</Th><Th>Remarks</Th><Th></Th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r: any) => (
-                <tr key={r.id} className="border-t border-border hover:bg-secondary/40">
-                  <td className="px-3 py-2 font-bold">{r.satellites.name}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{Number(r.satellites.orbital_position).toFixed(1)}°E</td>
-                  <td className="px-3 py-2">
-                    {canEdit ? (
-                      <select value={r.priority} onChange={(e) => update(r.id, { priority: e.target.value })}
-                        className={`px-2 py-1 rounded-sm text-[11px] uppercase tracking-wider ${priorityClass(r.priority)}`}>
-                        {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
-                      </select>
-                    ) : (
-                      <span className={`px-2 py-1 rounded-sm text-[11px] uppercase tracking-wider ${priorityClass(r.priority)}`}>{r.priority}</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2">
-                    <input disabled={!canEdit} type="number" defaultValue={r.eirp ?? ""}
-                      onBlur={(e) => { const v = e.target.value === "" ? null : Number(e.target.value); if (v !== r.eirp) update(r.id, { eirp: v }); }}
-                      className="w-20 bg-transparent border border-transparent hover:border-border focus:border-primary px-2 py-1 rounded-sm" />
-                  </td>
-                  <td className="px-3 py-2">
-                    <input disabled={!canEdit} defaultValue={r.observation_requirement ?? ""}
-                      onBlur={(e) => e.target.value !== (r.observation_requirement ?? "") && update(r.id, { observation_requirement: e.target.value })}
-                      className="w-64 bg-transparent border border-transparent hover:border-border focus:border-primary px-2 py-1 rounded-sm" />
-                  </td>
-                  <td className="px-3 py-2">
-                    <input disabled={!canEdit} type="date" defaultValue={r.allocation_date}
-                      onBlur={(e) => e.target.value !== r.allocation_date && update(r.id, { allocation_date: e.target.value })}
-                      className="bg-transparent border border-transparent hover:border-border focus:border-primary px-2 py-1 rounded-sm" />
-                  </td>
-                  <td className="px-3 py-2">
-                    <input disabled={!canEdit} defaultValue={r.remarks ?? ""}
-                      onBlur={(e) => e.target.value !== (r.remarks ?? "") && update(r.id, { remarks: e.target.value })}
-                      className="w-48 bg-transparent border border-transparent hover:border-border focus:border-primary px-2 py-1 rounded-sm" />
-                  </td>
-                  <td className="px-3 py-2">
-                    {canEdit && (
-                      <Button variant="ghost" size="sm" onClick={() => remove(r.id)}>
-                        <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                      </Button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      <div className="flex flex-col h-[calc(100dvh-6rem)] min-h-0 -m-4 sm:-m-6 p-4 sm:p-6">
+        <div className="flex items-center justify-end gap-2 mb-2 shrink-0">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={exportData}
+            className="mono text-[11px] uppercase tracking-wider h-8"
+          >
+            <Download className="h-3.5 w-3.5 mr-1" /> Download CSV
+          </Button>
+          {canEdit && slot && (
+            <AddAllocation slot={slot} existingIds={rows.map((r) => r.satelliteId)} onAdded={handleAdded} />
+          )}
         </div>
-      )}
+
+        <div className="panel overflow-hidden flex flex-col flex-1 min-h-0">
+          <div className="px-4 py-1.5 border-b border-border bg-secondary/20 flex items-center justify-between gap-2 shrink-0">
+            <span className="mono text-[10px] uppercase tracking-wider text-muted-foreground">
+              {sortedRows.length} satellite{sortedRows.length !== 1 ? "s" : ""} allocated
+            </span>
+            <span className="mono text-[9px] text-muted-foreground">
+              Sorted by {SORTABLE_COLUMNS.find((c) => c.key === sortKey)?.label} ({sortDir === "asc" ? "ascending" : "descending"})
+            </span>
+          </div>
+
+          <StickyHorizontalTable className="flex-1 min-h-0">
+            <table className="min-w-full text-sm mono">
+              <thead className="bg-secondary sticky top-0 z-10">
+                <tr>
+                  {SORTABLE_COLUMNS.slice(0, 2).map((col) => (
+                    <SortTh
+                      key={col.key}
+                      col={col.key}
+                      label={col.label}
+                      cls={col.cls}
+                      sortKey={sortKey}
+                      sortDir={sortDir}
+                      onSort={handleSort}
+                    />
+                  ))}
+                  {STATIC_COLUMNS.slice(0, 2).map((col) => (
+                    <StaticTh key={col.label} label={col.label} cls={col.cls} />
+                  ))}
+                  <SortTh
+                    col={SORTABLE_COLUMNS[2].key}
+                    label={SORTABLE_COLUMNS[2].label}
+                    cls={SORTABLE_COLUMNS[2].cls}
+                    sortKey={sortKey}
+                    sortDir={sortDir}
+                    onSort={handleSort}
+                  />
+                  {STATIC_COLUMNS.slice(2).map((col) => (
+                    <StaticTh key={col.label} label={col.label} cls={col.cls} />
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {sortedRows.map((r) => (
+                  <tr key={r.id} className="border-t border-border hover:bg-secondary/40 align-top">
+                    <td className="px-3 py-2 font-bold text-primary">{r.priority}</td>
+                    <td className="px-3 py-2 font-bold">{r.satelliteName}</td>
+                    <td className="px-3 py-2">{r.country}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{r.orbitalPosition}</td>
+                    <td className="px-3 py-2">{r.launchDate}</td>
+                    <td className="px-3 py-2">{r.transponders}</td>
+                    <td className="px-3 py-2 text-[11px]">{r.beamDetails}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </StickyHorizontalTable>
+        </div>
+
+        <div className="mt-3 flex items-center justify-end gap-2 shrink-0">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setAdvancedOpen(true)}
+            className="gap-1.5"
+          >
+            <Settings2 className="h-4 w-4" />
+            Advanced Features
+          </Button>
+        </div>
+      </div>
+
+      <Dialog open={advancedOpen} onOpenChange={setAdvancedOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Advanced Features</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-2">
+            <Button type="button" variant="outline" className="justify-start" onClick={() => { exportData(); setAdvancedOpen(false); }}>
+              <Download className="h-4 w-4 mr-2" /> Export Allocations as CSV
+            </Button>
+            {canEdit && (
+              <Button
+                type="button"
+                variant="outline"
+                className="justify-start text-destructive hover:text-destructive"
+                onClick={handleClearUserAllocations}
+                disabled={userAddedCount === 0}
+              >
+                Clear User-Added Allocations
+              </Button>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </AppShell>
   );
 }
 
-function Th({ children }: { children?: React.ReactNode }) {
-  return <th className="text-left px-3 py-2 text-[11px] uppercase tracking-wider border-r border-border">{children}</th>;
-}
-
-function AddAllocation({ unitId, existingIds }: { unitId: string; existingIds: string[] }) {
+function AddAllocation({
+  slot,
+  existingIds,
+  onAdded,
+}: {
+  slot: NonNullable<ReturnType<typeof unitCodeToSlot>>;
+  existingIds: string[];
+  onAdded: () => void;
+}) {
   const [open, setOpen] = useState(false);
-  const qc = useQueryClient();
-  const { data: sats = [] } = useQuery({ queryKey: ["sats"], queryFn: listSatellites });
-  const [form, setForm] = useState({ satellite_id: "", priority: "Medium", eirp: "", observation_requirement: "", remarks: "" });
-  const available = sats.filter((s) => !existingIds.includes(s.id));
+  const [satelliteId, setSatelliteId] = useState("");
+  const catalog = useMemo(() => flattenSatelliteCatalog(), []);
+  const available = catalog.filter((s) => !existingIds.includes(s.id));
 
-  async function submit(e: React.FormEvent) {
+  function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.satellite_id) return;
-    const { error } = await supabase.from("allocations").insert({
-      unit_id: unitId,
-      satellite_id: form.satellite_id,
-      priority: form.priority as any,
-      eirp: form.eirp === "" ? null : Number(form.eirp),
-      observation_requirement: form.observation_requirement || null,
-      remarks: form.remarks || null,
-    });
-    if (error) return toast.error(error.message);
-    toast.success("Allocated");
+    if (!satelliteId) return;
+    const row = catalog.find((s) => s.id === satelliteId);
+    if (!row) return;
+    const added = addAllocationForUnit(slot, row);
+    if (!added) {
+      toast.error("Satellite already allocated.");
+      return;
+    }
+    toast.success(`Allocated ${row.name}`);
     setOpen(false);
-    setForm({ satellite_id: "", priority: "Medium", eirp: "", observation_requirement: "", remarks: "" });
-    qc.invalidateQueries({ queryKey: ["alloc", unitId] });
+    setSatelliteId("");
+    onAdded();
   }
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="sm" className="mono text-[11px] uppercase tracking-wider h-8"><Plus className="h-3.5 w-3.5 mr-1" /> Add Satellite</Button>
+        <Button size="sm" className="mono text-[11px] uppercase tracking-wider h-8">
+          <Plus className="h-3.5 w-3.5 mr-1" /> Add Satellite
+        </Button>
       </DialogTrigger>
       <DialogContent>
-        <DialogHeader><DialogTitle className="mono uppercase tracking-wider">Allocate Satellite</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle className="mono uppercase tracking-wider">Allocate Satellite</DialogTitle>
+        </DialogHeader>
         <form onSubmit={submit} className="space-y-3">
-          <div><Label className="label-eyebrow">Satellite</Label>
-            <Select value={form.satellite_id} onValueChange={(v) => setForm({ ...form, satellite_id: v })}>
-              <SelectTrigger><SelectValue placeholder="Select satellite" /></SelectTrigger>
-              <SelectContent>{available.map((s) => <SelectItem key={s.id} value={s.id}>{s.name} — {Number(s.orbital_position).toFixed(1)}°E</SelectItem>)}</SelectContent>
+          <div>
+            <Label className="label-eyebrow">Satellite</Label>
+            <Select value={satelliteId} onValueChange={setSatelliteId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select satellite" />
+              </SelectTrigger>
+              <SelectContent>
+                {available.map((s) => (
+                  <SelectItem key={s.id} value={s.id}>
+                    {s.name} — {s.countryOfOrigin} ({s.satellite.position})
+                  </SelectItem>
+                ))}
+              </SelectContent>
             </Select>
           </div>
-          <div><Label className="label-eyebrow">Priority</Label>
-            <Select value={form.priority} onValueChange={(v) => setForm({ ...form, priority: v })}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>{PRIORITIES.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}</SelectContent>
-            </Select>
-          </div>
-          <div><Label className="label-eyebrow">EIRP (dBW)</Label><Input type="number" value={form.eirp} onChange={(e) => setForm({ ...form, eirp: e.target.value })} /></div>
-          <div><Label className="label-eyebrow">Observation Requirement</Label><Input value={form.observation_requirement} onChange={(e) => setForm({ ...form, observation_requirement: e.target.value })} /></div>
-          <div><Label className="label-eyebrow">Remarks</Label><Input value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} /></div>
-          <Button type="submit" className="w-full mono uppercase tracking-wider">Allocate</Button>
+          <Button type="submit" className="w-full mono uppercase tracking-wider" disabled={!satelliteId}>
+            Allocate
+          </Button>
         </form>
       </DialogContent>
     </Dialog>

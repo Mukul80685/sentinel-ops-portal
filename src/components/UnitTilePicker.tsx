@@ -3,13 +3,19 @@ import { useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
 import { listUnits } from "@/lib/queries";
-import { Building2, Radar } from "lucide-react";
+import {
+  slotFromIndex,
+  unitTileTitle,
+  UNIT_LOCATIONS,
+  useAllocationCounts,
+} from "@/lib/priorityAllocation";
 
-const LABELS = ["Unit A", "Unit B", "Unit C", "Unit D", "Unit E", "Unit F", "Unit G", "Unit H"];
+const SLOT_COUNT = 8;
 
-function UnitTileGrid({ basePath }: { basePath: string }) {
+function UnitTileGrid({ basePath, fill }: { basePath: string; fill?: boolean }) {
   const navigate = useNavigate();
   const { data: units = [] } = useQuery({ queryKey: ["units"], queryFn: listUnits });
+  const counts = useAllocationCounts();
   const [warn, setWarn] = useState<number | null>(null);
 
   function pick(idx: number) {
@@ -22,38 +28,39 @@ function UnitTileGrid({ basePath }: { basePath: string }) {
   }
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-      {LABELS.map((label, idx) => {
+    <div
+      className={
+        fill
+          ? "grid grid-cols-2 sm:grid-cols-4 grid-rows-4 sm:grid-rows-2 gap-2 flex-1 min-h-0 h-full auto-rows-fr"
+          : "grid grid-cols-2 sm:grid-cols-4 gap-2"
+      }
+    >
+      {Array.from({ length: SLOT_COUNT }, (_, idx) => {
         const unit = units[idx];
+        const slot = slotFromIndex(idx);
         const unavailable = warn === idx && !unit;
+        const title = slot ? unitTileTitle(slot) : `Unit ${String.fromCharCode(65 + idx)}`;
+        const location = slot ? UNIT_LOCATIONS[slot] : "";
+        const count = slot ? counts[slot] : 0;
+
         return (
           <button
-            key={label}
+            key={idx}
             type="button"
             onClick={() => pick(idx)}
-            className={`tile text-left min-h-[72px] flex flex-col justify-between focus:outline-none focus:border-primary p-2.5 ${
-              unit ? "hover:border-primary cursor-pointer" : "opacity-80"
-            }`}
+            className={`tile text-center flex flex-col justify-between focus:outline-none focus:border-primary p-3 ${
+              fill ? "h-full min-h-0" : "min-h-[72px]"
+            } ${unit ? "hover:border-primary cursor-pointer" : "opacity-80"}`}
           >
-            <div className="flex items-center justify-between gap-1">
-              <div className="flex items-center gap-1.5">
-                <Building2 className="h-3.5 w-3.5 text-primary" />
-                <span className="label-eyebrow text-[9px]">Slot {String.fromCharCode(65 + idx)}</span>
+            <div className="min-w-0">
+              <div className="mono text-[14px] sm:text-[15px] font-bold uppercase leading-tight">
+                {title}
               </div>
-              <Radar
-                className="h-3 w-3 text-primary/45 shrink-0"
-                aria-label="Visibility matrix participant"
-              />
-            </div>
-            <div>
-              <div className="mono text-[13px] font-bold uppercase leading-tight">{label}</div>
               {unit ? (
-                <div className="text-[10px] text-foreground/85 mono mt-0.5 truncate">
-                  {unit.code} — {unit.name}
-                </div>
+                <div className="text-[10px] text-muted-foreground mono mt-1 truncate">{location}</div>
               ) : (
                 <div
-                  className={`text-[10px] mono mt-0.5 ${
+                  className={`text-[10px] mono mt-1 ${
                     unavailable ? "text-destructive" : "text-foreground/75"
                   }`}
                 >
@@ -61,6 +68,17 @@ function UnitTileGrid({ basePath }: { basePath: string }) {
                 </div>
               )}
             </div>
+
+            {unit && slot && (
+              <div className="flex flex-col items-center justify-center flex-1 py-2 min-h-[3rem]">
+                <span className="mono text-[26px] sm:text-[32px] font-bold text-primary leading-none tabular-nums">
+                  {count}
+                </span>
+                <span className="mono text-[10px] sm:text-[11px] text-muted-foreground mt-1 uppercase tracking-wider">
+                  Satellite{count !== 1 ? "s" : ""}
+                </span>
+              </div>
+            )}
           </button>
         );
       })}
@@ -71,15 +89,9 @@ function UnitTileGrid({ basePath }: { basePath: string }) {
 /** Embedded in Control Center — no AppShell wrapper */
 export function PriorityAllocationView() {
   return (
-    <>
-      <div className="panel p-4 mb-3">
-        <div className="label-eyebrow">Select Unit</div>
-        <div className="mono text-[11px] text-foreground/85 mt-1">
-          Choose a unit (A–H) to enter satellite priority and allocation.
-        </div>
-      </div>
-      <UnitTileGrid basePath="/priority" />
-    </>
+    <div className="flex flex-col -m-4 sm:-m-6 p-4 sm:p-6 h-[calc(100dvh-7.5rem)] min-h-0 overflow-hidden">
+      <UnitTileGrid basePath="/priority" fill />
+    </div>
   );
 }
 
@@ -94,13 +106,7 @@ export function UnitTilePicker({
 }) {
   return (
     <AppShell title={title} subtitle={subtitle} horizontalNav={null}>
-      <div className="panel p-4 mb-3">
-        <div className="label-eyebrow">Select Unit</div>
-        <div className="mono text-[11px] text-foreground/85 mt-1">
-          Choose a unit (A–H) to enter this module.
-        </div>
-      </div>
-      <UnitTileGrid basePath={basePath} />
+      <UnitTileGrid basePath={basePath} fill />
     </AppShell>
   );
 }

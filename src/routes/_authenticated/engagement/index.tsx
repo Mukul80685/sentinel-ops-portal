@@ -5,8 +5,6 @@ import { Empty } from "@/components/Empty";
 import { listUnits } from "@/lib/queries";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  buildAllocatedIds,
-  computeBottleneckEngagement,
   ENGAGEMENTS_ALL_KEY,
   engColor,
   fetchAllEngagements,
@@ -14,9 +12,11 @@ import {
 import { INT_UNITS } from "@/lib/intelRepository";
 import { hasIntelData } from "@/lib/intelAnalysisData";
 import {
-  buildSyncedUnitScanSnapshot,
+  buildLiveEngagementFleetModel,
+  fleetActiveScanTotal,
+} from "@/lib/liveEngagementModel";
+import {
   formatLiveEngagementSatelliteLabel,
-  resolveIntUnitSlug,
   validateOperationalSync,
 } from "@/lib/operationalSync";
 import { ChevronRight } from "lucide-react";
@@ -78,26 +78,20 @@ export function EngagementDashboardView() {
     [engagements, units, intelRows],
   );
 
+  const fleetModel = useMemo(
+    () => buildLiveEngagementFleetModel({ engagements, equipment, dbUnits: units, intelRows }),
+    [engagements, equipment, units, intelRows],
+  );
+
   const rows = useMemo(() => {
     return units.map((u) => {
-      const unitEq = equipment.filter((e: any) => e.unit_id === u.id);
-      const activeEngs = engagements.filter(
-        (e: any) => e.unit_id === u.id && (e.status === "In Progress" || e.status === "Paused"),
-      );
-      const allocatedIds = buildAllocatedIds(activeEngs);
-      const { pct } = computeBottleneckEngagement(unitEq, allocatedIds);
-      const intSlug = resolveIntUnitSlug(u.id, u.code);
-      const scan = buildSyncedUnitScanSnapshot(engagements, u.id, intSlug, intelRows);
-      const satDisplay = formatLiveEngagementSatelliteLabel(scan.satellites, 2);
-
-      return { unit: u, pct, scan, satDisplay };
+      const cap = fleetModel.get(u.id)!;
+      const satDisplay = formatLiveEngagementSatelliteLabel(cap.snapshot.satellites, 2);
+      return { unit: u, cap, satDisplay };
     });
-  }, [units, equipment, engagements, intelRows]);
+  }, [units, fleetModel]);
 
-  const totalActive = useMemo(
-    () => rows.reduce((sum, r) => sum + r.scan.activeCount, 0),
-    [rows],
-  );
+  const totalActive = useMemo(() => fleetActiveScanTotal(fleetModel), [fleetModel]);
 
   if (units.length === 0) {
     return <Empty title="No units registered" />;
@@ -134,7 +128,7 @@ export function EngagementDashboardView() {
       </div>
 
       <div className="grid gap-3 grid-cols-2 sm:grid-cols-4">
-        {rows.map(({ unit, pct, scan, satDisplay }) => (
+        {rows.map(({ unit, cap, satDisplay }) => (
           <div key={unit.id} className="panel flex flex-col overflow-hidden">
             <div className="flex flex-col items-center gap-2 px-3 pt-3 pb-2">
               <div className="text-center w-full">
@@ -146,18 +140,20 @@ export function EngagementDashboardView() {
                 </div>
               </div>
 
-              <EngagementRing pct={pct} />
+              <EngagementRing pct={cap.occupancyPct} />
 
               <div className="w-full min-h-[52px]">
-                {scan.satellites.length === 0 ? (
+                {cap.snapshot.satellites.length === 0 ? (
                   <div className="mono text-[8px] uppercase tracking-wider text-foreground/80 text-center py-1">
-                    No active scans
+                    {cap.feasibilityStatus === "NON_OPERATIONAL"
+                      ? "Non-operational"
+                      : "No active scans"}
                   </div>
                 ) : (
                   <div className="text-center">
                     <p
                       className="mono text-[8px] text-foreground leading-snug truncate px-0.5"
-                      title={scan.satellites.map((s) => s.name).join(", ")}
+                      title={cap.snapshot.satellites.map((s) => s.name).join(", ")}
                     >
                       {satDisplay.label}
                     </p>

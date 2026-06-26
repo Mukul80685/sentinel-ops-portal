@@ -1,7 +1,6 @@
 import { Link, useRouter, useRouterState } from "@tanstack/react-router";
 import {
   Home,
-  ShieldCheck,
   Power,
   ArrowLeft,
   Satellite,
@@ -13,6 +12,8 @@ import {
   Trash2,
 } from "lucide-react";
 import { performSignOut, useAuth, useIsAdmin } from "@/lib/auth";
+import { useSidebarModules } from "@/components/sidebar/SidebarModulesProvider";
+import { SidebarProfileButton } from "@/components/sidebar/SidebarProfileButton";
 import { TIMEZONES, type IanaTimezone } from "@/lib/appTimezones";
 import { PasswordResetNotice } from "@/components/auth/PasswordResetNotice";
 import { Button } from "@/components/ui/button";
@@ -167,37 +168,45 @@ function SidebarLink({
   );
 }
 
+function SidebarModalButton({
+  label,
+  icon: Icon,
+  active,
+  onClick,
+}: {
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  active?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex w-full items-center gap-2 px-2 py-1 mono text-[11px] uppercase tracking-wider rounded-sm transition-colors leading-tight ${
+        active
+          ? "bg-secondary text-foreground"
+          : "text-sidebar-foreground hover:bg-secondary/50 hover:text-foreground"
+      }`}
+    >
+      <Icon className="h-3 w-3 shrink-0" />
+      {label}
+    </button>
+  );
+}
+
 /**
  * Standard horizontal navigation bar — rendered automatically on all module pages
  * unless a custom horizontalNav is passed to AppShell.
  */
 function StandardModuleNav() {
   const isAdmin = useIsAdmin();
-  const [mode, setMode] = useState<"admin" | "user">("user");
   const resolveTo = (item: (typeof standardNavItems)[number]) =>
-    mode === "admin" && isAdmin ? item.adminTo : item.userTo;
+    isAdmin ? item.adminTo : item.userTo;
 
   return (
     <nav className="border-b border-border bg-sidebar">
       <div className="flex items-center overflow-x-auto px-4 sm:px-5 py-1.5 gap-0.5 min-w-0">
-        <button
-          type="button"
-          onClick={() => setMode((m) => (m === "admin" ? "user" : "admin"))}
-          disabled={!isAdmin}
-          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] rounded-sm whitespace-nowrap shrink-0 transition-colors ${
-            mode === "admin" && isAdmin
-              ? "bg-secondary text-foreground font-medium"
-              : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
-          } ${!isAdmin ? "opacity-70 cursor-default" : "cursor-pointer"}`}
-        >
-          {mode === "admin" && isAdmin ? (
-            <ShieldCheck className="h-3.5 w-3.5" />
-          ) : (
-            <User className="h-3.5 w-3.5" />
-          )}
-          {mode === "admin" && isAdmin ? "Admin" : "User"}
-        </button>
-
         {standardNavItems.map((item) => (
           <Link
             key={item.key}
@@ -342,41 +351,25 @@ function DateTimeModal({
  * Operational modules (Control Center, Visibility, Inventory, Serviceability) are on the homepage.
  */
 function PrimaryNavSidebar({
-  mode,
-  setMode,
-  isAdmin,
   pathname,
   stamp,
   onClockClick,
 }: {
-  mode: "admin" | "user";
-  setMode: (fn: (m: "admin" | "user") => "admin" | "user") => void;
-  isAdmin: boolean;
   pathname: string;
   stamp: TzStamp;
   onClockClick: () => void;
 }) {
-  const resolveTo = (item: (typeof supportNavItems)[number]) =>
-    mode === "admin" && isAdmin ? item.adminTo : item.userTo;
+  const { activeModule, openModule } = useSidebarModules();
 
   return (
     <div className="flex flex-col h-full">
-      {/* TOP — User Profile, then Clock */}
+      {/* TOP — profile name, then Clock */}
       <div className="px-2 pt-1.5 pb-1 flex flex-col gap-0.5 shrink-0">
-        <button
-          type="button"
-          onClick={() => setMode((m) => (m === "admin" ? "user" : "admin"))}
-          disabled={!isAdmin}
-          className={`${secondaryCtrlCls} ${!isAdmin ? "opacity-70 cursor-default" : "cursor-pointer"}`}
-          title={isAdmin ? "Toggle admin / user mode" : "User profile"}
-        >
-          {mode === "admin" && isAdmin ? (
-            <ShieldCheck className="h-3 w-3 shrink-0" />
-          ) : (
-            <User className="h-3 w-3 shrink-0" />
-          )}
-          {mode === "admin" && isAdmin ? "Admin Account" : "User Profile"}
-        </button>
+        <SidebarProfileButton
+          active={activeModule === "profile"}
+          onClick={() => openModule("profile")}
+          className={`${secondaryCtrlCls} cursor-pointer ${activeModule === "profile" ? "bg-secondary" : ""}`}
+        />
         <SidebarClock stamp={stamp} onClockClick={onClockClick} />
       </div>
 
@@ -384,26 +377,43 @@ function PrimaryNavSidebar({
 
       {/* MAIN — utility navigation */}
       <nav className="flex-1 py-1 px-1.5 flex flex-col gap-0 min-h-0">
-        {supportNavItems.map((item) => {
-          const to = resolveTo(item);
-          return (
-            <SidebarLink
-              key={item.key}
-              to={to}
-              label={item.label}
-              icon={item.icon}
-              active={navActive(pathname, to)}
-            />
-          );
-        })}
+        <SidebarModalButton
+          label="Satellites"
+          icon={Satellite}
+          active={activeModule === "satellites"}
+          onClick={() => openModule("satellites")}
+        />
+        <SidebarModalButton
+          label="Recent Discussions"
+          icon={Clock}
+          active={activeModule === "discussions"}
+          onClick={() => openModule("discussions")}
+        />
+        <SidebarModalButton
+          label="Reports"
+          icon={FileText}
+          active={activeModule === "reports"}
+          onClick={() => openModule("reports")}
+        />
+        <SidebarLink
+          to="/discarded"
+          label="Discarded Frequencies"
+          icon={Trash2}
+          active={navActive(pathname, "/discarded")}
+        />
       </nav>
 
       {/* BOTTOM — Settings, Sign Out */}
       <div className="border-t border-border px-2 py-1 flex flex-col gap-0.5 shrink-0">
-        <Link to={isAdmin ? "/admin/users" : "/"} className={secondaryCtrlCls} title="Settings">
+        <button
+          type="button"
+          onClick={() => openModule("settings")}
+          className={`${secondaryCtrlCls} ${activeModule === "settings" ? "bg-secondary" : ""}`}
+          title="Settings"
+        >
           <Settings className="h-3 w-3 shrink-0" />
           Settings
-        </Link>
+        </button>
         <button type="button" onClick={() => void performSignOut()} className={secondaryCtrlCls}>
           <Power className="h-3 w-3 shrink-0" />
           Sign Out
@@ -418,46 +428,65 @@ function PrimaryNavSidebar({
  * Layout: User/nav items evenly distributed (flex-1) → Settings → Clock + Sign Out (pinned bottom).
  */
 function SecondarySidebar({
-  mode,
-  setMode,
-  isAdmin,
   pathname,
   resolveSecondaryTo,
   stamp,
   onClockClick,
 }: {
-  mode: "admin" | "user";
-  setMode: (fn: (m: "admin" | "user") => "admin" | "user") => void;
-  isAdmin: boolean;
   pathname: string;
   resolveSecondaryTo: (item: (typeof standardNavItems)[number]) => string;
   stamp: TzStamp;
   onClockClick: () => void;
 }) {
+  const { activeModule, openModule } = useSidebarModules();
+
   return (
     <div className="flex flex-col h-full">
-      {/* TOP — User toggle + 4 nav items, evenly distributed vertically */}
       <nav className="flex-1 flex flex-col justify-between px-1.5 py-3">
-        <button
-          type="button"
-          onClick={() => setMode((m) => (m === "admin" ? "user" : "admin"))}
-          disabled={!isAdmin}
+        <SidebarProfileButton
+          active={activeModule === "profile"}
+          onClick={() => openModule("profile")}
           className={`flex w-full items-center gap-2 px-2 py-1.5 mono text-[11px] uppercase tracking-wider rounded-sm transition-colors ${
-            mode === "admin" && isAdmin
+            activeModule === "profile"
               ? "bg-secondary text-foreground font-bold"
               : "text-sidebar-foreground hover:bg-secondary/50"
-          } ${!isAdmin ? "opacity-70 cursor-default" : "cursor-pointer"}`}
-          title={isAdmin ? "Toggle admin / user mode" : "User mode"}
-        >
-          {mode === "admin" && isAdmin ? (
-            <ShieldCheck className="h-3 w-3 shrink-0" />
-          ) : (
-            <User className="h-3 w-3 shrink-0" />
-          )}
-          <span>{mode === "admin" && isAdmin ? "Admin" : "User"}</span>
-        </button>
+          } cursor-pointer`}
+        />
 
         {standardNavItems.map((item) => {
+          if (item.key === "satellites") {
+            return (
+              <SidebarModalButton
+                key={item.key}
+                label={item.label}
+                icon={item.icon}
+                active={activeModule === "satellites"}
+                onClick={() => openModule("satellites")}
+              />
+            );
+          }
+          if (item.key === "minutes") {
+            return (
+              <SidebarModalButton
+                key={item.key}
+                label={item.label}
+                icon={item.icon}
+                active={activeModule === "discussions"}
+                onClick={() => openModule("discussions")}
+              />
+            );
+          }
+          if (item.key === "reports") {
+            return (
+              <SidebarModalButton
+                key={item.key}
+                label={item.label}
+                icon={item.icon}
+                active={activeModule === "reports"}
+                onClick={() => openModule("reports")}
+              />
+            );
+          }
           const to = resolveSecondaryTo(item);
           return (
             <SidebarLink
@@ -471,19 +500,18 @@ function SecondarySidebar({
         })}
       </nav>
 
-      {/* MIDDLE — Settings */}
       <div className="border-t border-border px-2 py-1.5">
-        <Link
-          to={isAdmin ? "/admin/users" : "/"}
-          className={secondaryCtrlCls}
+        <button
+          type="button"
+          onClick={() => openModule("settings")}
+          className={`${secondaryCtrlCls} ${activeModule === "settings" ? "bg-secondary" : ""}`}
           title="Settings"
         >
           <Settings className="h-3 w-3 shrink-0" />
           Settings
-        </Link>
+        </button>
       </div>
 
-      {/* BOTTOM — Clock (live) + Sign Out */}
       <div className="border-t border-border px-2 py-1.5 space-y-0.5">
         <SidebarClock stamp={stamp} onClockClick={onClockClick} muted />
         <button type="button" onClick={() => void performSignOut()} className={secondaryCtrlCls}>
@@ -499,6 +527,7 @@ export function AppShell({
   title,
   subtitle,
   headerIcon,
+  headerTitleClassName,
   showBack = false,
   backLink,
   isHome = false,
@@ -511,6 +540,8 @@ export function AppShell({
   title?: string;
   subtitle?: string;
   headerIcon?: ReactNode;
+  /** Override default module title styling (e.g. smaller, no truncate). */
+  headerTitleClassName?: string;
   showBack?: boolean;
   /** When set, Back navigates here instead of browser history */
   backLink?: {
@@ -537,10 +568,8 @@ export function AppShell({
   const [dtOpen, setDtOpen] = useState(false);
   const tzStamp = useLiveTzStamp(selectedTz);
 
-  const [mode, setMode] = useState<"admin" | "user">("user");
-
   const resolveSecondaryTo = (item: (typeof standardNavItems)[number]) =>
-    mode === "admin" && isAdmin ? item.adminTo : item.userTo;
+    isAdmin ? item.adminTo : item.userTo;
 
   return (
     <div className="flex h-screen overflow-hidden text-foreground">
@@ -551,9 +580,6 @@ export function AppShell({
       >
         {sidebarVariant === "secondary" ? (
           <SecondarySidebar
-            mode={mode}
-            setMode={setMode}
-            isAdmin={isAdmin}
             pathname={pathname}
             resolveSecondaryTo={resolveSecondaryTo}
             stamp={tzStamp}
@@ -561,9 +587,6 @@ export function AppShell({
           />
         ) : (
           <PrimaryNavSidebar
-            mode={mode}
-            setMode={setMode}
-            isAdmin={isAdmin}
             pathname={pathname}
             stamp={tzStamp}
             onClockClick={() => setDtOpen(true)}
@@ -621,12 +644,22 @@ export function AppShell({
                 {headerIcon ? (
                   <div className="flex items-center justify-center gap-2 mt-0.5">
                     {headerIcon}
-                    <h1 className="mono text-base sm:text-lg font-bold tracking-tight uppercase truncate">
+                    <h1
+                      className={
+                        headerTitleClassName ??
+                        "mono text-base sm:text-lg font-bold tracking-tight uppercase truncate"
+                      }
+                    >
                       {title ?? "Module"}
                     </h1>
                   </div>
                 ) : (
-                  <h1 className="mono text-base sm:text-lg font-bold tracking-tight uppercase truncate">
+                  <h1
+                    className={
+                      headerTitleClassName ??
+                      "mono text-base sm:text-lg font-bold tracking-tight uppercase truncate"
+                    }
+                  >
                     {title ?? "Module"}
                   </h1>
                 )}

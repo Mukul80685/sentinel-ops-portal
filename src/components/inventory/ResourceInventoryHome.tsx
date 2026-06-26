@@ -12,7 +12,6 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
-import { InventoryModuleNav } from "@/components/inventory/InventoryModuleNav";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -311,8 +310,7 @@ export function ResourceInventoryHome() {
       title="Resource Inventory"
       subtitle="Ground Station Equipment Registry"
       headerIcon={<Boxes className="h-4 w-4 shrink-0" />}
-      sidebarVariant="secondary"
-      horizontalNav={<InventoryModuleNav />}
+      horizontalNav={null}
     >
       {/* ── Unit tiles: 4 columns × 2 rows = 8 units ── */}
       {isLoading ? (

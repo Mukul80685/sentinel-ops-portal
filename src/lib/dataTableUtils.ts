@@ -56,6 +56,21 @@ export function downloadCsv(filename: string, csv: string): void {
   URL.revokeObjectURL(url);
 }
 
+/** Triggers Excel download from headers + rows. */
+export function downloadExcel(
+  filename: string,
+  headers: string[],
+  rows: (string | number | null | undefined)[][],
+): void {
+  // Dynamic import keeps bundle lean for non-export paths
+  import("xlsx").then((XLSX) => {
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Export");
+    XLSX.writeFile(wb, filename.endsWith(".xlsx") ? filename : `${filename}.xlsx`);
+  });
+}
+
 // ─── Checkbox helpers ─────────────────────────────────────────────────────────
 
 /** Toggle a single id in a selection Set (immutably). */
