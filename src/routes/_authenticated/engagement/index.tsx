@@ -1,24 +1,10 @@
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { Empty } from "@/components/Empty";
-import { listUnits } from "@/lib/queries";
-import { supabase } from "@/integrations/supabase/client";
-import {
-  ENGAGEMENTS_ALL_KEY,
-  engColor,
-  fetchAllEngagements,
-} from "@/lib/engagementEngine";
+import { engColor } from "@/lib/engagementEngine";
 import { INT_UNITS } from "@/lib/intelRepository";
-import { hasIntelData } from "@/lib/intelAnalysisData";
-import {
-  buildLiveEngagementFleetModel,
-  fleetActiveScanTotal,
-} from "@/lib/liveEngagementModel";
-import {
-  formatLiveEngagementSatelliteLabel,
-  validateOperationalSync,
-} from "@/lib/operationalSync";
+import { useOperationalState } from "@/hooks/useOperationalState";
+import { formatLiveEngagementSatelliteLabel } from "@/lib/operationalSync";
 import { ChevronRight } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/engagement/")({
@@ -29,69 +15,19 @@ export const Route = createFileRoute("/_authenticated/engagement/")({
 });
 
 export function EngagementDashboardView() {
-  const { data: units = [] } = useQuery({ queryKey: ["units"], queryFn: listUnits });
-
-  const { data: equipment = [] } = useQuery({
-    queryKey: ["equipment-all-cat"],
-    queryFn: async () =>
-      (await supabase
-        .from("equipment")
-        .select("id,unit_id,serviceability,category:category_id(name)")
-      ).data ?? [],
-    staleTime: 30 * 1000,
-  });
-
-  const { data: engagements = [] } = useQuery({
-    queryKey: ENGAGEMENTS_ALL_KEY,
-    queryFn: fetchAllEngagements,
-    staleTime: 30 * 1000,
-  });
-
-  const intelDbUnitIds = useMemo(
-    () =>
-      INT_UNITS.filter((u) => hasIntelData(u.id))
-        .map(
-          (u) =>
-            units.find(
-              (d) => d.code === u.code || d.code?.replace(/^GATE[-\s]?/i, "") === u.code,
-            )?.id,
-        )
-        .filter(Boolean) as string[],
-    [units],
-  );
-
-  const { data: intelRows = [] } = useQuery({
-    queryKey: ["intel-records-all", intelDbUnitIds],
-    queryFn: async () => {
-      if (intelDbUnitIds.length === 0) return [];
-      const { data } = await supabase
-        .from("intel_records")
-        .select("id, unit_id, satellite_id, band, analysis_report, summary, updated_at, observation_date");
-      return (data ?? []).filter((r) => intelDbUnitIds.includes(r.unit_id));
-    },
-    enabled: intelDbUnitIds.length > 0,
-    staleTime: 30_000,
-  });
-
-  const syncIssues = useMemo(
-    () => validateOperationalSync({ engagements, dbUnits: units, intelRows }),
-    [engagements, units, intelRows],
-  );
-
-  const fleetModel = useMemo(
-    () => buildLiveEngagementFleetModel({ engagements, equipment, dbUnits: units, intelRows }),
-    [engagements, equipment, units, intelRows],
-  );
+  const { fleetState, units } = useOperationalState();
 
   const rows = useMemo(() => {
+    if (!fleetState) return [];
     return units.map((u) => {
-      const cap = fleetModel.get(u.id)!;
+      const state = fleetState.byUnitId.get(u.id)!;
+      const cap = state.capability;
       const satDisplay = formatLiveEngagementSatelliteLabel(cap.snapshot.satellites, 2);
-      return { unit: u, cap, satDisplay };
+      return { unit: u, cap, satDisplay, state };
     });
-  }, [units, fleetModel]);
+  }, [units, fleetState]);
 
-  const totalActive = useMemo(() => fleetActiveScanTotal(fleetModel), [fleetModel]);
+  const totalActive = fleetState?.totalActiveScans ?? 0;
 
   if (units.length === 0) {
     return <Empty title="No units registered" />;
@@ -99,28 +35,6 @@ export function EngagementDashboardView() {
 
   return (
     <>
-      {syncIssues.length > 0 && (
-        <div
-          className="panel mb-3 px-3 py-2 border-amber-500/40 bg-amber-500/8"
-          role="status"
-        >
-          <p className="mono text-[9px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
-            Operational Sync Validation — {syncIssues.length} issue{syncIssues.length !== 1 ? "s" : ""}
-          </p>
-          <ul className="mt-1 space-y-0.5 max-h-24 overflow-y-auto">
-            {syncIssues.slice(0, 5).map((issue, i) => (
-              <li key={`${issue.code}-${i}`} className="mono text-[9px] text-foreground/85 leading-snug">
-                [{issue.code}] {issue.message}
-                {issue.satelliteName ? ` (${issue.satelliteName})` : ""}
-              </li>
-            ))}
-            {syncIssues.length > 5 && (
-              <li className="mono text-[8px] text-muted-foreground">+{syncIssues.length - 5} more</li>
-            )}
-          </ul>
-        </div>
-      )}
-
       <div className="panel mb-3 px-3 py-2 flex items-center gap-4 flex-wrap">
         <FleetStat label="Units" value={units.length} />
         <div className="h-4 w-px bg-border hidden sm:block" />

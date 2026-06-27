@@ -1,8 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
-import { supabase } from "@/integrations/supabase/client";
-import { listCategories } from "@/lib/queries";
+import { listCategories, getUnitById, listEquipmentForUnit } from "@/lib/queries";
 import {
   Activity,
   Boxes,
@@ -33,21 +32,15 @@ function InventoryCategories() {
   const { unitId } = Route.useParams();
   const { data: unit } = useQuery({
     queryKey: ["unit", unitId],
-    queryFn: async () => {
-      const { data } = await supabase.from("units").select("*").eq("id", unitId).maybeSingle();
-      return data;
-    },
+    queryFn: () => getUnitById(unitId),
   });
   const { data: cats = [] } = useQuery({ queryKey: ["cats"], queryFn: listCategories });
   const { data: counts = {} } = useQuery({
     queryKey: ["eq-counts", unitId],
     queryFn: async () => {
-      const { data } = await supabase
-        .from("equipment")
-        .select("category_id")
-        .eq("unit_id", unitId);
+      const data = await listEquipmentForUnit(unitId);
       const map: Record<string, number> = {};
-      (data ?? []).forEach((r: any) => (map[r.category_id] = (map[r.category_id] ?? 0) + 1));
+      data.forEach((r) => (map[r.category_id] = (map[r.category_id] ?? 0) + 1));
       return map;
     },
   });

@@ -3,7 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
 import { Empty } from "@/components/Empty";
-import { listSatellites } from "@/lib/queries";
+import { getUnitById, listEquipmentForUnit, listEngagementsForUnit, listSatellites } from "@/lib/queries";
 import { supabase } from "@/integrations/supabase/client";
 import { useCanEdit } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
@@ -434,23 +434,14 @@ function EngagementUnit() {
 
   const { data: unit } = useQuery({
     queryKey: ["unit", unitId],
-    queryFn: async () =>
-      (await supabase.from("units").select("*").eq("id", unitId).maybeSingle()).data,
+    queryFn: () => getUnitById(unitId),
   });
 
   const { data: engResult } = useQuery({
     queryKey: ["eng", unitId],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("engagements")
-        .select(ENGAGEMENT_LIST_SELECT)
-        .eq("unit_id", unitId)
-        .order("observation_start", { ascending: false });
-      if (error) {
-        console.error("[engagement] fetch failed:", error.message);
-        return { rows: [] as any[], failed: true };
-      }
-      return { rows: data ?? [], failed: false };
+      const rows = await listEngagementsForUnit(unitId);
+      return { rows, failed: false };
     },
     retry: false,
   });
@@ -460,17 +451,7 @@ function EngagementUnit() {
 
   const { data: equipmentRaw = [] } = useQuery({
     queryKey: ["unit-equipment-detail", unitId],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("equipment")
-        .select("id, name, serviceability, category:category_id(name)")
-        .eq("unit_id", unitId);
-      if (error) {
-        console.error("[engagement] equipment fetch failed:", error.message);
-        return [];
-      }
-      return data ?? [];
-    },
+    queryFn: () => listEquipmentForUnit(unitId),
   });
 
   const { data: allEngagements = [] } = useQuery({

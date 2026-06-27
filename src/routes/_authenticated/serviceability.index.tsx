@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { Empty } from "@/components/Empty";
-import { listUnits, listCategories, type Unit } from "@/lib/queries";
+import { listUnits, listCategories, listAllEquipmentDetailed, type Unit } from "@/lib/queries";
 import { supabase } from "@/integrations/supabase/client";
 import { useCanEdit } from "@/lib/auth";
 import {
@@ -234,14 +234,7 @@ function ServiceabilityPage() {
 
   const { data: equipment = [] } = useQuery({
     queryKey: ["equipment-all"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("equipment")
-        .select("id,name,unit_id,serviceability,category_id, units:unit_id(code,name), category:category_id(id,name)")
-        .order("name");
-      if (error) throw error;
-      return data ?? [];
-    },
+    queryFn: listAllEquipmentDetailed,
   });
 
   // ── Category stats (computed from live equipment data) ──────────────────────

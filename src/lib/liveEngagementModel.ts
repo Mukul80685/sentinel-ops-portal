@@ -60,32 +60,12 @@ export type LiveEngagementInputs = {
   intelRows: any[];
 };
 
-/** Intel-backed metrics only — mock analysis never drives eligibility or occupancy. */
-export function computeSatelliteAnalysisReal(
+/** Per-satellite analysis — uses intel when present, otherwise deterministic mock (never zeroed). */
+export function computeSatelliteAnalysisForEngagement(
   engagement: any,
   intelRows: any[],
 ): SatelliteAnalysis {
-  const satId = engagement.satellite_id as string | undefined;
-  const unitId = engagement.unit_id as string | undefined;
-
-  const related = intelRows.filter(
-    (r) => r.satellite_id === satId && r.unit_id === unitId,
-  );
-
-  const base = computeSatelliteAnalysis(engagement, intelRows);
-
-  if (related.length === 0) {
-    return {
-      polarization: base.polarization,
-      lastUpdate: base.lastUpdate,
-      scanned: 0,
-      analyzed: 0,
-      pending: 0,
-      analysisPct: 0,
-    };
-  }
-
-  return base;
+  return computeSatelliteAnalysis(engagement, intelRows);
 }
 
 function equipmentByIdMap(equipment: any[]): Map<string, any> {
@@ -270,7 +250,7 @@ export function computeUnitCapability(
 
   for (const eng of sortEngagementCandidates(unitEngs)) {
     const name = (eng.satellites?.name as string | undefined) ?? "Unassigned";
-    const analysis = computeSatelliteAnalysisReal(eng, intelRows);
+    const analysis = computeSatelliteAnalysisForEngagement(eng, intelRows);
 
     if (!existsInIntOrActiveScan(eng, intUnitSlug, intelRows)) continue;
 

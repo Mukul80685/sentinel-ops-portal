@@ -11,7 +11,7 @@ import {
 } from "@/lib/engagementEngine";
 import { computeUnitCapability } from "@/lib/liveEngagementModel";
 import { canUnitScanSatellite } from "@/lib/intelIntegrity";
-import { hasIntelData, isSatelliteInIntRoster } from "@/lib/intelAnalysisData";
+import { isSatelliteInIntRoster } from "@/lib/intelAnalysisData";
 import { INT_UNITS } from "@/lib/intelRepository";
 
 export type OperationalSyncIssueCode = "A" | "B" | "C" | "D" | "E";
@@ -26,18 +26,21 @@ export type OperationalSyncIssue = {
   engagementId?: string;
 };
 
-/** Map Supabase unit row → INT slug (alpha/bravo/charlie) when applicable. */
+/** Map Supabase unit row → INT slug (alpha … hotel) for visibility gates. */
 export function resolveIntUnitSlug(
   dbUnitId: string,
   dbUnitCode?: string,
 ): string | null {
+  const opSlot = dbUnitId.match(/^op-unit-([a-z]+)$/i);
+  if (opSlot) return opSlot[1].toLowerCase();
+
   const normalizedCode = dbUnitCode?.replace(/^GATE[-\s]?/i, "").trim();
   if (normalizedCode) {
     const match = INT_UNITS.find((u) => u.code === normalizedCode);
-    if (match && hasIntelData(match.id)) return match.id;
+    if (match) return match.id;
   }
   const direct = INT_UNITS.find((u) => u.id === dbUnitId);
-  if (direct && hasIntelData(direct.id)) return direct.id;
+  if (direct) return direct.id;
   return null;
 }
 

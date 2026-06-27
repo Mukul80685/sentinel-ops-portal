@@ -13,7 +13,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { ClipboardList, ImageOff } from "lucide-react";
 import { fileUrl, uploadFile } from "@/lib/storage";
-import { statusClass } from "@/lib/queries";
+import { getUnitById, listCategories, listEquipmentForUnit, statusClass } from "@/lib/queries";
 
 export const Route = createFileRoute("/_authenticated/inventory/$unitId/$categoryId/")({
   component: EquipmentList,
@@ -34,25 +34,20 @@ function EquipmentList() {
   const { data: meta } = useQuery({
     queryKey: ["meta", unitId, categoryId],
     queryFn: async () => {
-      const [u, c] = await Promise.all([
-        supabase.from("units").select("code,name").eq("id", unitId).maybeSingle(),
-        supabase.from("equipment_categories").select("name").eq("id", categoryId).maybeSingle(),
-      ]);
-      return { unit: u.data, cat: c.data };
+      const [unit, cats] = await Promise.all([getUnitById(unitId), listCategories()]);
+      const cat = cats.find((c) => c.id === categoryId) ?? null;
+      return {
+        unit: unit ? { code: unit.code, name: unit.name } : null,
+        cat: cat ? { name: cat.name } : null,
+      };
     },
   });
 
   const { data: items = [] } = useQuery({
     queryKey: ["eq", unitId, categoryId],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("equipment")
-        .select("*")
-        .eq("unit_id", unitId)
-        .eq("category_id", categoryId)
-        .order("name");
-      if (error) throw error;
-      return data ?? [];
+      const all = await listEquipmentForUnit(unitId);
+      return all.filter((e) => e.category_id === categoryId).sort((a, b) => a.name.localeCompare(b.name));
     },
   });
 

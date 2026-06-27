@@ -3,15 +3,20 @@
  */
 
 import { supabase } from "@/integrations/supabase/client";
+import { shouldUseOperationalStore } from "@/lib/operationalDataSource";
 
 /** Shared query key — fleet dashboard and unit pages stay in sync after mutations. */
 export const ENGAGEMENTS_ALL_KEY = ["engagements", "all"] as const;
 
 export async function fetchAllEngagements() {
+  if (await shouldUseOperationalStore()) {
+    const { getOperationalEngagements } = await import("@/lib/operationalStore");
+    return getOperationalEngagements();
+  }
   const { data, error } = await supabase
     .from("engagements")
     .select(
-      "id,unit_id,status,satellite_id,antenna_id,demodulator_id,processing_server_id,satellites:satellite_id(name)",
+      "id,unit_id,status,satellite_id,antenna_id,demodulator_id,processing_server_id,observation_start,updated_at,remarks,satellites:satellite_id(name)",
     )
     .order("observation_start", { ascending: false });
   if (error) throw error;

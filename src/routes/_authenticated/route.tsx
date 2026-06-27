@@ -1,6 +1,7 @@
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 import { supabase } from "@/integrations/supabase/client";
 import { getMockSession } from "@/lib/passwordRecovery";
+import { OperationalStoreGate } from "@/components/OperationalStoreGate";
 
 export const Route = createFileRoute("/_authenticated")({
   ssr: false,
@@ -18,5 +19,10 @@ export const Route = createFileRoute("/_authenticated")({
     if (!data.session?.user) throw redirect({ to: "/auth" });
     return { user: data.session.user };
   },
-  component: () => <Outlet />,
+  component: () => (
+    <>
+      <OperationalStoreGate />
+      <Outlet />
+    </>
+  ),
 });

@@ -1,6 +1,8 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState, type ComponentType } from "react";
 import { AppShell } from "@/components/AppShell";
+import { useOperationalState } from "@/hooks/useOperationalState";
+import { buildUnitActivityFromState } from "@/lib/operationalState";
 import {
   CONTROL_CENTER_MODULE_MAP,
   CONTROL_CENTER_MODULES,
@@ -1325,6 +1327,29 @@ function UnitRow({ unit, data, idx }: { unit: UnitLabel; data: UnitScanData; idx
   const [activeDrop,  setActiveDrop ] = useState(false);
   const [historyDrop, setHistoryDrop] = useState(false);
 
+  if (data.activeSats.length === 0) {
+    return (
+      <tr className="border-b border-border/50 hover:bg-secondary/20 transition-colors align-top group">
+        <td className="px-3 py-2.5 mono text-[10px] text-muted-foreground/35 w-8">{idx}</td>
+        <td className="px-3 py-2.5 w-24">
+          <span className="mono text-[11px] font-bold text-foreground whitespace-nowrap">{unit}</span>
+        </td>
+        <td className="px-3 py-2.5 w-52">
+          <span className="mono text-[9px] text-muted-foreground/60 uppercase tracking-wider">No active scans</span>
+        </td>
+        <td className="px-3 py-2.5 w-20"><span className="mono text-[14px] text-muted-foreground/25">—</span></td>
+        <td className="px-3 py-2.5 w-20"><span className="mono text-[14px] text-muted-foreground/25">—</span></td>
+        <td className="px-3 py-2.5 w-20"><span className="mono text-[14px] text-muted-foreground/25">—</span></td>
+        <td className="px-3 py-2.5 w-32"><span className="mono text-[9px] text-muted-foreground/40">—</span></td>
+        <td className="px-3 py-2.5 w-44">
+          <span className="mono text-[9px] text-foreground/65 truncate max-w-[120px]">
+            {data.history[0]?.satellite ?? "—"}
+          </span>
+        </td>
+      </tr>
+    );
+  }
+
   const sat     = data.activeSats[selSat];
   const pending = sat.scanned - sat.analyzed;
   const pct     = sat.analyzed > 0 ? Math.round((sat.productive / sat.analyzed) * 100) : 0;
@@ -1443,7 +1468,43 @@ function UnitRow({ unit, data, idx }: { unit: UnitLabel; data: UnitScanData; idx
 
 function UnitActivitySnapshot() {
   const [expanded, setExpanded] = useState(false);
-  const visible = expanded ? UNIT_LABELS : UNIT_LABELS.slice(0, 4);
+  const { fleetState, engagements, intelRows, isLoading, units } = useOperationalState();
+
+  const activityByUnit = useMemo(() => {
+    if (!fleetState) return new Map<UnitLabel, UnitScanData>();
+    const map = new Map<UnitLabel, UnitScanData>();
+    for (const state of fleetState.units) {
+      const label = state.unitLabel as UnitLabel;
+      const activity = buildUnitActivityFromState(state, engagements, intelRows);
+      map.set(label, {
+        activeSats: activity.activeSats.map((s) => ({
+          satellite: s.satellite,
+          band: s.band as BandType,
+          pol: s.pol as PolType,
+          scanned: s.scanned,
+          analyzed: s.analyzed,
+          productive: s.productive,
+          nonProductive: s.nonProductive,
+        })),
+        history: activity.history,
+      });
+    }
+    return map;
+  }, [fleetState, engagements, intelRows]);
+
+  const unitOrder = useMemo((): UnitLabel[] => {
+    if (units.length > 0) {
+      return [...units]
+        .sort((a, b) => a.code.localeCompare(b.code))
+        .map((u) => {
+          const letter = u.code.replace(/^GATE[-\s]?/i, "").trim().charAt(0).toUpperCase();
+          return `Unit ${letter}` as UnitLabel;
+        });
+    }
+    return [...UNIT_LABELS];
+  }, [units]);
+
+  const visible = expanded ? unitOrder : unitOrder.slice(0, 4);
 
   return (
     <div className="panel overflow-hidden">
@@ -1460,12 +1521,17 @@ function UnitActivitySnapshot() {
           </span>
         </div>
         <span className="mono text-[8px] uppercase tracking-[0.15em] text-muted-foreground/40">
-          {UNIT_LABELS.length} Units
+          {unitOrder.length} Units
         </span>
       </div>
 
       {/* Table */}
       <div className="overflow-x-auto">
+        {isLoading ? (
+          <div className="px-4 py-8 text-center mono text-[10px] text-muted-foreground uppercase tracking-wider">
+            Loading operational state…
+          </div>
+        ) : (
         <table className="w-full">
           <thead>
             <tr className="border-b border-border bg-secondary/25">
@@ -1487,10 +1553,16 @@ function UnitActivitySnapshot() {
           </thead>
           <tbody>
             {visible.map((unit, idx) => (
-              <UnitRow key={unit} unit={unit} data={UNIT_SCAN_DATA[unit]} idx={idx + 1} />
+              <UnitRow
+                key={unit}
+                unit={unit}
+                data={activityByUnit.get(unit) ?? { activeSats: [], history: [] }}
+                idx={idx + 1}
+              />
             ))}
           </tbody>
         </table>
+        )}
       </div>
 
       {/* Expand / collapse toggle */}
@@ -1499,7 +1571,7 @@ function UnitActivitySnapshot() {
         className="w-full flex items-center justify-center gap-1.5 py-2 border-t border-border bg-secondary/10 hover:bg-secondary/25 transition-colors"
       >
         <span className="mono text-[8px] uppercase tracking-wider text-muted-foreground/50">
-          {expanded ? "Show less" : `Show all ${UNIT_LABELS.length} units`}
+          {expanded ? "Show less" : `Show all ${unitOrder.length} units`}
         </span>
         {expanded
           ? <ChevronUp className="h-3 w-3 text-muted-foreground/40" />
