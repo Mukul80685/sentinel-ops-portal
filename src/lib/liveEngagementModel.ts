@@ -235,7 +235,10 @@ export function computeUnitCapability(
   }
 
   const unitEngs = engagements.filter((e) => e.unit_id === unitDbId);
-  const rawActive = unitEngs.filter((e) => isActiveScanStatus(e.status as string));
+  const rawActive = unitEngs.filter((e) => {
+    const status = e.status as string;
+    return isActiveScanStatus(status);
+  });
 
   if (rawActive.length > capacity.totalChains) {
     violations.push(
@@ -377,4 +380,21 @@ export function assignmentsToEngagementRows(
   return capability.assignments
     .map((a) => byId.get(a.engagementId) ?? a.engagement)
     .filter(Boolean);
+}
+
+export function computeUnitOptimizationScore(cap: UnitCapability): number {
+  const chainUtilization =
+    cap.totalChains === 0 ? 0 : cap.activeChains / cap.totalChains;
+
+  const violationPenalty = Math.min(1, cap.constraintViolations.length * 0.15);
+
+  const snapshotBonus =
+    cap.snapshot?.satellites?.length > 0 ? 0.1 : 0;
+
+  const base =
+    chainUtilization * 0.7 +
+    snapshotBonus -
+    violationPenalty;
+
+  return Math.max(0, Math.min(1, base)) * 100;
 }

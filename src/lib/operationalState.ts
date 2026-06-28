@@ -60,16 +60,31 @@ export function buildOperationalFleetState(input: {
   intelRows: any[];
 }): OperationalFleetState {
   const { dbUnits, equipment, engagements, intelRows } = input;
+
   const regions = mergeRegionsWithOverlay();
-  const fleetModel = buildLiveEngagementFleetModel({ engagements, equipment, dbUnits, intelRows });
+
+  const normalizedEngagements = engagements.map((e) => ({
+    ...e,
+    status: (e.status ?? "UNKNOWN").toString().trim(),
+  }));
 
   const units: UnitOperationalState[] = dbUnits.map((unit) => {
     const intSlug = resolveIntUnitSlug(unit.id, unit.code) as UnitSlot | null;
-    const capability = fleetModel.get(unit.id)!;
-    const visibleSatellites = intSlug ? countVisibleSatellitesForUnit(intSlug, regions) : 0;
-    const allocatedSatellites = intSlug
-      ? getAllocationsForUnit(intSlug).filter((r) => canUnitScanSatellite(r.satelliteName, intSlug)).length
+  
+    const capability = buildLiveEngagementFleetModel({
+      engagements,
+      equipment,
+      dbUnits: [unit],
+      intelRows,
+    }).get(unit.id)!;
+
+    const visibleSatellites = intSlug
+      ? countVisibleSatellitesForUnit(intSlug, regions)
       : 0;
+
+    const allocations = intSlug ? getAllocationsForUnit(intSlug) : [];
+
+    const allocatedSatellites = allocations.length;
 
     return {
       unitDbId: unit.id,

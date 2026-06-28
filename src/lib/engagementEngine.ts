@@ -226,10 +226,16 @@ export function computeSatelliteAnalysis(
     engagement.observation_start ??
     null;
 
-  if (related.length === 0) {
-    const mock = mockAnalysis(engagement.id);
-    return { polarization, lastUpdate, ...mock };
-  }
+    if (related.length === 0) {
+      return {
+        polarization,
+        lastUpdate,
+        scanned: 0,
+        analyzed: 0,
+        pending: 0,
+        analysisPct: 0,
+      };
+    }
 
   const scanned  = related.length;
   const analyzed = related.filter(

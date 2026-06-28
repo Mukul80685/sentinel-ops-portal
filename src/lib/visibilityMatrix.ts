@@ -245,13 +245,19 @@ export function countVisibleSatellitesForUnit(
   unitId: string,
   regions: GeoRegion[],
 ): number {
-  let count = 0;
+  const seen = new Set<string>();
+
   for (const region of regions) {
     for (const sat of region.satellites) {
-      if (getVisibleBeams(unitId, sat.id, region.id).length > 0) count += 1;
+      const beams = getVisibleBeams(unitId, sat.id, region.id);
+
+      if (beams.length > 0) {
+        seen.add(sat.id);
+      }
     }
   }
-  return count;
+
+  return seen.size;
 }
 
 /** Deterministic visible beams — matches Visibility Matrix "Visible Beams" column. */
