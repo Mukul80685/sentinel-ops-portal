@@ -1,69 +1,74 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-buildOperationalFleetState,
-type OperationalFleetState,
+  buildOperationalFleetState,
+  type OperationalFleetState,
 } from "@/lib/operationalState";
 import {
-listAllEquipment,
-listUnits,
+  listAllEquipment,
+  listAllIntelRecords,
+  listUnits,
+  INTEL_RECORDS_ALL_KEY,
 } from "@/lib/queries";
 import {
-fetchAllEngagements,
-ENGAGEMENTS_ALL_KEY,
+  fetchAllEngagements,
+  ENGAGEMENTS_ALL_KEY,
 } from "@/lib/engagementEngine";
 import { useQuery } from "@tanstack/react-query";
 import {
-OPERATIONAL_STORE_EVENT,
-ensureOperationalDataset,
+  OPERATIONAL_STORE_EVENT,
+  ensureOperationalDataset,
 } from "@/lib/operationalStore";
 
 export function useOperationalState() {
-const [ready, setReady] = useState(false);
+  const [ready, setReady] = useState(false);
 
-useEffect(() => {
-ensureOperationalDataset();
-setReady(true);
-}, []);
+  useEffect(() => {
+    ensureOperationalDataset();
+    setReady(true);
+  }, []);
 
-const { data: units = [] } = useQuery({
-queryKey: ["units"],
-queryFn: listUnits,
-enabled: ready,
-});
+  const { data: units = [] } = useQuery({
+    queryKey: ["units"],
+    queryFn: listUnits,
+    enabled: ready,
+  });
 
-const { data: equipment = [] } = useQuery({
-queryKey: ["equipment-all"],
-queryFn: listAllEquipment,
-enabled: ready,
-});
+  const { data: equipment = [] } = useQuery({
+    queryKey: ["equipment-all"],
+    queryFn: listAllEquipment,
+    enabled: ready,
+  });
 
-const { data: engagements = [] } = useQuery({
-queryKey: ENGAGEMENTS_ALL_KEY,
-queryFn: fetchAllEngagements,
-enabled: ready,
-});
+  const { data: engagements = [] } = useQuery({
+    queryKey: ENGAGEMENTS_ALL_KEY,
+    queryFn: fetchAllEngagements,
+    enabled: ready,
+  });
 
-const intelRows: any[] = [];
+  const { data: intelRows = [] } = useQuery({
+    queryKey: INTEL_RECORDS_ALL_KEY,
+    queryFn: listAllIntelRecords,
+    enabled: ready,
+  });
 
-const fleetState: OperationalFleetState | null = useMemo(() => {
-if (!ready) return null;
-if (units.length === 0) return null;
+  const fleetState: OperationalFleetState | null = useMemo(() => {
+    if (!ready) return null;
+    if (units.length === 0) return null;
 
-return buildOperationalFleetState({  
-  dbUnits: units,  
-  equipment,  
-  engagements,  
-  intelRows,  
-});
+    return buildOperationalFleetState({
+      dbUnits: units,
+      equipment,
+      engagements,
+      intelRows,
+    });
+  }, [ready, units, equipment, engagements, intelRows]);
 
-}, [ready, units, equipment, engagements]);
-
-return {
-fleetState,
-units,
-equipment,
-engagements,
-intelRows,
-isLoading: !ready,
-};
+  return {
+    fleetState,
+    units,
+    equipment,
+    engagements,
+    intelRows,
+    isLoading: !ready,
+  };
 }

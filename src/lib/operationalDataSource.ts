@@ -1,10 +1,13 @@
 /**
  * Unified data-source resolver — prevents split-brain between Supabase tables.
- * When the DB is not fully seeded (units without matching equipment + engagements),
- * ALL operational modules consume the same local SSOT with consistent unit IDs.
+ * Uses the local operational SSOT unless Supabase has a fully seeded fleet dataset.
  */
 
 import { supabase } from "@/integrations/supabase/client";
+import {
+  MIN_DB_ENGAGEMENTS_FOR_OVERRIDE,
+  MIN_DB_EQUIPMENT_FOR_OVERRIDE,
+} from "@/lib/operationalConstants";
 
 let _useOperational: boolean | null = null;
 let _detectPromise: Promise<boolean> | null = null;
@@ -26,7 +29,12 @@ async function detectOperationalStore(): Promise<boolean> {
     const eqCount = eqRes.count ?? 0;
     const engCount = engRes.count ?? 0;
 
-    return eqCount === 0 || engCount === 0;
+    // Partial Supabase seed (units only, or tiny inventory) → keep operational SSOT.
+    if (eqCount < MIN_DB_EQUIPMENT_FOR_OVERRIDE || engCount < MIN_DB_ENGAGEMENTS_FOR_OVERRIDE) {
+      return true;
+    }
+
+    return false;
   } catch {
     return true;
   }
@@ -50,4 +58,8 @@ export async function shouldUseOperationalStore(): Promise<boolean> {
 export function resetOperationalDataSourceCache(): void {
   _useOperational = null;
   _detectPromise = null;
+}
+
+export function isOperationalStoreActive(): boolean {
+  return _useOperational === true;
 }

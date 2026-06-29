@@ -26,14 +26,14 @@ const fleetModel = buildLiveEngagementFleetModel({
   engagements: ds.engagements,
   equipment: ds.equipment,
   dbUnits: units,
-  intelRows: [],
+  intelRows: ds.intelRows ?? [],
 });
 
 const fleetState = buildOperationalFleetState({
   dbUnits: units,
   equipment: ds.equipment,
   engagements: ds.engagements,
-  intelRows: [],
+  intelRows: ds.intelRows ?? [],
 });
 
 console.log("\n=== PER-UNIT INVENTORY TOTALS ===");
@@ -82,6 +82,10 @@ for (const u of ds.units) {
     failures++;
   } else {
     unitsWithActive++;
+  }
+  if (cap.activeChains < 6) {
+    console.error(`  FAIL: activeChains ${cap.activeChains} < 6 (required minimum)`);
+    failures++;
   }
   if (cap.activeChains !== target) {
     console.warn(`  WARN: active ${cap.activeChains} != target ${target}`);

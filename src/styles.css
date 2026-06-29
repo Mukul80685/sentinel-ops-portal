@@ -207,4 +207,24 @@
     border-color: oklch(0.82 0.03 145);
     background: oklch(0.94 0.025 145);
   }
+
+  .home-module-tile {
+    background: linear-gradient(180deg, var(--card) 0%, var(--secondary) 100%);
+    border: 1px solid var(--border);
+    border-radius: 1rem;
+    transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+    box-shadow:
+      inset 0 1px 0 oklch(1 0 0 / 0.06),
+      0 3px 0 oklch(0 0 0 / 0.06),
+      0 8px 20px oklch(0 0 0 / 0.08);
+  }
+  .home-module-tile:hover {
+    transform: translateY(-2px);
+    border-color: oklch(0.82 0.03 145);
+    background: linear-gradient(180deg, oklch(0.96 0.02 145) 0%, oklch(0.93 0.025 145) 100%);
+    box-shadow:
+      inset 0 1px 0 oklch(1 0 0 / 0.08),
+      0 2px 0 oklch(0 0 0 / 0.05),
+      0 12px 24px oklch(0 0 0 / 0.12);
+  }
 }

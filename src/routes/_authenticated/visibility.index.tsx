@@ -76,7 +76,7 @@ import {
 import { mergeRegionsWithOverlay, useVisibleSatelliteCounts } from "@/lib/satelliteCatalog";
 import { INT_UNITS } from "@/lib/intelRepository";
 import { unitTileTitle, UNIT_SLOTS, type UnitSlot } from "@/lib/priorityAllocation";
-import { isSatelliteInIntRoster } from "@/lib/intelAnalysisData";
+import { hasIntVisibilityCrossLink } from "@/lib/intelAnalysisData";
 
 // ─── Static unit roster for visibility layer (shared naming with INT) ─────────
 

@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
 import { Empty } from "@/components/Empty";
 import { IntelSatelliteDrillDown } from "@/components/intel/IntelSatelliteDrillDown";
-import { listUnits } from "@/lib/queries";
+import { listUnits, listIntelRecordsForUnit } from "@/lib/queries";
 import { supabase } from "@/integrations/supabase/client";
 import { ArrowLeft, Database, Satellite } from "lucide-react";
 import { ccModuleBackLink } from "@/lib/controlCenter";
@@ -112,13 +112,7 @@ function IntelUnitView() {
 
   const { data: intelRows = [] } = useQuery({
     queryKey: ["intel-eng", dbUnitId],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from("intel_records")
-        .select("id, unit_id, satellite_id, band, analysis_report, summary, updated_at, observation_date, remarks")
-        .eq("unit_id", dbUnitId);
-      return data ?? [];
-    },
+    queryFn: () => listIntelRecordsForUnit(dbUnitId),
     enabled: dataAvailable && !!dbUnitId,
     staleTime: 30_000,
   });

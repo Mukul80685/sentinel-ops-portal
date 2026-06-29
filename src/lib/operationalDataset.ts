@@ -1,10 +1,13 @@
 /**
- * Operational SSOT generator — visibility → inventory → serviceability → engagements.
+ * Operational SSOT generator — visibility → inventory → serviceability → engagements → intel.
  * Pure data layer; no React, no Supabase, no engagementEngine imports (avoids cycles).
  */
 
 import { canUnitScanSatellite } from "@/lib/intelIntegrity";
+import { UNIT_SATELLITE_ROSTER } from "@/lib/intelAnalysisData";
 import {
+  CHAIN_OPERATIONAL_RESERVE,
+  INTEL_ROW_ENGAGEMENT_RATIO,
   OPERATIONAL_DATASET_VERSION,
   PER_UNIT_INVENTORY,
   TARGET_ACTIVE_SCANS,
@@ -60,6 +63,18 @@ export type OpEngagement = {
   satellites: { name: string };
 };
 
+/** Intel seed rows — shape compatible with computeSatelliteAnalysis filters. */
+export type OpIntelRow = {
+  id: string;
+  unit_id: string;
+  satellite_id: string;
+  band: string;
+  summary: string | null;
+  analysis_report: string | null;
+  observation_date: string;
+  updated_at: string;
+};
+
 export type OperationalDataset = {
   version: typeof OPERATIONAL_DATASET_VERSION;
   units: OpUnit[];
@@ -67,6 +82,7 @@ export type OperationalDataset = {
   equipment: OpEquipment[];
   satellites: OpSatellite[];
   engagements: OpEngagement[];
+  intelRows: OpIntelRow[];
 };
 
 const CATEGORY_DEFS: OpCategory[] = [
@@ -84,9 +100,6 @@ const CHAIN_CATEGORY_NAMES = new Set([
   "Demodulators",
   "Processing Servers",
 ]);
-
-/** Guarantee at least one operational item per mandatory chain stage. */
-const CHAIN_RESERVE_PER_CATEGORY = 1;
 
 const UNIT_DEFS: { slot: UnitSlot; code: string; name: string; description: string }[] = [
   { slot: "alpha", code: "GATE-A", name: "GATE Alpha", description: "Primary tracking station — North Sector" },
@@ -118,23 +131,45 @@ const OTHER_SPECS = [
   "Support test harness — loopback RF",
 ];
 
-/** ~85% Operational · ~10% Under Repair · ~5% Non-Serviceable (non-reserved items). */
-function serviceabilityForIndex(idx: number): OpServiceability {
-  const mod = idx % 20;
-  if (mod === 17 || mod === 18) return "Under Repair";
-  if (mod === 19) return "Non-Serviceable";
+function hashStr(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
+/** ~88% operational · ~8% under repair · ~4% non-serviceable (background scatter on non-demo rows). */
+function serviceabilityScatter(idx: number): OpServiceability {
+  const mod = idx % 25;
+  if (mod === 23) return "Under Repair";
+  if (mod === 24) return "Non-Serviceable";
   return "Operational";
 }
 
-function serviceabilityForEquipment(
+/**
+ * Seed-only serviceability — applied once when the mock dataset is generated.
+ * NOT used at read/display time; real Supabase rows are never altered by this.
+ */
+function serviceabilityForMockSeed(
+  slot: UnitSlot,
   catName: string,
   itemIndex: number,
+  categoryCount: number,
   svcIdx: number,
 ): OpServiceability {
-  if (CHAIN_CATEGORY_NAMES.has(catName) && itemIndex <= CHAIN_RESERVE_PER_CATEGORY) {
+  // One deliberately imperfect item per category for Serviceability UI demos.
+  if (categoryCount > 0 && itemIndex === categoryCount) {
+    const h = hashStr(`${slot}:${catName}:demo-fault`);
+    if (h % 3 === 0) return "Partially Serviceable";
+    if (h % 3 === 1) return "Under Repair";
+    return "Non-Serviceable";
+  }
+
+  // Preserve enough operational chain hardware for engagement simulation.
+  if (CHAIN_CATEGORY_NAMES.has(catName) && itemIndex <= CHAIN_OPERATIONAL_RESERVE) {
     return "Operational";
   }
-  return serviceabilityForIndex(svcIdx);
+
+  return serviceabilityScatter(svcIdx);
 }
 
 function visibleSatNames(slot: UnitSlot): string[] {
@@ -143,15 +178,60 @@ function visibleSatNames(slot: UnitSlot): string[] {
     .map((row) => row.name);
 }
 
+/** Active scan satellites — INT roster first (alpha/bravo/charlie), else visibility catalog. */
+function activeSatNamesForSlot(slot: UnitSlot): string[] {
+  const roster = UNIT_SATELLITE_ROSTER[slot];
+  if (roster?.length) {
+    return roster.filter((name) => canUnitScanSatellite(name, slot));
+  }
+  const vis = visibleSatNames(slot);
+  const target = TARGET_ACTIVE_SCANS[slot] ?? 6;
+  return vis.slice(0, target);
+}
+
 function polForSat(slot: UnitSlot, satName: string): string {
   const h = (slot + satName).split("").reduce((a, c) => a + c.charCodeAt(0), 0);
   const pols = ["KU-HH", "KU-VL", "C-EDGE", "KU-HL", "CH-CV"];
   return pols[h % pols.length];
 }
 
+function parsePolFromRemarks(remarks: string): string {
+  const m = remarks.match(/POL:([\w-]+)/);
+  return m ? m[1] : "KU-HH";
+}
+
 function equipmentSpec(catName: string, i: number): string {
   if (catName === "Other Resources") return OTHER_SPECS[(i - 1) % OTHER_SPECS.length];
   return CATEGORY_SPECS[catName] ?? `Standard ${catName} — scan-chain component`;
+}
+
+function generateIntelRowsForEngagement(eng: OpEngagement, slot: UnitSlot): OpIntelRow[] {
+  const h = hashStr(eng.id);
+  const scanned = 52 + (h % 120);
+  const analyzedRatio = 0.55 + (h % 35) / 100;
+  const analyzed = Math.min(scanned, Math.round(scanned * analyzedRatio));
+  const pol = parsePolFromRemarks(eng.remarks);
+  const rows: OpIntelRow[] = [];
+  const baseDate = eng.observation_start ?? new Date().toISOString();
+
+  for (let i = 0; i < scanned; i++) {
+    const isAnalyzed = i < analyzed;
+    const freqBase = pol.startsWith("C") ? 3700 : 11700;
+    const freq = (freqBase + (h % 800) + i * 17) % 1000 + freqBase;
+    rows.push({
+      id: `op-intel-${eng.id}-${i}`,
+      unit_id: eng.unit_id,
+      satellite_id: eng.satellite_id,
+      band: pol,
+      summary: isAnalyzed ? `Frequency ${freq.toFixed(2)} MHz — productive signal` : null,
+      analysis_report: isAnalyzed ? `INT report ${eng.id} freq ${i + 1}/${scanned}` : null,
+      observation_date: baseDate,
+      updated_at: eng.updated_at ?? baseDate,
+    });
+  }
+
+  void slot;
+  return rows;
 }
 
 export function generateOperationalDataset(): OperationalDataset {
@@ -166,6 +246,7 @@ export function generateOperationalDataset(): OperationalDataset {
   const equipment: OpEquipment[] = [];
   const satellitesMap = new Map<string, OpSatellite>();
   const engagements: OpEngagement[] = [];
+  const intelRows: OpIntelRow[] = [];
 
   for (const u of UNIT_DEFS) {
     const unitId = `op-unit-${u.slot}`;
@@ -185,7 +266,7 @@ export function generateOperationalDataset(): OperationalDataset {
           serial_number: `SN-${u.code}-${cat.id.slice(-3)}-${String(i).padStart(3, "0")}`,
           date_of_procurement: new Date(Date.now() - i * 86_400_000 * 45).toISOString().slice(0, 10),
           specifications: equipmentSpec(cat.name, i),
-          serviceability: serviceabilityForEquipment(cat.name, i, svcIdx),
+          serviceability: serviceabilityForMockSeed(u.slot, cat.name, i, target, svcIdx),
           remarks: null,
           category: { id: cat.id, name: cat.name },
           units: { code: u.code, name: u.name },
@@ -206,7 +287,8 @@ export function generateOperationalDataset(): OperationalDataset {
     const procs = pickOp("processing");
 
     const visNames = visibleSatNames(u.slot);
-    for (const name of visNames) {
+    const activeSatNames = activeSatNamesForSlot(u.slot);
+    for (const name of new Set([...visNames, ...activeSatNames])) {
       if (!satellitesMap.has(name.toLowerCase())) {
         const row = flattenSatelliteCatalog().find((r) => r.name === name);
         const pos = parseFloat((row?.satellite.position ?? "0").replace(/[^\d.-]/g, "")) || 0;
@@ -219,19 +301,19 @@ export function generateOperationalDataset(): OperationalDataset {
     }
 
     const activeTarget = Math.min(
-      TARGET_ACTIVE_SCANS[u.slot] ?? 4,
+      TARGET_ACTIVE_SCANS[u.slot] ?? 6,
+      activeSatNames.length,
       antennas.length,
       demods.length,
       procs.length,
-      visNames.length,
     );
 
     for (let i = 0; i < activeTarget; i++) {
-      const satName = visNames[i];
+      const satName = activeSatNames[i];
       const sat = satellitesMap.get(satName.toLowerCase());
       if (!sat) continue;
 
-      engagements.push({
+      const eng: OpEngagement = {
         id: `op-eng-${u.slot}-active-${i}`,
         unit_id: unitId,
         satellite_id: sat.id,
@@ -243,7 +325,9 @@ export function generateOperationalDataset(): OperationalDataset {
         processing_server_id: procs[i]?.id ?? null,
         remarks: `POL:${polForSat(u.slot, satName)} · Active collection cycle`,
         satellites: { name: satName },
-      });
+      };
+      engagements.push(eng);
+      intelRows.push(...generateIntelRowsForEngagement(eng, u.slot));
     }
 
     for (let i = 0; i < 5; i++) {
@@ -251,7 +335,7 @@ export function generateOperationalDataset(): OperationalDataset {
       if (!satName) continue;
       const sat = satellitesMap.get(satName.toLowerCase());
       if (!sat) continue;
-      engagements.push({
+      const eng: OpEngagement = {
         id: `op-eng-${u.slot}-done-${i}`,
         unit_id: unitId,
         satellite_id: sat.id,
@@ -263,7 +347,11 @@ export function generateOperationalDataset(): OperationalDataset {
         processing_server_id: null,
         remarks: `POL:${polForSat(u.slot, satName)} · Completed scan cycle`,
         satellites: { name: satName },
-      });
+      };
+      engagements.push(eng);
+      if (i < Math.ceil(5 * INTEL_ROW_ENGAGEMENT_RATIO)) {
+        intelRows.push(...generateIntelRowsForEngagement(eng, u.slot));
+      }
     }
   }
 
@@ -274,6 +362,7 @@ export function generateOperationalDataset(): OperationalDataset {
     equipment,
     satellites: [...satellitesMap.values()],
     engagements,
+    intelRows,
   };
 }
 

@@ -30,12 +30,12 @@ export interface GeoRegion {
   satellites: GeoSatellite[];
 }
 
-/** INT roster satellites not listed verbatim in GEO_REGIONS — mapped for matrix lookup. */
-const INT_SATELLITE_MATRIX_ALIASES: Record<string, { matrixId: string; regionId: string }> = {
-  "Apstar 7":    { matrixId: "int-apstar-7",    regionId: "china" },
-  "Eutelsat 7B": { matrixId: "int-eutelsat-7b", regionId: "europe" },
-  "Yamal 601":   { matrixId: "int-yamal-601",   regionId: "russia" },
-};
+/** Legacy name aliases — prefer GEO_REGIONS entries when present. */
+const INT_SATELLITE_MATRIX_ALIASES: Record<string, { matrixId: string; regionId: string }> = {};
+
+function normalizeSatelliteName(name: string): string {
+  return name.trim().toLowerCase();
+}
 
 export const GEO_REGIONS: GeoRegion[] = [
   {
@@ -52,6 +52,7 @@ export const GEO_REGIONS: GeoRegion[] = [
       { id: "cn-7", name: "AsiaSat 7", position: "105.5°E", launchDate: "2011-11-21", transponders: "28 C/Ku-band", beamCoverage: "Asia / Middle East" },
       { id: "cn-8", name: "Apstar 6", position: "134.0°E", launchDate: "2005-04-12", transponders: "24 C/Ku-band", beamCoverage: "Asia / Pacific" },
       { id: "cn-9", name: "Apstar 9", position: "142.0°E", launchDate: "2015-10-17", transponders: "28 C/Ku-band", beamCoverage: "Asia / Pacific" },
+      { id: "cn-10", name: "Apstar 7", position: "76.5°E", launchDate: "2014-03-18", transponders: "28 C/Ku-band", beamCoverage: "South Asia footprint" },
     ],
   },
   {
@@ -92,6 +93,9 @@ export const GEO_REGIONS: GeoRegion[] = [
       { id: "sea-3", name: "Thaicom 8", position: "78.5°E", launchDate: "2016-05-27", transponders: "24 Ku/Ka-band", beamCoverage: "SE Asia / Indian Ocean" },
       { id: "sea-4", name: "Telkom-3S", position: "118.0°E", launchDate: "2017-02-14", transponders: "42 C/Ku/Ka-band", beamCoverage: "SE Asia / Pacific" },
       { id: "sea-5", name: "PSN VI", position: "146.0°E", launchDate: "2020-11-22", transponders: "32 C/Ku-band", beamCoverage: "Indonesia / Pacific" },
+      { id: "sea-6", name: "JCSAT-17", position: "136.0°E", launchDate: "2020-02-18", transponders: "28 Ku/Ka-band", beamCoverage: "Asia / Pacific" },
+      { id: "sea-7", name: "Sky Perfect JSAT-16", position: "162.0°E", launchDate: "2016-10-14", transponders: "24 Ku-band", beamCoverage: "Japan / Pacific" },
+      { id: "sea-8", name: "Optus D3", position: "156.0°E", launchDate: "2009-08-22", transponders: "32 Ku-band", beamCoverage: "Australia / Pacific" },
     ],
   },
   {
@@ -117,6 +121,9 @@ export const GEO_REGIONS: GeoRegion[] = [
       { id: "eu-4", name: "Hotbird 13C", position: "13.0°E", launchDate: "2012-06-23", transponders: "64 Ku-band", beamCoverage: "Europe / N. Africa / Middle East" },
       { id: "eu-5", name: "Eutelsat 7A", position: "7.0°E", launchDate: "2011-09-22", transponders: "38 Ku-band", beamCoverage: "Europe / Middle East / Africa" },
       { id: "eu-6", name: "SES-12", position: "95.0°E", launchDate: "2018-06-04", transponders: "54 Ku/Ka-band", beamCoverage: "Asia / Middle East / Pacific" },
+      { id: "eu-7", name: "Eutelsat 7B", position: "7.0°E", launchDate: "2013-03-26", transponders: "44 Ku/Ka-band", beamCoverage: "Europe / Middle East / Africa" },
+      { id: "eu-8", name: "Astra 2G", position: "28.2°E", launchDate: "2014-12-27", transponders: "60 Ku-band", beamCoverage: "Europe / Middle East" },
+      { id: "eu-9", name: "Hotbird 13E", position: "13.0°E", launchDate: "2006-10-05", transponders: "64 Ku-band", beamCoverage: "Europe / N. Africa" },
     ],
   },
   {
@@ -139,6 +146,7 @@ export const GEO_REGIONS: GeoRegion[] = [
       { id: "ru-2", name: "Express-AM6", position: "53.0°E", launchDate: "2014-10-21", transponders: "64 C/Ku-band", beamCoverage: "Russia / Middle East / Africa" },
       { id: "ru-3", name: "Express-AT1", position: "56.0°E", launchDate: "2014-03-17", transponders: "32 Ku-band", beamCoverage: "Russia / CIS" },
       { id: "ru-4", name: "Yamal-402", position: "55.0°E", launchDate: "2012-12-08", transponders: "46 Ku-band", beamCoverage: "Russia / Central Asia" },
+      { id: "ru-5", name: "Yamal 601", position: "49.0°E", launchDate: "2016-05-30", transponders: "36 C/Ku-band", beamCoverage: "Russia / CIS" },
     ],
   },
   {
@@ -291,17 +299,20 @@ export type VisibilityMatrixSnapshot = {
 export function findGeoSatelliteEntry(
   satelliteName: string,
 ): { sat: GeoSatellite; regionId: string } | null {
-  const norm = satelliteName.trim().toLowerCase();
+  const norm = normalizeSatelliteName(satelliteName);
   for (const region of GEO_REGIONS) {
-    const sat = region.satellites.find((s) => s.name.trim().toLowerCase() === norm);
+    const sat = region.satellites.find((s) => normalizeSatelliteName(s.name) === norm);
     if (sat) return { sat, regionId: region.id };
   }
-  const alias = INT_SATELLITE_MATRIX_ALIASES[satelliteName];
-  if (alias) {
+  const aliasKey = Object.keys(INT_SATELLITE_MATRIX_ALIASES).find(
+    (k) => normalizeSatelliteName(k) === norm,
+  );
+  if (aliasKey) {
+    const alias = INT_SATELLITE_MATRIX_ALIASES[aliasKey];
     return {
       sat: {
         id: alias.matrixId,
-        name: satelliteName,
+        name: aliasKey,
         position: "—",
         launchDate: "—",
         transponders: "—",
@@ -311,6 +322,33 @@ export function findGeoSatelliteEntry(
     };
   }
   return null;
+}
+
+/** True when the Visibility Matrix catalog lists the satellite and the unit has ≥1 visible beam. */
+export function isSatelliteVisibleToUnitInMatrix(unitId: string, satelliteName: string): boolean {
+  const snap = resolveMatrixVisibility(unitId, satelliteName);
+  return snap?.canScan === true;
+}
+
+export type VisibilityDeepLinkSearch = {
+  unit: string;
+  satellite: string;
+  region: string;
+};
+
+/** Deep-link search params for INT → Visibility Matrix navigation. */
+export function buildVisibilityDeepLinkSearch(
+  unitId: string,
+  satelliteName: string,
+): VisibilityDeepLinkSearch | null {
+  if (!findGeoSatelliteEntry(satelliteName)) return null;
+  const snap = resolveMatrixVisibility(unitId, satelliteName);
+  if (!snap?.canScan) return null;
+  return {
+    unit: unitId,
+    satellite: satelliteName,
+    region: snap.regionId,
+  };
 }
 
 /**

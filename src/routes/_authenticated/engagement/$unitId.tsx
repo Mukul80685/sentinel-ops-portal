@@ -1,9 +1,9 @@
-import { Component, type ReactNode, useMemo, useRef, useState, useEffect } from "react";
+import { Component, type ReactNode, useMemo, useState, useEffect } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
 import { Empty } from "@/components/Empty";
-import { getUnitById, listEquipmentForUnit, listEngagementsForUnit, listSatellites } from "@/lib/queries";
+import { getUnitById, listEquipmentForUnit, listEngagementsForUnit, listIntelRecordsForUnit, listSatellites } from "@/lib/queries";
 import { supabase } from "@/integrations/supabase/client";
 import { useCanEdit } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
@@ -20,8 +20,6 @@ import {
   computeSatelliteAnalysis,
   engColor,
   engagementDisplayStatus,
-  formatEngagementDate,
-  productivityStatusLabel,
   NON_OPERATIONAL,
   CHAIN_CATEGORIES,
   ACTIVE_SCAN_STATUSES,
@@ -83,137 +81,6 @@ function resourceCompleteness(r: any): { isPending: boolean; missing: string[] }
   if (!r.demodulator_id)       missing.push("Demodulator");
   if (!r.processing_server_id) missing.push("Processor");
   return { isPending: r.status === "In Progress" && missing.length > 0, missing };
-}
-
-// ─── Sticky dual horizontal scroll (top + bottom, always accessible) ──────────
-
-function SyncHScrollBar({
-  barRef,
-  onScroll,
-  width,
-}: {
-  barRef: React.RefObject<HTMLDivElement | null>;
-  onScroll: () => void;
-  width: number;
-}) {
-  return (
-    <div
-      ref={barRef}
-      onScroll={onScroll}
-      className="overflow-x-auto overflow-y-hidden bg-secondary/10 px-1 py-1.5"
-      style={{ scrollbarWidth: "thin" }}
-    >
-      <div style={{ width: Math.max(width, 1), height: 1 }} />
-    </div>
-  );
-}
-
-function DualScrollTable({
-  children,
-  maxHeight = 320,
-}: {
-  children: React.ReactNode;
-  maxHeight?: number;
-}) {
-  const bodyRef  = useRef<HTMLDivElement>(null);
-  const topRef   = useRef<HTMLDivElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(0);
-  const syncing  = useRef(false);
-
-  useEffect(() => {
-    const el = bodyRef.current;
-    if (!el) return;
-    const update = () => setWidth(el.scrollWidth);
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    update();
-    return () => ro.disconnect();
-  }, [children]);
-
-  function syncFrom(source: "top" | "bottom" | "body", scrollLeft: number) {
-    if (syncing.current) return;
-    syncing.current = true;
-    if (source !== "body" && bodyRef.current) bodyRef.current.scrollLeft = scrollLeft;
-    if (source !== "top" && topRef.current) topRef.current.scrollLeft = scrollLeft;
-    if (source !== "bottom" && bottomRef.current) bottomRef.current.scrollLeft = scrollLeft;
-    requestAnimationFrame(() => { syncing.current = false; });
-  }
-
-  return (
-    <div className="flex flex-col border-t border-border/40" style={{ maxHeight }}>
-      <div className="sticky top-0 z-20 shrink-0 bg-card border-b border-border/40">
-        <SyncHScrollBar
-          barRef={topRef}
-          width={width}
-          onScroll={() => syncFrom("top", topRef.current?.scrollLeft ?? 0)}
-        />
-      </div>
-
-      <div
-        ref={bodyRef}
-        className="flex-1 min-h-0 overflow-auto"
-        onScroll={() => syncFrom("body", bodyRef.current?.scrollLeft ?? 0)}
-      >
-        {children}
-      </div>
-
-      <div className="sticky bottom-0 z-20 shrink-0 bg-card border-t border-border/40">
-        <SyncHScrollBar
-          barRef={bottomRef}
-          width={width}
-          onScroll={() => syncFrom("bottom", bottomRef.current?.scrollLeft ?? 0)}
-        />
-      </div>
-    </div>
-  );
-}
-
-function ScanSummaryBar({ pct }: { pct: number }) {
-  const color = pct >= 80 ? "bg-emerald-500" : pct >= 50 ? "bg-amber-400" : "bg-primary/70";
-  return (
-    <div className="flex items-center gap-2 min-w-[100px]">
-      <div className="flex-1 h-2 rounded-sm bg-secondary overflow-hidden">
-        <div className={`h-full rounded-sm ${color}`} style={{ width: `${pct}%` }} />
-      </div>
-      <span className="mono text-[9px] font-bold text-foreground whitespace-nowrap">{pct}%</span>
-    </div>
-  );
-}
-
-function ProductivityBadge({
-  pct,
-  isPending,
-  hasIntel,
-}: {
-  pct: number;
-  isPending: boolean;
-  hasIntel: boolean;
-}) {
-  if (isPending) {
-    return (
-      <span className="mono text-[10px] font-semibold text-foreground/70 whitespace-nowrap">Nil</span>
-    );
-  }
-  if (!hasIntel) {
-    return (
-      <span className="mono text-[10px] font-semibold text-foreground/70 whitespace-nowrap">
-        Could Not Be Assessed
-      </span>
-    );
-  }
-  const label = productivityStatusLabel(pct, true);
-  const cls =
-    pct >= 80
-      ? "text-emerald-700 bg-emerald-500/10 border-emerald-500/25"
-      : pct >= 50
-        ? "text-primary bg-primary/8 border-primary/20"
-        : "text-foreground/80 bg-secondary/40 border-border";
-  return (
-    <span className={`inline-flex mono text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-sm border whitespace-nowrap ${cls}`}>
-      {label}
-    </span>
-  );
 }
 
 function StatusBadge({ label }: { label: string }) {
@@ -467,13 +334,7 @@ function EngagementUnit() {
 
   const { data: intelRows = [] } = useQuery({
     queryKey: ["intel-eng", unitId],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from("intel_records")
-        .select("id, satellite_id, unit_id, band, summary, analysis_report, observation_date, updated_at")
-        .eq("unit_id", unitId);
-      return data ?? [];
-    },
+    queryFn: () => listIntelRecordsForUnit(unitId),
     staleTime: 30 * 1000,
   });
 
@@ -568,10 +429,10 @@ function EngagementUnit() {
   })();
 
   const SCAN_HEADERS = [
-    "#", "Satellite", "Polarization", "Last Update",
+    "#", "Satellite", "Polarization",
     "Antenna", "LNA/LNB", "Demodulator", "Processor",
     "Freq. Scanned", "Freq. Analyzed", "Freq. Pending",
-    "Scan Summary", "Productivity", "Status", "",
+    "",
   ];
 
   return (
@@ -609,8 +470,8 @@ function EngagementUnit() {
             No active scanning sessions
           </div>
         ) : (
-          <DualScrollTable maxHeight={320}>
-            <table className="min-w-[1200px] w-full mono text-[11px]">
+          <div className="overflow-auto" style={{ maxHeight: 320 }}>
+            <table className="w-full mono text-[11px]">
               <thead className="sticky top-0 z-10 bg-card border-b border-border">
                 <tr>
                   {SCAN_HEADERS.map((h) => (
@@ -624,14 +485,10 @@ function EngagementUnit() {
               </thead>
               <tbody className="divide-y divide-border">
                 {validatedActiveRows.map((r: any, idx: number) => {
-                  const { isPending, missing } = resourceCompleteness(r);
+                  const { isPending } = resourceCompleteness(r);
                   const analysis =
                     analysisByEngId.get(r.id) ?? computeSatelliteAnalysis(r, intelRows);
                   const hasResources = !isPending;
-                  const hasIntel = intelRows.some(
-                    (row) => row.satellite_id === r.satellite_id && row.unit_id === r.unit_id,
-                  );
-                  const statusLabel = engagementDisplayStatus(r.status, isPending, analysis.analysisPct);
 
                   return (
                     <tr key={r.id} className={`transition-colors ${
@@ -651,10 +508,6 @@ function EngagementUnit() {
                         ) : (
                           <span className="text-foreground/60">—</span>
                         )}
-                      </td>
-
-                      <td className="px-3 py-2.5 text-foreground whitespace-nowrap">
-                        {formatEngagementDate(analysis.lastUpdate)}
                       </td>
 
                       <td className="px-3 py-2.5 whitespace-nowrap">
@@ -700,34 +553,6 @@ function EngagementUnit() {
                         {hasResources ? analysis.pending.toLocaleString() : "—"}
                       </td>
 
-                      <td className="px-3 py-2.5">
-                        {hasResources
-                          ? <ScanSummaryBar pct={analysis.analysisPct} />
-                          : <span className="mono text-[9px] text-foreground/60 italic">Awaiting resources</span>}
-                      </td>
-
-                      <td className="px-3 py-2.5">
-                        <ProductivityBadge
-                          pct={analysis.analysisPct}
-                          isPending={isPending}
-                          hasIntel={hasIntel}
-                        />
-                      </td>
-
-                      <td className="px-3 py-2.5">
-                        <div className="flex flex-col gap-1">
-                          <StatusBadge label={statusLabel} />
-                          {isPending && missing.length > 0 && (
-                            <div className="flex items-start gap-1">
-                              <AlertTriangle className="h-2.5 w-2.5 text-amber-600 shrink-0 mt-px" />
-                              <span className="mono text-[9px] text-amber-700 leading-snug">
-                                Need: {missing.join(", ")}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      </td>
-
                       <td className="px-2 py-2.5">
                         {canEdit && (
                           <EditEngagement
@@ -744,7 +569,7 @@ function EngagementUnit() {
                 })}
               </tbody>
             </table>
-          </DualScrollTable>
+          </div>
         )}
       </div>
 

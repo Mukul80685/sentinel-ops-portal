@@ -57,7 +57,12 @@ export const CONTROL_CENTER_MODULE_MAP = Object.fromEntries(
   CONTROL_CENTER_MODULES.map((m) => [m.id, m]),
 ) as Record<ControlCenterModuleId, ControlCenterModuleMeta>;
 
+/** Hub search — explicit keys satisfy TanStack Router validated search. */
+export function ccHubSearch(module?: ControlCenterModuleId, unit?: string) {
+  return { module, unit };
+}
+
 /** Back link from a CC submodule drill-down to its hub view */
 export function ccModuleBackLink(module: ControlCenterModuleId) {
-  return { to: "/control-center" as const, search: { module } };
+  return { to: "/control-center" as const, search: ccHubSearch(module) };
 }

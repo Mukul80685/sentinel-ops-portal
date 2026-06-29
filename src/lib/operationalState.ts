@@ -63,27 +63,40 @@ export function buildOperationalFleetState(input: {
 
   const regions = mergeRegionsWithOverlay();
 
-  const normalizedEngagements = engagements.map((e) => ({
+  // normalize engagements (safe)
+  const normalizedEngagements = (engagements ?? []).map((e) => ({
     ...e,
     status: (e.status ?? "UNKNOWN").toString().trim(),
   }));
 
-  const units: UnitOperationalState[] = dbUnits.map((unit) => {
-    const intSlug = resolveIntUnitSlug(unit.id, unit.code) as UnitSlot | null;
-  
-    const capability = buildLiveEngagementFleetModel({
-      engagements,
-      equipment,
-      dbUnits: [unit],
-      intelRows,
-    }).get(unit.id)!;
+  // normalize equipment defensively (prevents TS + runtime issues)
+  const normalizedEquipment = (equipment ?? []).map((e) => ({
+    ...e,
+    status: (e?.status ?? "UNKNOWN").toString().trim(),
+  }));
+
+  const fleetModel = buildLiveEngagementFleetModel({
+    engagements: normalizedEngagements,
+    equipment: normalizedEquipment,
+    dbUnits,
+    intelRows,
+  });
+
+  const units: UnitOperationalState[] = (dbUnits ?? []).map((unit) => {
+    const intSlug = (resolveIntUnitSlug(unit.id, unit.code)?? null) as UnitSlot | null;
+
+    const capability =
+      fleetModel.get(unit.id) ?? {
+        activeChains: 0,
+        snapshot: {} as UnitScanSnapshot,
+        assignments: [],
+      };
 
     const visibleSatellites = intSlug
       ? countVisibleSatellitesForUnit(intSlug, regions)
       : 0;
 
     const allocations = intSlug ? getAllocationsForUnit(intSlug) : [];
-
     const allocatedSatellites = allocations.length;
 
     return {
@@ -93,16 +106,16 @@ export function buildOperationalFleetState(input: {
       intUnitSlug: intSlug,
       visibleSatellites,
       allocatedSatellites,
-      activeSatellites: capability.activeChains,
-      capability,
-      snapshot: capability.snapshot,
-    };
+      activeSatellites: capability?.activeChains ?? 0,
+      capability: capability as UnitCapability,
+      snapshot: (capability?.snapshot ?? {}) as UnitScanSnapshot,
+    } as UnitOperationalState;
   });
 
   return {
     units,
     byUnitId: new Map(units.map((u) => [u.unitDbId, u])),
-    totalActiveScans: units.reduce((s, u) => s + u.activeSatellites, 0),
+    totalActiveScans: units.reduce((s, u) => s + (u.activeSatellites ?? 0), 0),
   };
 }
 
@@ -122,8 +135,10 @@ export function buildUnitActivityFromState(
         : pol.startsWith("KU")
           ? "KU band"
           : "Extended C-band";
-    const productive = Math.round(analysis.analyzed * 0.7);
-    const nonProductive = Math.max(0, analysis.analyzed - productive);
+    const productive =
+      a.productiveCount ?? Math.floor(analysis.analyzed * 0.7);
+    const nonProductive =
+      a.nonProductiveCount ?? Math.max(0, analysis.analyzed - productive);
 
     return {
       satellite: a.name,

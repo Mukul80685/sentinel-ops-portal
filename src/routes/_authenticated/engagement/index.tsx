@@ -5,7 +5,6 @@ import { engColor } from "@/lib/engagementEngine";
 import { INT_UNITS } from "@/lib/intelRepository";
 import { useOperationalState } from "@/hooks/useOperationalState";
 import { formatLiveEngagementSatelliteLabel } from "@/lib/operationalSync";
-import { ChevronRight } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/engagement/")({
   beforeLoad: () => {
@@ -41,61 +40,50 @@ export function EngagementDashboardView() {
         <FleetStat label="Active Scans" value={totalActive} accent />
       </div>
 
-      <div className="grid gap-3 grid-cols-2 sm:grid-cols-4">
+      <div className="grid gap-2 grid-cols-2 sm:grid-cols-4">
         {rows.map(({ unit, cap, satDisplay }) => (
-          <div key={unit.id} className="panel flex flex-col overflow-hidden">
-            <div className="flex flex-col items-center gap-2 px-3 pt-3 pb-2">
-              <div className="text-center w-full">
-                <div className="mono text-[12px] font-bold uppercase tracking-tight text-foreground leading-tight">
-                  Unit {unitDisplayCode(unit.code)}
-                </div>
-                <div className="mono text-[8px] text-foreground/75 mt-0.5 truncate">
-                  {unitLocation(unit)}
-                </div>
+          <Link
+            key={unit.id}
+            to="/engagement/$unitId"
+            params={{ unitId: unit.id }}
+            className="panel flex flex-col items-center gap-1.5 px-2.5 py-2.5 overflow-hidden
+                       hover:border-primary/45 hover:bg-primary/5 transition-all no-underline cursor-pointer"
+          >
+            <div className="text-center w-full min-w-0">
+              <div className="mono text-[11px] font-bold uppercase tracking-tight text-foreground leading-tight">
+                Unit {unitDisplayCode(unit.code)}
               </div>
+              <div className="mono text-[7px] text-foreground/75 mt-0.5 truncate">
+                {unitLocation(unit)}
+              </div>
+            </div>
 
-              <EngagementRing pct={cap.occupancyPct} />
+            <EngagementRing pct={cap.occupancyPct} compact />
 
-              <div className="w-full min-h-[52px]">
-                {cap.snapshot.satellites.length === 0 ? (
-                  <div className="mono text-[8px] uppercase tracking-wider text-foreground/80 text-center py-1">
-                    {cap.feasibilityStatus === "NON_OPERATIONAL"
-                      ? "Non-operational"
-                      : "No active scans"}
-                  </div>
-                ) : (
-                  <div className="text-center">
-                    <p
-                      className="mono text-[8px] text-foreground leading-snug truncate px-0.5"
-                      title={cap.snapshot.satellites.map((s) => s.name).join(", ")}
-                    >
-                      {satDisplay.label}
+            <div className="w-full min-h-0">
+              {cap.snapshot.satellites.length === 0 ? (
+                <div className="mono text-[7px] uppercase tracking-wider text-foreground/80 text-center">
+                  {cap.feasibilityStatus === "NON_OPERATIONAL"
+                    ? "Non-operational"
+                    : "No active scans"}
+                </div>
+              ) : (
+                <div className="text-center min-w-0">
+                  <p
+                    className="mono text-[7px] text-foreground leading-snug truncate"
+                    title={cap.snapshot.satellites.map((s) => s.name).join(", ")}
+                  >
+                    {satDisplay.label}
+                  </p>
+                  {satDisplay.total > 0 && (
+                    <p className="mono text-[6px] text-foreground/70 mt-0.5">
+                      {satDisplay.total} active
                     </p>
-                    {satDisplay.total > 0 && (
-                      <p className="mono text-[7px] text-foreground/70 mt-0.5">
-                        {satDisplay.total} active satellite{satDisplay.total !== 1 ? "s" : ""}
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
+                  )}
+                </div>
+              )}
             </div>
-
-            <div className="border-t border-border/50 px-3 pb-3 pt-2 mt-auto">
-              <Link
-                to="/engagement/$unitId"
-                params={{ unitId: unit.id }}
-                className="w-full flex items-center justify-center gap-1.5 rounded-sm
-                           border border-border bg-card px-3 py-1.5 no-underline
-                           hover:bg-primary/10 hover:border-primary/50 transition-all cursor-pointer"
-              >
-                <span className="mono text-[8px] uppercase tracking-wider text-foreground hover:text-primary transition-colors">
-                  View Details
-                </span>
-                <ChevronRight className="h-2.5 w-2.5 text-foreground" />
-              </Link>
-            </div>
-          </div>
+          </Link>
         ))}
       </div>
     </>
@@ -123,12 +111,13 @@ function FleetStat({ label, value, accent }: { label: string; value: string | nu
   );
 }
 
-function EngagementRing({ pct }: { pct: number }) {
-  const size = 64;
-  const stroke = 6;
+function EngagementRing({ pct, compact }: { pct: number; compact?: boolean }) {
+  const size = compact ? 48 : 64;
+  const stroke = compact ? 5 : 6;
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
   const color = engColor(pct);
+  const pctSize = compact ? "text-[10px]" : "text-[12px]";
   return (
     <div className="relative" style={{ width: size, height: size }}>
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90">
@@ -153,7 +142,7 @@ function EngagementRing({ pct }: { pct: number }) {
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="mono text-[12px] font-bold leading-none" style={{ color }}>
+        <span className={`mono font-bold leading-none ${pctSize}`} style={{ color }}>
           {pct}%
         </span>
       </div>

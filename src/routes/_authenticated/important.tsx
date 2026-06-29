@@ -1,4 +1,5 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
+import { ccHubSearch } from "@/lib/controlCenter";
 import {
   clearImportant,
   getImportantFrequencyRefs,
@@ -8,7 +9,7 @@ import {
 import { ImportantFrequencyMetadata } from "@/components/intel/FrequencyStateSymbols";
 import { VISIBILITY_SATELLITE_PROFILES } from "@/lib/intelAnalysisData";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { listSatellites } from "@/lib/queries";
 import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
@@ -60,7 +61,7 @@ import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/important")({
   beforeLoad: () => {
-    throw redirect({ to: "/control-center", search: { module: "important" } });
+    throw redirect({ to: "/control-center", search: ccHubSearch("important") });
   },
   component: () => null,
 });
@@ -106,7 +107,7 @@ type SortDir = "asc" | "desc";
 /** Table + import schema — column order must match exactly. */
 const TABLE_HEADERS = ["Satellite", "Frequency", "Unit", "Date of Report", "INT Notes"] as const;
 const FREQ_GRID_COLS =
-  "[grid-template-columns:1.5rem_1.5rem_minmax(0,1.05fr)_minmax(0,0.88fr)_minmax(2.75rem,0.62fr)_3.5rem_minmax(5rem,1.75fr)_3.5rem]";
+  "[grid-template-columns:1.5rem_1.5rem_minmax(0,1.05fr)_minmax(0,0.88fr)_minmax(2.75rem,0.62fr)_3.5rem_minmax(5rem,1.75fr)_4.5rem]";
 
 type FreqRow = {
   id: string;
@@ -207,6 +208,10 @@ function fmtDateCompact(iso: string): string {
   }
 }
 
+function sortReportingUnits(units: Set<string>): string[] {
+  return [...units].sort((a, b) => (UNIT_ORDER[a] ?? 999) - (UNIT_ORDER[b] ?? 999));
+}
+
 function resolveRowPolarization(row: FreqRow, satName: string): string {
   if (row._polarization) return row._polarization;
   return VISIBILITY_SATELLITE_PROFILES[satName]?.defaultPolarization ?? "—";
@@ -239,13 +244,14 @@ export function ImportantFrequenciesView() {
   const [q, setQ]                       = useState("");
   const [sortKey, setSortKey]           = useState<SortKey | null>(null);
   const [sortDir, setSortDir]           = useState<SortDir>("asc");
-  const [expandedId, setExpandedId]     = useState<string | null>(null);
   const [addOpen,         setAddOpen]         = useState(false);
   const [advancedOpen,    setAdvancedOpen]    = useState(false);
   const [clearConfirm,    setClearConfirm]    = useState(false);
   const [filterOpen,      setFilterOpen]      = useState(false);
   const [freqFilter,      setFreqFilter]      = useState<FreqFilter>(EMPTY_FREQ_FILTER);
   const [selectedIds,     setSelectedIds]     = useState<Set<string>>(new Set());
+  const [hiddenRowIds,    setHiddenRowIds]    = useState<Set<string>>(new Set());
+  const [unitsDialog,     setUnitsDialog]     = useState<{ freqLabel: string; units: string[] } | null>(null);
   const [refSync, setRefSync] = useState(0);
 
   useEffect(() => {
@@ -253,16 +259,6 @@ export function ImportantFrequenciesView() {
     window.addEventListener(INTEL_FREQ_EVENT, h);
     return () => window.removeEventListener(INTEL_FREQ_EVENT, h);
   }, []);
-
-  // In-memory traceability data: Record<freqRowId, ScanEntry[]>
-  const [scanHistory, setScanHistory]   = useState<Record<string, ScanEntry[]>>(MOCK_SCAN_HISTORY);
-  // Which row's "Log Scan" form is open
-  const [addScanForId, setAddScanForId] = useState<string | null>(null);
-  const [scanForm, setScanForm]         = useState({
-    unit: UNIT_LABELS[0],
-    date: new Date().toISOString().slice(0, 10),
-    observation: "",
-  });
 
   // ── Data queries ─────────────────────────────────────────────────────────────
   const { data: sats = [] } = useQuery({ queryKey: ["sats"], queryFn: listSatellites });
@@ -306,8 +302,24 @@ export function ImportantFrequenciesView() {
       const satName = r._mock ? (r._satName ?? "") : (satMap[r.satellite_id]?.name ?? "");
       return !refs.some((ref) => ref.frequency === r.frequency && ref._satName === satName);
     });
-    return [...refs, ...dedupedBase];
-  }, [rows, refSync, satMap]);
+    return [...refs, ...dedupedBase].filter((r) => !hiddenRowIds.has(r.id));
+  }, [rows, refSync, satMap, hiddenRowIds]);
+
+  /** Distinct reporting units per satellite + frequency (mock scan history + row unit). */
+  const reportingUnitsByKey = useMemo(() => {
+    const byKey = new Map<string, Set<string>>();
+    for (const row of effectiveRows) {
+      const satName = row._mock ? (row._satName ?? "") : (satMap[row.satellite_id]?.name ?? "");
+      const key = `${satName}::${row.frequency}`;
+      const units = byKey.get(key) ?? new Set<string>();
+      if (row.band) units.add(row.band);
+      for (const scan of MOCK_SCAN_HISTORY[row.id] ?? []) units.add(scan.unit);
+      byKey.set(key, units);
+    }
+    const sorted = new Map<string, string[]>();
+    for (const [key, units] of byKey) sorted.set(key, sortReportingUnits(units));
+    return sorted;
+  }, [effectiveRows, satMap]);
 
   // ── Filtering (text search + structured filters) ─────────────────────────────
   const filtered = useMemo(() => {
@@ -325,8 +337,8 @@ export function ImportantFrequenciesView() {
       if (f.freq       && !r.frequency.toLowerCase().includes(f.freq.toLowerCase())) return false;
       if (f.unit       && (r.band ?? "") !== f.unit)                                 return false;
       if (f.intKeyword && !(r.label ?? "").toLowerCase().includes(f.intKeyword.toLowerCase())) return false;
-      if (f.dateFrom && r.created_at < f.dateFrom)                                   return false;
-      if (f.dateTo   && r.created_at.slice(0, 10) > f.dateTo)                        return false;
+      if (f.dateFrom && r.created_at && r.created_at < f.dateFrom)                                   return false;
+      if (f.dateTo   && r.created_at && r.created_at.slice(0, 10) > f.dateTo)                        return false;
       return true;
     });
   }, [effectiveRows, q, satMap, freqFilter]);
@@ -416,35 +428,44 @@ export function ImportantFrequenciesView() {
     if (error) return toast.error(error.message);
     toast.success("Frequency removed");
     qc.invalidateQueries({ queryKey: ["important"] });
-    if (expandedId === id) setExpandedId(null);
   }
 
-  function removeIntRef(refKey: string, rowId: string) {
+  function removeIntRef(refKey: string) {
     clearImportant(refKey, userLabel);
     toast.success("Removed from Important Frequencies");
     setRefSync((n) => n + 1);
-    if (expandedId === rowId) setExpandedId(null);
   }
 
-  function logScan(freqId: string) {
-    if (!scanForm.observation.trim()) return;
-    const entry: ScanEntry = {
-      id: `scan-${Date.now()}`,
-      unit:        scanForm.unit,
-      date:        scanForm.date,
-      observation: scanForm.observation.trim(),
-    };
-    setScanHistory((prev) => ({
-      ...prev,
-      [freqId]: [...(prev[freqId] ?? []), entry],
-    }));
-    toast.success(`Scan logged for ${scanForm.unit}`);
-    setScanForm({
-      unit: UNIT_LABELS[0],
-      date: new Date().toISOString().slice(0, 10),
-      observation: "",
+  function dismissLocalRow(id: string) {
+    setHiddenRowIds((prev) => new Set(prev).add(id));
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
     });
-    setAddScanForId(null);
+    toast.success("Frequency removed");
+  }
+
+  async function removeRow(row: FreqRow) {
+    if (row._refKey) {
+      removeIntRef(row._refKey);
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(row.id);
+        return next;
+      });
+      return;
+    }
+    if (row._mock || row.id.startsWith("mock-")) {
+      dismissLocalRow(row.id);
+      return;
+    }
+    await deleteRow(row.id);
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.delete(row.id);
+      return next;
+    });
   }
 
   // ── Render ───────────────────────────────────────────────────────────────────
@@ -643,18 +664,19 @@ export function ImportantFrequenciesView() {
           </div>
 
           {sorted.map((row, idx) => {
-            const satName    = row._mock ? (row._satName ?? "—") : (satMap[row.satellite_id]?.name ?? "—");
-            const scans      = scanHistory[row.id] ?? [];
-            const isExpanded = expandedId === row.id;
+            const satKey     = row._mock ? (row._satName ?? "") : (satMap[row.satellite_id]?.name ?? "");
+            const satName    = satKey || "—";
+            const freqKey    = `${satKey}::${row.frequency}`;
+            const reportingUnits = reportingUnitsByKey.get(freqKey) ?? [];
+            const unitCount  = reportingUnits.length;
             const checked    = selectedIds.has(row.id);
 
             return (
-              <Fragment key={row.id}>
                 <div
+                  key={row.id}
                   className={`grid ${FREQ_GRID_COLS} gap-x-1 items-center border-b border-border px-1 py-1.5
-                              transition-colors cursor-pointer
-                              ${checked ? "bg-primary/8" : isExpanded ? "bg-secondary/30" : "hover:bg-secondary/20"}`}
-                  onClick={() => setExpandedId(isExpanded ? null : row.id)}
+                              transition-colors
+                              ${checked ? "bg-primary/8" : "hover:bg-secondary/20"}`}
                 >
                   <div className="flex justify-center" onClick={(e) => e.stopPropagation()}>
                     <input type="checkbox" checked={checked} onChange={() => toggleId(row.id)}
@@ -678,32 +700,32 @@ export function ImportantFrequenciesView() {
                   <div className="mono text-[11px] text-foreground leading-snug break-words whitespace-normal overflow-visible min-w-0">
                     {row.label || "—"}
                   </div>
-                  <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-                    {scans.length > 0 && (
-                      <span
-                        className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded-sm
-                                   bg-primary/15 border border-primary/30 text-primary
-                                   mono text-[9px] font-bold"
-                        title={`${scans.length} scan report${scans.length !== 1 ? "s" : ""} logged`}
+                  <div className="flex items-center justify-end gap-1">
+                    {unitCount > 1 && (
+                      <button
+                        type="button"
+                        title={`Reported by ${unitCount} units — click to view`}
+                        onClick={() =>
+                          setUnitsDialog({
+                            freqLabel: `${satName} · ${displayFrequencyMhz(row.frequency)}`,
+                            units: reportingUnits,
+                          })
+                        }
+                        className="inline-flex flex-col items-center justify-center min-w-[1.25rem] px-0.5 py-0.5 rounded-sm
+                                   bg-primary/15 border border-primary/30 text-primary leading-none
+                                   hover:bg-primary/25 transition-colors cursor-pointer"
                       >
-                        ★ {scans.length}
-                      </span>
+                        <span className="text-[10px] leading-none">★</span>
+                        <span className="mono text-[9px] font-bold tabular-nums leading-none mt-0.5">{unitCount}</span>
+                      </button>
                     )}
-                    <button
-                      type="button"
-                      onClick={() => setExpandedId(isExpanded ? null : row.id)}
-                      title={isExpanded ? "Collapse" : "Expand scan history"}
-                      className="h-6 w-6 grid place-items-center rounded-sm border border-border
-                                 hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
-                    >
-                      {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                    </button>
                     {canEdit && (
                       <button
                         type="button"
-                        onClick={() =>
-                          row._refKey ? removeIntRef(row._refKey, row.id) : deleteRow(row.id)
-                        }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void removeRow(row);
+                        }}
                         title="Remove frequency entry"
                         className="h-6 w-6 grid place-items-center rounded-sm border border-destructive/30
                                    hover:bg-destructive/10 transition-colors text-destructive/60 hover:text-destructive"
@@ -713,128 +735,33 @@ export function ImportantFrequenciesView() {
                     )}
                   </div>
                 </div>
-
-                {isExpanded && (
-                  <div className="border-b border-border bg-secondary/10 px-4 py-3">
-                          <div className="space-y-2.5">
-
-                            {/* Header */}
-                            <div className="label-eyebrow flex items-center gap-1.5">
-                              <Radio className="h-2.5 w-2.5" />
-                              Frequency: <span className="text-foreground font-bold">{displayFrequencyMhz(row.frequency)}</span>
-                              {satName !== "—" && (
-                                <span className="text-muted-foreground/60">— {satName}</span>
-                              )}
-                              — Unit Scan History
-                            </div>
-
-                            {/* Scan history table */}
-                            {scans.length === 0 ? (
-                              <p className="mono text-[11px] text-muted-foreground italic">
-                                No scan reports logged yet. Use "Log Scan" to add traceability entries.
-                              </p>
-                            ) : (
-                              <table className="w-full text-[11px] mono border-collapse">
-                                <thead>
-                                  <tr className="border-b border-border">
-                                    <th className="pb-1 pr-5 text-left text-muted-foreground font-medium">Unit</th>
-                                    <th className="pb-1 pr-5 text-left text-muted-foreground font-medium">Date</th>
-                                    <th className="pb-1 text-left text-muted-foreground font-medium">Observation / Result</th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y divide-border">
-                                  {scans.map((scan) => (
-                                    <tr key={scan.id}>
-                                      <td className="py-1.5 pr-5 font-bold text-foreground">{scan.unit}</td>
-                                      <td className="py-1.5 pr-5 text-muted-foreground tabular-nums">{fmtDate(scan.date)}</td>
-                                      <td className="py-1.5 text-foreground">{scan.observation}</td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            )}
-
-                            {/* Log new scan — toggle inline form */}
-                            {addScanForId === row.id ? (
-                              <div className="border border-border rounded-sm p-3 bg-background space-y-2">
-                                <div className="label-eyebrow mb-1">Log New Scan</div>
-                                <div className="grid grid-cols-2 gap-2">
-                                  <div>
-                                    <Label className="label-eyebrow">Reporting Unit</Label>
-                                    <Select
-                                      value={scanForm.unit}
-                                      onValueChange={(v) => setScanForm((f) => ({ ...f, unit: v }))}
-                                    >
-                                      <SelectTrigger className="mt-1 h-8 mono text-xs">
-                                        <SelectValue />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        {UNIT_LABELS.map((u) => (
-                                          <SelectItem key={u} value={u} className="mono text-xs">{u}</SelectItem>
-                                        ))}
-                                      </SelectContent>
-                                    </Select>
-                                  </div>
-                                  <div>
-                                    <Label className="label-eyebrow">Date of Scan</Label>
-                                    <Input
-                                      type="date"
-                                      className="mt-1 h-8 mono text-xs"
-                                      value={scanForm.date}
-                                      onChange={(e) => setScanForm((f) => ({ ...f, date: e.target.value }))}
-                                    />
-                                  </div>
-                                </div>
-                                <div>
-                                  <Label className="label-eyebrow">Observation / Result *</Label>
-                                  <Textarea
-                                    className="mt-1 mono text-xs resize-none"
-                                    rows={2}
-                                    value={scanForm.observation}
-                                    onChange={(e) => setScanForm((f) => ({ ...f, observation: e.target.value }))}
-                                    placeholder="e.g. Active carrier detected, interference noted, measured −72 dBm…"
-                                  />
-                                </div>
-                                <div className="flex gap-2">
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    className="mono uppercase tracking-wider"
-                                    onClick={() => setAddScanForId(null)}
-                                  >
-                                    Cancel
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    className="mono uppercase tracking-wider"
-                                    disabled={!scanForm.observation.trim()}
-                                    onClick={() => logScan(row.id)}
-                                  >
-                                    Log Scan
-                                  </Button>
-                                </div>
-                              </div>
-                            ) : (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="h-7 mono text-[10px] uppercase tracking-wider"
-                                onClick={() => setAddScanForId(row.id)}
-                              >
-                                <Plus className="h-3 w-3 mr-1" /> Log Scan
-                              </Button>
-                            )}
-                          </div>
-                  </div>
-                )}
-              </Fragment>
             );
           })}
         </div>
       )}
+
+      {/* ── Reporting units dialog ─────────────────────────────────────────── */}
+      <Dialog open={unitsDialog !== null} onOpenChange={(open) => { if (!open) setUnitsDialog(null); }}>
+        <DialogContent className="max-w-xs">
+          <DialogHeader>
+            <DialogTitle className="mono uppercase tracking-wider text-sm">
+              Reporting Units
+            </DialogTitle>
+          </DialogHeader>
+          {unitsDialog && (
+            <>
+              <p className="mono text-[10px] text-muted-foreground">{unitsDialog.freqLabel}</p>
+              <ul className="space-y-1 mt-2">
+                {unitsDialog.units.map((unit) => (
+                  <li key={unit} className="mono text-[11px] font-bold text-foreground">
+                    {unit}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* ── Advanced Features — bottom-right (mirrors Resource Inventory) ── */}
       <div className="mt-4 flex items-center justify-end gap-2">

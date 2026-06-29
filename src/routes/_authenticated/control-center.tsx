@@ -1,11 +1,11 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useMemo, useState, type ComponentType } from "react";
 import { AppShell } from "@/components/AppShell";
 import { useOperationalState } from "@/hooks/useOperationalState";
 import { buildUnitActivityFromState } from "@/lib/operationalState";
 import {
   CONTROL_CENTER_MODULE_MAP,
-  CONTROL_CENTER_MODULES,
+  ccHubSearch,
   isControlCenterModule,
   type ControlCenterModuleId,
 } from "@/lib/controlCenter";
@@ -26,7 +26,6 @@ import {
   ChevronUp,
   Globe,
   Info,
-  LayoutDashboard,
   ListOrdered,
   Minus,
   Plus,
@@ -41,6 +40,7 @@ import {
 } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/control-center")({
+  ssr: false,
   component: ControlCenterPage,
   head: () => ({ meta: [{ title: "Control Center — SSACC" }] }),
   validateSearch: (search: Record<string, unknown>) => {
@@ -50,6 +50,11 @@ export const Route = createFileRoute("/_authenticated/control-center")({
       unit: typeof search.unit === "string" ? search.unit : undefined,
       module,
     };
+  },
+  beforeLoad: ({ search }) => {
+    if (!search.module) {
+      throw redirect({ to: "/control-center", search: ccHubSearch("engagement") });
+    }
   },
 });
 
@@ -2062,7 +2067,7 @@ function OptimizationEngine() {
   if (selectedUnitKey) {
     const unitLabel = `Unit ${selectedUnitKey}` as UnitLabel;
     if ((UNIT_LABELS as readonly string[]).includes(unitLabel)) {
-      return <UnitDetailView unit={unitLabel} onBack={() => navigate({ search: {} })} />;
+      return <UnitDetailView unit={unitLabel} onBack={() => navigate({ search: ccHubSearch("engagement") })} />;
     }
   }
 
@@ -2135,7 +2140,7 @@ function OptimizationEngine() {
               const rb = risk==="Low"?"text-emerald-700 bg-emerald-500/8 border-emerald-500/20":risk==="Medium"?"text-amber-600 bg-amber-400/8 border-amber-400/20":"text-destructive bg-destructive/8 border-destructive/20";
               return (
                 <tr key={unit}
-                  onClick={() => navigate({ search: { unit: unit.replace("Unit ","") } })}
+                  onClick={() => navigate({ search: ccHubSearch("engagement", unit.replace("Unit ", "")) })}
                   className="border-b border-border/50 hover:bg-secondary/30 cursor-pointer transition-colors group">
                   <td className="px-4 py-3"><span className="mono text-[10px] text-muted-foreground/40">{idx+1}</span></td>
                   <td className="px-3 py-3"><span className="mono text-[12px] font-bold text-foreground whitespace-nowrap">{unit}</span></td>
@@ -2192,114 +2197,46 @@ function OptimizationEngine() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const MODULE_VIEWS: Record<ControlCenterModuleId, ComponentType> = {
-  engagement: EngagementDashboardView,
+  engagement: EngagementLiveModuleView,
   intel: IntelRepositoryView,
   important: ImportantFrequenciesView,
   priority: PriorityAllocationView,
 };
 
-function ControlCenterSubsystemCards({ activeModule }: { activeModule?: ControlCenterModuleId }) {
-  const navigate = useNavigate();
+function EngagementLiveModuleView() {
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-      {CONTROL_CENTER_MODULES.map(({ id, title, icon: Icon, description }) => {
-        const active = activeModule === id;
-        return (
-          <button
-            key={id}
-            type="button"
-            onClick={() => navigate({ to: "/control-center", search: { module: id } })}
-            className={`group relative overflow-hidden rounded-md border bg-card p-4 sm:p-5
-                        flex items-start gap-4 text-left w-full
-                        transition-all duration-200 cursor-pointer
-                        hover:scale-[1.015] hover:shadow-lg hover:-translate-y-0.5
-                        focus:outline-none focus:ring-2 focus:ring-primary/50
-                        ${active
-                          ? "border-primary/50 bg-primary/5 shadow-md"
-                          : "border-border hover:border-primary/40 hover:bg-secondary/15"
-                        }`}
-          >
-            <div className={`h-12 w-12 shrink-0 grid place-items-center rounded-sm border
-                            transition-colors
-                            ${active
-                              ? "border-primary/40 bg-primary/12"
-                              : "border-border bg-secondary group-hover:bg-primary/8 group-hover:border-primary/30"
-                            }`}>
-              <Icon className={`h-5 w-5 ${active ? "text-primary" : "text-foreground group-hover:text-primary"}`} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="mono text-[12px] font-bold uppercase tracking-wide text-foreground leading-tight">
-                {title}
-              </div>
-              <p className="text-[10px] text-foreground/85 leading-snug mt-1.5">{description}</p>
-              <div className="mt-2.5 mono text-[8px] uppercase tracking-wider text-primary
-                              group-hover:text-primary transition-colors">
-                Open subsystem →
-              </div>
-            </div>
-            <div className="absolute bottom-0 inset-x-0 h-[2px] bg-gradient-to-r from-transparent via-primary/20 to-transparent
-                            group-hover:via-primary/50 transition-all" />
-          </button>
-        );
-      })}
+    <div className="space-y-5">
+      <EngagementDashboardView />
+      <UnitActivitySnapshot />
+      <OptimizationEngine />
     </div>
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// PAGE
-// ═══════════════════════════════════════════════════════════════════════════════
-
 function ControlCenterPage() {
   const { module } = Route.useSearch();
 
-  if (module) {
-    const meta = CONTROL_CENTER_MODULE_MAP[module];
-    const View = MODULE_VIEWS[module];
-    const Icon = meta.icon;
-    const isEngagement = module === "engagement";
+  const meta = module ? CONTROL_CENTER_MODULE_MAP[module] : undefined;
+  const View = module ? MODULE_VIEWS[module] : undefined;
+  if (!module || !meta || !View) {
     return (
-      <AppShell
-        title={meta.title}
-        subtitle={isEngagement || !meta.subtitle ? undefined : meta.subtitle}
-        headerIcon={isEngagement ? undefined : <Icon className="h-4 w-4" />}
-        showBack
-        backLink={{ to: "/control-center", search: {} }}
-        horizontalNav={null}
-      >
-        <View />
+      <AppShell title="Control Center" showBack backLink={{ to: "/" }} horizontalNav={null}>
+        <p className="mono text-sm text-muted-foreground">Unknown module.</p>
       </AppShell>
     );
   }
-
+  const Icon = meta.icon;
+  const isEngagement = module === "engagement";
   return (
     <AppShell
-      title="Control Center"
-      subtitle="Operational Command Environment"
-      headerIcon={<LayoutDashboard className="h-4 w-4" />}
-      showBack={false}
+      title={meta.title}
+      subtitle={isEngagement || !meta.subtitle ? undefined : meta.subtitle}
+      headerIcon={<Icon className="h-5 w-5 text-primary" />}
+      showBack
+      backLink={{ to: "/" }}
       horizontalNav={null}
     >
-      <div className="space-y-5 pb-6">
-
-        {/* ── Operational subsystem launchers ──────────────────────────── */}
-        <section>
-          <div className="flex items-center gap-2 mb-3">
-            <LayoutDashboard className="h-3.5 w-3.5 text-primary" />
-            <span className="mono text-[10px] font-bold uppercase tracking-wider text-foreground">
-              Operational Subsystems
-            </span>
-          </div>
-          <ControlCenterSubsystemCards />
-        </section>
-
-        {/* ── Module 1: Unit Activity Snapshot ───────────────────────── */}
-        <UnitActivitySnapshot />
-
-        {/* ── Module 2: Optimization Engine ────────────────────────────── */}
-        <OptimizationEngine />
-
-      </div>
+      <View />
     </AppShell>
   );
 }

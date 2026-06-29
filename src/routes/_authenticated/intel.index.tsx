@@ -2,7 +2,7 @@ import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, Database } from "lucide-react";
-import { listUnits } from "@/lib/queries";
+import { listUnits, listAllIntelRecords, INTEL_RECORDS_ALL_KEY } from "@/lib/queries";
 import { supabase } from "@/integrations/supabase/client";
 import { INT_UNITS } from "@/lib/intelRepository";
 import {
@@ -65,15 +65,8 @@ export function IntelRepositoryView() {
   });
 
   const { data: allIntelRows = [] } = useQuery({
-    queryKey: ["intel-records-all", intelDbUnitIds],
-    queryFn: async () => {
-      if (intelDbUnitIds.length === 0) return [];
-      const { data } = await supabase
-        .from("intel_records")
-        .select("id, unit_id, satellite_id, band, analysis_report, summary, updated_at, observation_date");
-      return (data ?? []).filter((r) => intelDbUnitIds.includes(r.unit_id));
-    },
-    enabled: intelDbUnitIds.length > 0,
+    queryKey: INTEL_RECORDS_ALL_KEY,
+    queryFn: listAllIntelRecords,
     staleTime: 30_000,
   });
 

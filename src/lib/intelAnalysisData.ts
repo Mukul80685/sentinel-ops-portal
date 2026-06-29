@@ -13,7 +13,7 @@ import {
   resolveScanPolarizationFromEngagement,
   validateIntelReportIntegrity,
 } from "@/lib/intelIntegrity";
-import { resolveMatrixVisibility } from "@/lib/visibilityMatrix";
+import { resolveMatrixVisibility, isSatelliteVisibleToUnitInMatrix, buildVisibilityDeepLinkSearch } from "@/lib/visibilityMatrix";
 import { bandToPolarizations, INT_UNITS } from "@/lib/intelRepository";
 
 export const OUTPUT_TYPES = ["voice", "packet", "image", "video", "location"] as const;
@@ -172,6 +172,17 @@ export function isSatelliteInIntRoster(unitId: string, satelliteName: string): b
   const norm = satelliteName.trim().toLowerCase();
   return roster.some((s) => s.toLowerCase() === norm);
 }
+
+/**
+ * INT ↔ Visibility cross-link eligibility:
+ * roster INT exists, satellite is cataloged in Visibility Matrix, and unit has visible beams.
+ */
+export function hasIntVisibilityCrossLink(unitId: string, satelliteName: string): boolean {
+  if (!isSatelliteInIntRoster(unitId, satelliteName)) return false;
+  return isSatelliteVisibleToUnitInMatrix(unitId, satelliteName);
+}
+
+export { buildVisibilityDeepLinkSearch };
 
 export function intelReportIdForSatellite(unitId: string, satelliteName: string): string {
   return `${unitId}__${satelliteName.replace(/\s+/g, "-")}`;

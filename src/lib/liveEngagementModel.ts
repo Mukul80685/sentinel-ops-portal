@@ -12,10 +12,9 @@ import {
   type UnitScanSnapshot,
 } from "@/lib/engagementEngine";
 import { canUnitScanSatellite } from "@/lib/intelIntegrity";
-import { isSatelliteInIntRoster } from "@/lib/intelAnalysisData";
+import { hasIntelData, isSatelliteInIntRoster } from "@/lib/intelAnalysisData";
+import { buildIntelBackedAssignments } from "@/lib/intelLiveBridge";
 import {
-  isIntGenerationComplete,
-  isIntGenerationInProgress,
   resolveIntUnitSlug,
   shouldShowOnLiveEngagement,
 } from "@/lib/operationalSync";
@@ -36,6 +35,9 @@ export type ValidatedSatelliteAssignment = {
   displayStatus: string;
   engagement: any;
   analysis: SatelliteAnalysis;
+  /** From INT Repository productivityScore — used by Control Center snapshot. */
+  productiveCount?: number;
+  nonProductiveCount?: number;
 };
 
 export type UnitCapability = {
@@ -244,6 +246,44 @@ export function computeUnitCapability(
     violations.push(
       `${rawActive.length} active engagement(s) exceed ${capacity.totalChains} available chain(s)`,
     );
+  }
+
+  // INT Repository SSOT — alpha/bravo/charlie derive active scans from buildIntelSatelliteTable.
+  if (intUnitSlug && hasIntelData(intUnitSlug)) {
+    const intelResult = buildIntelBackedAssignments(
+      intUnitSlug,
+      unitDbId,
+      engagements,
+      equipment,
+      intelRows,
+      capacity.totalChains,
+    );
+    violations.push(...intelResult.violations);
+
+    const activeChains = intelResult.assignments.length;
+    const occupancyPct =
+      capacity.totalChains === 0
+        ? 0
+        : Math.min(100, Math.round((activeChains / capacity.totalChains) * 100));
+
+    return {
+      unitId: unitDbId,
+      intUnitSlug,
+      feasibilityStatus: violations.length === 0 ? "VALID" : "DEGRADED",
+      constraintViolations: violations,
+      totalChains: capacity.totalChains,
+      maxPossibleScans: capacity.totalChains,
+      activeChains,
+      occupancyPct,
+      availableByStage: {
+        antennas: capacity.antennas,
+        lnbs: capacity.lnbs,
+        demodulators: capacity.demodulators,
+        processors: capacity.processors,
+      },
+      assignments: intelResult.assignments as ValidatedSatelliteAssignment[],
+      snapshot: toSnapshot(intelResult.assignments as ValidatedSatelliteAssignment[]),
+    };
   }
 
   const usedAntennas = new Set<string>();

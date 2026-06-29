@@ -60,8 +60,7 @@ export type EquipmentRow = OpEquipment;
 
 export async function listUnits(): Promise<Unit[]> {
   if (await shouldUseOperationalStore()) {
-    const ds = ensureOperationalDataset();
-    return ds.units as Unit[];
+    return ensureOperationalDataset().units.map(({ slot: _s, ...u }) => u);
   }
 
   const { data, error } = await supabase.from("units").select("*").order("code");
@@ -71,8 +70,10 @@ export async function listUnits(): Promise<Unit[]> {
 
 export async function getUnitById(unitId: string): Promise<Unit | null> {
   if (await shouldUseOperationalStore()) {
-    const ds = ensureOperationalDataset();
-    return ds.units.find((u) => u.id === unitId) ?? null;
+    const op = getOperationalDataset().units.find((u) => u.id === unitId);
+    if (!op) return null;
+    const { slot: _s, ...rest } = op;
+    return rest;
   }
 
   const { data, error } = await supabase
@@ -247,6 +248,31 @@ export function engStatusClass(s: EngStatus) {
     case "Failed":
       return "bg-destructive text-destructive-foreground";
   }
+}
+
+/**
+ * -----------------------------
+ * INTEL RECORDS
+ * -----------------------------
+ */
+
+export const INTEL_RECORDS_ALL_KEY = ["intel-records", "all"] as const;
+
+export async function listAllIntelRecords(): Promise<any[]> {
+  if (await shouldUseOperationalStore()) {
+    const { getOperationalIntelRows } = await import("@/lib/operationalStore");
+    return getOperationalIntelRows();
+  }
+  const { data, error } = await supabase
+    .from("intel_records")
+    .select("id, unit_id, satellite_id, band, summary, analysis_report, observation_date, updated_at, remarks");
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function listIntelRecordsForUnit(unitId: string): Promise<any[]> {
+  const all = await listAllIntelRecords();
+  return all.filter((r) => r.unit_id === unitId);
 }
 
 /**

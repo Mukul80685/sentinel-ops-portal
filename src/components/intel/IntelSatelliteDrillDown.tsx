@@ -24,7 +24,7 @@ import type {
   ProductiveFrequency,
 } from "@/lib/intelAnalysisData";
 import { getUnitIntelName } from "@/lib/intelAnalysisData";
-import { resolveMatrixVisibility } from "@/lib/visibilityMatrix";
+import { buildVisibilityDeepLinkSearch } from "@/lib/visibilityMatrix";
 import { evaluateFrequencyAllocationEligibility } from "@/lib/intelIntegrity";
 import {
   allocateToUnit,
@@ -130,7 +130,7 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
     visibilityConstraint,
   } = report;
   const unitName = getUnitIntelName(report.unitId);
-  const visibilityNavTarget = resolveMatrixVisibility(report.unitId, report.satelliteName);
+  const visibilityDeepLink = buildVisibilityDeepLinkSearch(report.unitId, report.satelliteName);
   const blockedMsg =
     visibilityConstraint ||
     "Scanning blocked — Visibility Matrix reports zero beams visible to this unit.";

@@ -10,8 +10,10 @@ import {
   FileText,
   Clock,
   Trash2,
+  Star,
 } from "lucide-react";
 import { performSignOut, useAuth, useIsAdmin } from "@/lib/auth";
+import { ccHubSearch } from "@/lib/controlCenter";
 import { useSidebarModules } from "@/components/sidebar/SidebarModulesProvider";
 import { SidebarProfileButton } from "@/components/sidebar/SidebarProfileButton";
 import { TIMEZONES, type IanaTimezone } from "@/lib/appTimezones";
@@ -144,16 +146,19 @@ function SidebarLink({
   icon: Icon,
   active,
   bold = false,
+  search,
 }: {
   to: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   active: boolean;
   bold?: boolean;
+  search?: Record<string, unknown>;
 }) {
   return (
     <Link
       to={to}
+      search={search}
       className={`flex items-center gap-2 px-2 py-1 mono text-[11px] uppercase tracking-wider rounded-sm transition-colors leading-tight ${
         bold ? "font-bold" : ""
       } ${
@@ -360,6 +365,11 @@ function PrimaryNavSidebar({
   onClockClick: () => void;
 }) {
   const { activeModule, openModule } = useSidebarModules();
+  const ccModule = useRouterState({
+    select: (s) => (s.location.search as { module?: string }).module,
+  });
+  const importantActive =
+    pathname === "/control-center" && ccModule === "important";
 
   return (
     <div className="flex flex-col h-full">
@@ -394,6 +404,13 @@ function PrimaryNavSidebar({
           icon={FileText}
           active={activeModule === "reports"}
           onClick={() => openModule("reports")}
+        />
+        <SidebarLink
+          to="/control-center"
+          search={ccHubSearch("important")}
+          label="Important Frequencies"
+          icon={Star}
+          active={importantActive}
         />
         <SidebarLink
           to="/discarded"
@@ -641,28 +658,22 @@ export function AppShell({
 
               <div className="min-w-0 text-center px-2">
                 <div className="label-eyebrow">SSACC</div>
-                {headerIcon ? (
-                  <div className="flex items-center justify-center gap-2 mt-0.5">
-                    {headerIcon}
-                    <h1
-                      className={
-                        headerTitleClassName ??
-                        "mono text-base sm:text-lg font-bold tracking-tight uppercase truncate"
-                      }
-                    >
-                      {title ?? "Module"}
-                    </h1>
+                {headerIcon && (
+                  <div className="flex justify-center mt-1.5 mb-1">
+                    <div className="h-9 w-9 grid place-items-center rounded-lg border border-primary/30 bg-primary/10
+                                    shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_2px_6px_rgba(0,0,0,0.1)]">
+                      {headerIcon}
+                    </div>
                   </div>
-                ) : (
-                  <h1
-                    className={
-                      headerTitleClassName ??
-                      "mono text-base sm:text-lg font-bold tracking-tight uppercase truncate"
-                    }
-                  >
-                    {title ?? "Module"}
-                  </h1>
                 )}
+                <h1
+                  className={
+                    headerTitleClassName ??
+                    "mono text-base sm:text-lg font-bold tracking-tight uppercase truncate"
+                  }
+                >
+                  {title ?? "Module"}
+                </h1>
                 {subtitle && (
                   <div className="text-[11px] text-foreground/80 mt-0.5">{subtitle}</div>
                 )}

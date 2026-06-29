@@ -282,7 +282,7 @@ const UNIT_SAT_CAP: Partial<Record<UnitSlot, number>> = {
   delta: 36,
   echo: 38,
   foxtrot: 41,
-  golf: 30,
+  golf: 32,
   hotel: 28,
 };
 
