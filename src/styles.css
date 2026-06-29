@@ -209,22 +209,116 @@
   }
 
   .home-module-tile {
-    background: linear-gradient(180deg, var(--card) 0%, var(--secondary) 100%);
+    background: linear-gradient(180deg, var(--card) 0%, oklch(from var(--card) calc(l - 0.03) c h) 100%);
     border: 1px solid var(--border);
-    border-radius: 1rem;
-    transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+    border-radius: 1.25rem;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease;
     box-shadow:
-      inset 0 1px 0 oklch(1 0 0 / 0.06),
-      0 3px 0 oklch(0 0 0 / 0.06),
-      0 8px 20px oklch(0 0 0 / 0.08);
+      inset 0 2px 0 oklch(1 0 0 / 0.07),
+      inset 0 -2px 0 oklch(0 0 0 / 0.04),
+      0 4px 0 oklch(0 0 0 / 0.07),
+      0 10px 28px oklch(0 0 0 / 0.1);
   }
   .home-module-tile:hover {
-    transform: translateY(-2px);
+    transform: translateY(-3px);
     border-color: oklch(0.82 0.03 145);
-    background: linear-gradient(180deg, oklch(0.96 0.02 145) 0%, oklch(0.93 0.025 145) 100%);
+    background: linear-gradient(180deg, oklch(0.97 0.02 145) 0%, oklch(0.93 0.025 145) 100%);
+    box-shadow:
+      inset 0 2px 0 oklch(1 0 0 / 0.1),
+      0 2px 0 oklch(0 0 0 / 0.05),
+      0 14px 32px oklch(0 0 0 / 0.14);
+  }
+  .home-module-tile:active {
+    transform: translateY(1px);
+    box-shadow:
+      inset 0 2px 6px oklch(0 0 0 / 0.08),
+      0 1px 0 oklch(0 0 0 / 0.06);
+  }
+
+  /* Metallic silver finish — serviceability shield on home */
+  .home-icon-metal {
+    background: linear-gradient(
+      145deg,
+      #eef1f4 0%,
+      #c5cad2 28%,
+      #e2e6eb 52%,
+      #a8b0ba 78%,
+      #d1d7de 100%
+    );
+  }
+
+  /* Home sidebar */
+  .home-sidebar {
+    background: linear-gradient(180deg, var(--sidebar) 0%, oklch(from var(--sidebar) calc(l - 0.015) c h) 100%);
+    box-shadow: inset -1px 0 0 oklch(0 0 0 / 0.04);
+  }
+  .home-sidebar-nav {
+    gap: 0.375rem;
+  }
+
+  .home-sidebar-btn {
+    color: var(--foreground);
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    background: linear-gradient(180deg, var(--card) 0%, var(--secondary) 100%);
     box-shadow:
       inset 0 1px 0 oklch(1 0 0 / 0.08),
-      0 2px 0 oklch(0 0 0 / 0.05),
-      0 12px 24px oklch(0 0 0 / 0.12);
+      0 2px 0 oklch(0 0 0 / 0.06),
+      0 4px 10px oklch(0 0 0 / 0.07);
+    transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+  }
+  .home-sidebar-btn:hover {
+    transform: translateY(-1px);
+    border-color: oklch(0.82 0.03 145);
+    box-shadow:
+      inset 0 1px 0 oklch(1 0 0 / 0.1),
+      0 3px 0 oklch(0 0 0 / 0.05),
+      0 6px 14px oklch(0 0 0 / 0.1);
+  }
+  .home-sidebar-btn:active {
+    transform: translateY(1px);
+    box-shadow:
+      inset 0 2px 5px oklch(0 0 0 / 0.1),
+      0 1px 0 oklch(0 0 0 / 0.05);
+  }
+  .home-sidebar-btn-active {
+    border-color: oklch(0.72 0.06 145);
+    background: linear-gradient(180deg, oklch(0.94 0.03 145) 0%, oklch(0.9 0.025 145) 100%);
+    box-shadow:
+      inset 0 1px 0 oklch(1 0 0 / 0.12),
+      inset 0 -1px 0 oklch(0 0 0 / 0.05),
+      0 2px 0 oklch(0 0 0 / 0.06),
+      0 4px 10px oklch(0 0 0 / 0.08);
+  }
+
+  /* Control Center panel + tabs */
+  .home-cc-panel {
+    box-shadow:
+      inset 0 1px 0 oklch(1 0 0 / 0.06),
+      0 4px 0 oklch(0 0 0 / 0.05),
+      0 12px 40px oklch(0 0 0 / 0.1);
+  }
+  .home-cc-tab {
+    background: linear-gradient(180deg, transparent 0%, oklch(from var(--card) calc(l - 0.01) c h) 100%);
+    transition: transform 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+  }
+  .home-cc-tab:hover {
+    background: linear-gradient(180deg, oklch(0.96 0.02 145 / 0.5) 0%, oklch(0.93 0.025 145 / 0.35) 100%);
+    box-shadow: inset 0 0 0 1px oklch(0.72 0.06 145 / 0.25);
+  }
+  .home-cc-tab:active {
+    box-shadow: inset 0 3px 8px oklch(0 0 0 / 0.06);
+  }
+
+  .home-dashboard {
+    display: grid;
+    grid-template-rows: 1fr 1fr;
+    gap: clamp(0.625rem, 1.5vh, 1.25rem);
+    height: 100%;
+    min-height: 0;
+  }
+
+  .home-modules-row {
+    min-height: 0;
   }
 }

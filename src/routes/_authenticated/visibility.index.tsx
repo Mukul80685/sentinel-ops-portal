@@ -64,7 +64,6 @@ import {
   seedRand,
   getBeamBreakdown,
   getVisibleBeams,
-  findGeoSatelliteEntry,
   type GeoSatellite,
   type GeoRegion,
 } from "@/lib/visibilityMatrix";
@@ -275,30 +274,33 @@ function VisibilityPage() {
     }
 
     if (searchSatellite || searchRegion) {
-      const geoEntry = searchSatellite ? findGeoSatelliteEntry(searchSatellite) : null;
-      const targetRegionId = searchRegion ?? geoEntry?.regionId;
-      const targetSatId = geoEntry?.sat.id;
       const targetName = searchSatellite?.trim().toLowerCase();
-
       let matched = false;
-      for (const region of mergedRegions) {
-        if (targetRegionId && region.id !== targetRegionId) continue;
-        const sat = region.satellites.find(
-          (s) =>
-            (targetSatId && s.id === targetSatId) ||
-            (targetName && s.name.trim().toLowerCase() === targetName),
-        );
-        if (sat) {
-          setActiveRegionId(region.id);
-          setFocusSatelliteId(sat.id);
-          matched = true;
-          break;
-        }
-      }
 
-      if (!matched && targetRegionId) {
-        const regionExists = mergedRegions.some((r) => r.id === targetRegionId);
-        if (regionExists) setActiveRegionId(targetRegionId);
+      const tryMatchRegions = (regions: typeof mergedRegions) => {
+        for (const region of regions) {
+          const sat = region.satellites.find(
+            (s) => targetName && s.name.trim().toLowerCase() === targetName,
+          );
+          if (sat) {
+            setActiveRegionId(region.id);
+            setFocusSatelliteId(sat.id);
+            matched = true;
+            return;
+          }
+        }
+      };
+
+      if (targetName) {
+        if (searchRegion) {
+          tryMatchRegions(mergedRegions.filter((r) => r.id === searchRegion));
+        }
+        if (!matched) {
+          tryMatchRegions(mergedRegions);
+        }
+      } else if (searchRegion) {
+        const regionExists = mergedRegions.some((r) => r.id === searchRegion);
+        if (regionExists) setActiveRegionId(searchRegion);
       }
     } else {
       setActiveRegionId(null);
@@ -1197,12 +1199,12 @@ function SatelliteTable({
                     <td className="px-2 py-1.5">
                       <div className="flex items-center gap-1 flex-wrap">
                         <div className="font-bold text-foreground uppercase tracking-tight leading-tight">{sat.name}</div>
-                        {isSatelliteInIntRoster(unitId, sat.name) && (
+                        {hasIntVisibilityCrossLink(unitId, sat.name) && (
                           <Link
                             to="/intel/$unitId"
                             params={{ unitId }}
                             search={{ satellite: sat.name }}
-                            title={`Open ${sat.name} in INT Repository`}
+                            title={`Open ${sat.name} INT report`}
                             className="inline-flex items-center px-1 py-0 rounded border border-primary/40
                                        bg-primary/10 mono text-[8px] font-bold uppercase text-primary
                                        hover:bg-primary/20 transition-colors shrink-0"

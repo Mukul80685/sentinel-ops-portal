@@ -244,21 +244,17 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
                   highlight
                   emptyMessage="No beams visible — no Visibility Matrix entries for this unit and satellite."
                   headerAction={
-                    <Link
-                      to="/visibility"
-                      search={{
-                        unit: report.unitId,
-                        satellite: report.satelliteName,
-                        ...(visibilityNavTarget?.regionId
-                          ? { region: visibilityNavTarget.regionId }
-                          : {}),
-                      }}
-                      className="inline-flex items-center gap-1 mono text-[9px] text-primary hover:underline shrink-0"
-                      onClick={onClose}
-                    >
-                      View in Satellite Visibility Matrix
-                      <ExternalLink className="h-3 w-3" />
-                    </Link>
+                    visibilityDeepLink ? (
+                      <Link
+                        to="/visibility"
+                        search={visibilityDeepLink}
+                        className="inline-flex items-center gap-1 mono text-[9px] text-primary hover:underline shrink-0"
+                        onClick={onClose}
+                      >
+                        View in Satellite Visibility Matrix
+                        <ExternalLink className="h-3 w-3" />
+                      </Link>
+                    ) : undefined
                   }
                 />
               </div>

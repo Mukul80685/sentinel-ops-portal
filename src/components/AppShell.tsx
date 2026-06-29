@@ -3,6 +3,7 @@ import {
   Home,
   Power,
   ArrowLeft,
+  Orbit,
   Satellite,
   Landmark,
   Settings,
@@ -11,9 +12,15 @@ import {
   Clock,
   Trash2,
   Star,
+  Megaphone,
 } from "lucide-react";
 import { performSignOut, useAuth, useIsAdmin } from "@/lib/auth";
 import { ccHubSearch } from "@/lib/controlCenter";
+import {
+  renderSidebarIcon,
+  HOME_SIDEBAR_BTN,
+  type HomeIconTheme,
+} from "@/components/home/HomeNavIcons";
 import { useSidebarModules } from "@/components/sidebar/SidebarModulesProvider";
 import { SidebarProfileButton } from "@/components/sidebar/SidebarProfileButton";
 import { TIMEZONES, type IanaTimezone } from "@/lib/appTimezones";
@@ -147,6 +154,8 @@ function SidebarLink({
   active,
   bold = false,
   search,
+  isHome = false,
+  iconTheme,
 }: {
   to: string;
   label: string;
@@ -154,21 +163,24 @@ function SidebarLink({
   active: boolean;
   bold?: boolean;
   search?: Record<string, unknown>;
+  isHome?: boolean;
+  iconTheme?: HomeIconTheme;
 }) {
+  const base = isHome
+    ? `${HOME_SIDEBAR_BTN} mono text-[10px] uppercase tracking-wide whitespace-nowrap`
+    : "flex items-center gap-2 px-2 py-1 mono text-[11px] uppercase tracking-wider rounded-sm transition-colors leading-tight text-left";
+  const state = active
+    ? isHome
+      ? "home-sidebar-btn-active"
+      : "bg-secondary text-foreground"
+    : isHome
+      ? ""
+      : "text-sidebar-foreground hover:bg-secondary/50 hover:text-foreground";
+
   return (
-    <Link
-      to={to}
-      search={search}
-      className={`flex items-center gap-2 px-2 py-1 mono text-[11px] uppercase tracking-wider rounded-sm transition-colors leading-tight ${
-        bold ? "font-bold" : ""
-      } ${
-        active
-          ? "bg-secondary text-foreground"
-          : "text-sidebar-foreground hover:bg-secondary/50 hover:text-foreground"
-      }`}
-    >
-      <Icon className="h-3 w-3 shrink-0" />
-      {label}
+    <Link to={to} search={search} className={`${base} ${state} ${bold ? "font-bold" : ""}`}>
+      {iconTheme ? renderSidebarIcon(isHome, Icon, iconTheme) : <Icon className="h-3 w-3 shrink-0" />}
+      <span className="min-w-0">{label}</span>
     </Link>
   );
 }
@@ -178,24 +190,31 @@ function SidebarModalButton({
   icon: Icon,
   active,
   onClick,
+  isHome = false,
+  iconTheme,
 }: {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   active?: boolean;
   onClick: () => void;
+  isHome?: boolean;
+  iconTheme?: HomeIconTheme;
 }) {
+  const base = isHome
+    ? `${HOME_SIDEBAR_BTN} mono text-[10px] uppercase tracking-wide whitespace-nowrap`
+    : "flex w-full items-center gap-2 px-2 py-1 mono text-[11px] uppercase tracking-wider rounded-sm transition-colors leading-tight text-left";
+  const state = active
+    ? isHome
+      ? "home-sidebar-btn-active"
+      : "bg-secondary text-foreground"
+    : isHome
+      ? ""
+      : "text-sidebar-foreground hover:bg-secondary/50 hover:text-foreground";
+
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`flex w-full items-center gap-2 px-2 py-1 mono text-[11px] uppercase tracking-wider rounded-sm transition-colors leading-tight ${
-        active
-          ? "bg-secondary text-foreground"
-          : "text-sidebar-foreground hover:bg-secondary/50 hover:text-foreground"
-      }`}
-    >
-      <Icon className="h-3 w-3 shrink-0" />
-      {label}
+    <button type="button" onClick={onClick} className={`${base} ${state}`}>
+      {iconTheme ? renderSidebarIcon(isHome, Icon, iconTheme) : <Icon className="h-3 w-3 shrink-0" />}
+      <span className="min-w-0">{label}</span>
     </button>
   );
 }
@@ -359,10 +378,12 @@ function PrimaryNavSidebar({
   pathname,
   stamp,
   onClockClick,
+  isHome = false,
 }: {
   pathname: string;
   stamp: TzStamp;
   onClockClick: () => void;
+  isHome?: boolean;
 }) {
   const { activeModule, openModule } = useSidebarModules();
   const ccModule = useRouterState({
@@ -386,54 +407,72 @@ function PrimaryNavSidebar({
       <div className="border-t border-border mx-1.5 shrink-0" />
 
       {/* MAIN — utility navigation */}
-      <nav className="flex-1 py-1 px-1.5 flex flex-col gap-0 min-h-0">
+      <nav className={`flex-1 py-1 px-1.5 flex flex-col gap-0.5 min-h-0 ${isHome ? "home-sidebar-nav" : ""}`}>
         <SidebarModalButton
           label="Satellites"
-          icon={Satellite}
+          icon={Orbit}
           active={activeModule === "satellites"}
           onClick={() => openModule("satellites")}
+          isHome={isHome}
+          iconTheme="satellite"
         />
         <SidebarModalButton
           label="Recent Discussions"
-          icon={Clock}
+          icon={Megaphone}
           active={activeModule === "discussions"}
           onClick={() => openModule("discussions")}
+          isHome={isHome}
+          iconTheme="discussions"
         />
         <SidebarModalButton
           label="Reports"
           icon={FileText}
           active={activeModule === "reports"}
           onClick={() => openModule("reports")}
+          isHome={isHome}
+          iconTheme="reports"
         />
         <SidebarLink
           to="/control-center"
           search={ccHubSearch("important")}
-          label="Important Frequencies"
+          label="Important Frequency"
           icon={Star}
           active={importantActive}
+          isHome={isHome}
+          iconTheme="important"
         />
         <SidebarLink
           to="/discarded"
-          label="Discarded Frequencies"
+          label="Discarded Frequency"
           icon={Trash2}
           active={navActive(pathname, "/discarded")}
+          isHome={isHome}
+          iconTheme="discarded"
         />
       </nav>
 
       {/* BOTTOM — Settings, Sign Out */}
-      <div className="border-t border-border px-2 py-1 flex flex-col gap-0.5 shrink-0">
+      <div className="border-t border-border px-2 py-1.5 flex flex-col gap-1 shrink-0">
         <button
           type="button"
           onClick={() => openModule("settings")}
-          className={`${secondaryCtrlCls} ${activeModule === "settings" ? "bg-secondary" : ""}`}
+          className={
+            isHome
+              ? `${HOME_SIDEBAR_BTN} mono text-[10px] uppercase tracking-wide whitespace-nowrap ${activeModule === "settings" ? "home-sidebar-btn-active" : ""}`
+              : `${secondaryCtrlCls} ${activeModule === "settings" ? "bg-secondary" : ""}`
+          }
           title="Settings"
         >
-          <Settings className="h-3 w-3 shrink-0" />
-          Settings
+          <Settings className="h-3.5 w-3.5 shrink-0" />
+          <span>Settings</span>
         </button>
-        <button type="button" onClick={() => void performSignOut()} className={secondaryCtrlCls}>
-          <Power className="h-3 w-3 shrink-0" />
-          Sign Out
+        <button
+          type="button"
+          onClick={() => void performSignOut()}
+          className={isHome ? `${HOME_SIDEBAR_BTN} mono text-[10px] uppercase tracking-wide whitespace-nowrap` : secondaryCtrlCls}
+        >
+          <Power className="h-3.5 w-3.5 shrink-0" />
+          <span>Sign Out</span>
         </button>
       </div>
     </div>
@@ -592,7 +631,7 @@ export function AppShell({
     <div className="flex h-screen overflow-hidden text-foreground">
       <aside
         className={`${hideSidebar ? "hidden" : "hidden md:flex"} shrink-0 flex-col border-r border-border bg-sidebar ${
-          isHome ? "w-44" : "w-48"
+          isHome ? "w-56 lg:w-[15.5rem] home-sidebar" : "w-48"
         }`}
       >
         {sidebarVariant === "secondary" ? (
@@ -607,6 +646,7 @@ export function AppShell({
             pathname={pathname}
             stamp={tzStamp}
             onClockClick={() => setDtOpen(true)}
+            isHome={isHome}
           />
         )}
       </aside>
@@ -695,7 +735,7 @@ export function AppShell({
         {/* Sidebar is the sole module navigation — no duplicate horizontal strip */}
         {horizontalNav}
 
-        <main className={`flex-1 min-h-0 overflow-hidden ${isHome ? "p-3 sm:p-4" : "overflow-y-auto overflow-x-hidden p-4 sm:p-6"}`}>
+        <main className={`flex-1 min-h-0 overflow-hidden ${isHome ? "p-3 sm:p-4 lg:p-5 xl:p-6" : "overflow-y-auto overflow-x-hidden p-4 sm:p-6"}`}>
           <PasswordResetNotice email={user?.email} />
           {children}
         </main>
