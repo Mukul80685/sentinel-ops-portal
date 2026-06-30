@@ -41,8 +41,7 @@ import {
   type FrequencySection,
 } from "@/lib/intelFrequencyActions";
 import { useAuth } from "@/lib/auth";
-import { listUnits } from "@/lib/queries";
-import { supabase } from "@/integrations/supabase/client";
+import { listUnits, listEquipmentForUnit } from "@/lib/queries";
 import { toast } from "sonner";
 import { ENGAGEMENTS_ALL_KEY, fetchAllEngagements } from "@/lib/engagementEngine";
 import { useQuery } from "@tanstack/react-query";
@@ -855,13 +854,7 @@ function AllocateUnitDialog({
       frequency,
       dbUnits,
       allEngagements,
-      async (dbUnitId) => {
-        const { data } = await supabase
-          .from("equipment")
-          .select("id, serviceability, category:category_id(name)")
-          .eq("unit_id", dbUnitId);
-        return data ?? [];
-      },
+      (dbUnitId) => listEquipmentForUnit(dbUnitId),
     ).then((u) => {
       setEligible(u);
       setLoading(false);
