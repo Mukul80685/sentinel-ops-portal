@@ -1,4 +1,4 @@
-import type { OpEngagement, OpEquipment } from "@/lib/operationalDataset";
+import type { OpEngagement, OpEquipment, OpIntelRow } from "@/lib/operationalDataset";
 import {
   ensureOperationalDataset,
   getOperationalDataset,
@@ -190,8 +190,25 @@ export function engStatusClass(s: EngStatus) {
 
 export const INTEL_RECORDS_ALL_KEY = ["intel-records", "all"] as const;
 
+function enrichOperationalIntelRow(row: OpIntelRow): any {
+  const ds = ensureOperationalDataset();
+  const satRecord = ds.satellites.find((s) => s.id === row.satellite_id);
+  const unit = ds.units.find((u) => u.id === row.unit_id);
+  const eng = ds.engagements.find((e) => e.satellite_id === row.satellite_id);
+  const satName = satRecord?.name ?? eng?.satellites?.name ?? "—";
+  const freqMatch = row.summary?.match(/Frequency\s+([\d.]+\s*MHz)/i);
+  const frequency = freqMatch?.[1] ?? row.band;
+
+  return {
+    ...row,
+    frequency,
+    satellites: { id: row.satellite_id, name: satName },
+    units: { code: unit?.code ?? "—" },
+  };
+}
+
 export async function listAllIntelRecords(): Promise<any[]> {
-  return getOperationalIntelRows();
+  return getOperationalIntelRows().map(enrichOperationalIntelRow);
 }
 
 export async function listIntelRecordsForUnit(unitId: string): Promise<any[]> {
@@ -202,20 +219,7 @@ export async function listIntelRecordsForUnit(unitId: string): Promise<any[]> {
 export async function getIntelRecordById(intelId: string): Promise<any | null> {
   const row = getOperationalIntelRows().find((r) => r.id === intelId);
   if (!row) return null;
-
-  const ds = ensureOperationalDataset();
-  const satRecord = ds.satellites.find((s) => s.id === row.satellite_id);
-  const eng = ds.engagements.find((e) => e.satellite_id === row.satellite_id);
-  const satName = satRecord?.name ?? eng?.satellites?.name ?? "—";
-
-  const freqMatch = row.summary?.match(/Frequency\s+([\d.]+\s*MHz)/i);
-  const frequency = freqMatch?.[1] ?? row.band;
-
-  return {
-    ...row,
-    frequency,
-    satellites: { id: row.satellite_id, name: satName },
-  };
+  return enrichOperationalIntelRow(row);
 }
 
 /**

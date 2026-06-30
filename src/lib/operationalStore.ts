@@ -350,4 +350,15 @@ export function getOperationalIntelRows(): OpIntelRow[] {
   return getOperationalDataset().intelRows ?? [];
 }
 
+export function removeOperationalIntelRows(ids: string[]): number {
+  if (ids.length === 0) return 0;
+  const idSet = new Set(ids);
+  const ds = getOperationalDataset();
+  const before = (ds.intelRows ?? []).length;
+  ds.intelRows = (ds.intelRows ?? []).filter((r) => !idSet.has(r.id));
+  const removed = before - ds.intelRows.length;
+  if (removed > 0) persistOperationalDataset(ds);
+  return removed;
+}
+
 export { OPERATIONAL_STORE_EVENT };

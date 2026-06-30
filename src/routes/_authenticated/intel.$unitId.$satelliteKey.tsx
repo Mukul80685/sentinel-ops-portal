@@ -3,8 +3,9 @@ import { useMemo, useRef, useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
 import { Empty } from "@/components/Empty";
-import { listUnits } from "@/lib/queries";
-import { supabase } from "@/integrations/supabase/client";
+import { listUnits, listIntelRecordsForUnit } from "@/lib/queries";
+import { removeOperationalIntelRows } from "@/lib/operationalStore";
+import { resolveIntUnitSlug, resolveOperationalUnitId } from "@/lib/operationalSync";
 import { useCanEdit } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -91,21 +92,25 @@ function SatelliteIntelRepository() {
     const local = INT_UNITS.find((u) => u.id === unitId);
     if (local) return local;
     const db = dbUnits.find((u) => u.id === unitId);
-    if (db) return { id: db.id, code: db.code, name: db.name, location: db.location ?? "—" };
+    if (db) return { id: db.id, code: db.code, name: db.name, location: db.description ?? "—" };
     return null;
   }, [unitId, dbUnits]);
 
+  const intUnitSlug = useMemo(() => {
+    if (INT_UNITS.some((u) => u.id === unitId)) return unitId;
+    const fromDb = dbUnits.find((u) => u.id === unitId);
+    return resolveIntUnitSlug(unitId, fromDb?.code) ?? unitId;
+  }, [unitId, dbUnits]);
+
+  const dbUnitId = useMemo(
+    () => resolveOperationalUnitId(intUnitSlug, dbUnits),
+    [intUnitSlug, dbUnits],
+  );
+
   const { data: dbRows = [] } = useQuery({
-    queryKey: ["intel", unitId],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("intel_records")
-        .select("*, satellites:satellite_id(name), units:unit_id(code)")
-        .eq("unit_id", unitId);
-      if (error) throw error;
-      return data ?? [];
-    },
-    enabled: !!unitId,
+    queryKey: ["intel", dbUnitId],
+    queryFn: () => listIntelRecordsForUnit(dbUnitId),
+    enabled: !!dbUnitId,
   });
 
   const baseRecords = useMemo(() => {
@@ -113,8 +118,8 @@ function SatelliteIntelRepository() {
     const normalized = dbRows.map((r) =>
       normalizeDbRow(r as Record<string, unknown>, unit.name),
     );
-    return mergeRecords(normalized, unitId, unit.name);
-  }, [dbRows, unitId, unit]);
+    return mergeRecords(normalized, intUnitSlug, unit.name);
+  }, [dbRows, intUnitSlug, unit]);
 
   useEffect(() => {
     setLocalRecords(baseRecords);
@@ -188,11 +193,11 @@ function SatelliteIntelRepository() {
     reader.onload = () => {
       const text = String(reader.result ?? "");
       if (!unit) return;
-      const imported = parseIntelCsv(text, unitId, unit.name);
+      const imported = parseIntelCsv(text, intUnitSlug, unit.name);
       if (imported.length === 0) return toast.error("No valid records found in file");
 
-      const existing = loadImportedRecords(unitId);
-      saveImportedRecords(unitId, [...existing, ...imported]);
+      const existing = loadImportedRecords(intUnitSlug);
+      saveImportedRecords(intUnitSlug, [...existing, ...imported]);
       setLocalRecords((prev) => [...prev, ...imported]);
       toast.success(`Imported ${imported.length} record${imported.length !== 1 ? "s" : ""}`);
       qc.invalidateQueries({ queryKey: ["intel"] });
@@ -200,19 +205,19 @@ function SatelliteIntelRepository() {
     reader.readAsText(file);
   }
 
-  async function executeBulkAction() {
+  function executeBulkAction() {
     if (!bulkAction || selectedIds.size === 0) return;
 
     if (bulkAction === "delete") {
       const toDelete = Array.from(selectedIds);
-      const dbIds = toDelete.filter((id) => !id.startsWith("mock-") && !id.startsWith("import-"));
-      if (dbIds.length > 0 && canEdit) {
-        const { error } = await supabase.from("intel_records").delete().in("id", dbIds);
-        if (error) toast.error(error.message);
+      const storeIds = toDelete.filter((id) => id.startsWith("op-intel-"));
+      if (storeIds.length > 0 && canEdit) {
+        const removed = removeOperationalIntelRows(storeIds);
+        if (removed === 0) toast.error("Could not remove records from store");
       }
       setLocalRecords((prev) => prev.filter((r) => !selectedIds.has(r.id)));
-      const remaining = loadImportedRecords(unitId).filter((r) => !selectedIds.has(r.id));
-      saveImportedRecords(unitId, remaining);
+      const remaining = loadImportedRecords(intUnitSlug).filter((r) => !selectedIds.has(r.id));
+      saveImportedRecords(intUnitSlug, remaining);
       toast.success(`Deleted ${selectedIds.size} record${selectedIds.size !== 1 ? "s" : ""}`);
     } else if (bulkAction === "archive") {
       setLocalRecords((prev) =>

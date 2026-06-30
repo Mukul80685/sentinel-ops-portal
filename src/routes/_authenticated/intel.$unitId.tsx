@@ -4,18 +4,19 @@ import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
 import { Empty } from "@/components/Empty";
 import { IntelSatelliteDrillDown } from "@/components/intel/IntelSatelliteDrillDown";
-import { listUnits, listIntelRecordsForUnit } from "@/lib/queries";
-import { supabase } from "@/integrations/supabase/client";
+import { listUnits, listIntelRecordsForUnit, listEquipmentForUnit } from "@/lib/queries";
 import { ArrowLeft, Database, Satellite } from "lucide-react";
 import { ccModuleBackLink } from "@/lib/controlCenter";
 import {
   buildIntelDrillDownReport,
   buildIntelLinkageContext,
+  buildIntelLinkageVisibilityRows,
   buildIntelSatelliteTable,
   formatIntelCompactDate,
   hasIntelData,
 } from "@/lib/intelAnalysisData";
 import { INT_UNITS } from "@/lib/intelRepository";
+import { resolveIntUnitSlug, resolveOperationalUnitId } from "@/lib/operationalSync";
 import { ENGAGEMENTS_ALL_KEY, fetchAllEngagements } from "@/lib/engagementEngine";
 
 export const Route = createFileRoute("/_authenticated/intel/$unitId")({
@@ -62,14 +63,18 @@ function IntelUnitView() {
     return null;
   }, [unitId, dbUnits]);
 
-  const resolvedUnitId = unit?.id ?? unitId;
-  const dataAvailable = hasIntelData(resolvedUnitId);
+  const intUnitSlug = useMemo(() => {
+    if (INT_UNITS.some((u) => u.id === unitId)) return unitId;
+    const fromDb = dbUnits.find((u) => u.id === unitId);
+    return resolveIntUnitSlug(unitId, fromDb?.code) ?? unitId;
+  }, [unitId, dbUnits]);
 
-  const dbUnitId = useMemo(() => {
-    if (!unit) return unitId;
-    const db = dbUnits.find((u) => u.code === unit.code || u.id === unit.id);
-    return db?.id ?? unit.id;
-  }, [unit, unitId, dbUnits]);
+  const dataAvailable = hasIntelData(intUnitSlug);
+
+  const dbUnitId = useMemo(
+    () => resolveOperationalUnitId(intUnitSlug, dbUnits),
+    [intUnitSlug, dbUnits],
+  );
 
   const { data: engagements = [], isLoading: engLoading } = useQuery({
     queryKey: ENGAGEMENTS_ALL_KEY,
@@ -83,29 +88,14 @@ function IntelUnitView() {
     [engagements, dbUnitId],
   );
 
-  const { data: visibilityRows = [], isLoading: visLoading } = useQuery({
-    queryKey: ["visibility", unitId],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from("unit_beam_visibility")
-        .select("beam_id, visible, beams:beam_id(band, satellite_id, satellites:satellite_id(name))")
-        .eq("unit_id", dbUnitId)
-        .eq("visible", true);
-      return data ?? [];
-    },
-    enabled: dataAvailable && !!dbUnitId,
-    staleTime: 5 * 60 * 1000,
-  });
+  const visibilityRows = useMemo(
+    () => buildIntelLinkageVisibilityRows(intUnitSlug, dbUnitId, unitEngagements),
+    [intUnitSlug, dbUnitId, unitEngagements],
+  );
 
   const { data: equipment = [], isLoading: eqLoading } = useQuery({
-    queryKey: ["unit-equipment-intel", unitId],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from("equipment")
-        .select("id, serviceability, category:category_id(name)")
-        .eq("unit_id", dbUnitId);
-      return data ?? [];
-    },
+    queryKey: ["unit-equipment-intel", dbUnitId],
+    queryFn: () => listEquipmentForUnit(dbUnitId),
     enabled: dataAvailable && !!dbUnitId,
     staleTime: 30_000,
   });
@@ -118,24 +108,24 @@ function IntelUnitView() {
   });
 
   const linkageCtx = useMemo(
-    () => buildIntelLinkageContext(resolvedUnitId, unitEngagements, visibilityRows, equipment, intelRows),
-    [resolvedUnitId, unitEngagements, visibilityRows, equipment, intelRows],
+    () => buildIntelLinkageContext(intUnitSlug, unitEngagements, visibilityRows, equipment, intelRows),
+    [intUnitSlug, unitEngagements, visibilityRows, equipment, intelRows],
   );
 
   const tableRows = useMemo(
-    () => (dataAvailable && unit ? buildIntelSatelliteTable(resolvedUnitId, linkageCtx, unitEngagements) : []),
-    [dataAvailable, unit, resolvedUnitId, linkageCtx, unitEngagements],
+    () => (dataAvailable && unit ? buildIntelSatelliteTable(intUnitSlug, linkageCtx, unitEngagements) : []),
+    [dataAvailable, unit, intUnitSlug, linkageCtx, unitEngagements],
   );
 
   const drillDown = useMemo(
     () =>
       selectedReportId && unit
-        ? buildIntelDrillDownReport(resolvedUnitId, selectedReportId, linkageCtx, unitEngagements)
+        ? buildIntelDrillDownReport(intUnitSlug, selectedReportId, linkageCtx, unitEngagements)
         : null,
-    [selectedReportId, unit, resolvedUnitId, linkageCtx, unitEngagements],
+    [selectedReportId, unit, intUnitSlug, linkageCtx, unitEngagements],
   );
 
-  const isLoading = dataAvailable && (engLoading || visLoading || eqLoading);
+  const isLoading = dataAvailable && (engLoading || eqLoading);
 
   useEffect(() => {
     if (!searchSatellite || !dataAvailable || tableRows.length === 0) return;
