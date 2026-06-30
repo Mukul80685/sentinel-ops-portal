@@ -81,6 +81,47 @@ export type OperationalEquipmentPatch = Partial<
   >
 >;
 
+export type NewOperationalEquipment = {
+  unit_id: string;
+  category_id: string;
+  name: string;
+  make?: string | null;
+  model?: string | null;
+  specifications?: string | null;
+  remarks?: string | null;
+  serviceability?: OpEquipment["serviceability"];
+};
+
+export function insertOperationalEquipment(input: NewOperationalEquipment): OpEquipment | null {
+  const ds = getOperationalDataset();
+  const unit = ds.units.find((u) => u.id === input.unit_id);
+  const cat = ds.categories.find((c) => c.id === input.category_id);
+  if (!unit || !cat) return null;
+
+  const seq =
+    ds.equipment.filter((e) => e.unit_id === input.unit_id && e.category_id === input.category_id).length + 1;
+
+  const eq: OpEquipment = {
+    id: `op-eq-${unit.slot}-${cat.id}-${Date.now()}`,
+    unit_id: input.unit_id,
+    category_id: input.category_id,
+    name: input.name.trim(),
+    make: input.make?.trim() ?? "",
+    model: input.model?.trim() ?? "",
+    serial_number: `SN-${unit.code}-${cat.id.slice(-3)}-${String(seq).padStart(3, "0")}`,
+    date_of_procurement: new Date().toISOString().slice(0, 10),
+    specifications: input.specifications?.trim() ?? "",
+    serviceability: input.serviceability ?? "Operational",
+    remarks: input.remarks?.trim() ?? null,
+    category: { id: cat.id, name: cat.name },
+    units: { code: unit.code, name: unit.name },
+  };
+
+  ds.equipment.push(eq);
+  persistOperationalDataset(ds);
+  return eq;
+}
+
 export function getOperationalEquipmentById(equipmentId: string): OpEquipment | null {
   return getOperationalDataset().equipment.find((e) => e.id === equipmentId) ?? null;
 }

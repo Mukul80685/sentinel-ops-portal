@@ -41,8 +41,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { supabase } from "@/integrations/supabase/client";
 import { listCategories, listUnits, type Unit } from "@/lib/queries";
+import {
+  addOperationalUnit,
+  insertOperationalEquipment,
+  removeOperationalUnit,
+} from "@/lib/operationalStore";
 
 // NATO phonetic names with preset operational locations
 const UNIT_SLOTS = [
@@ -163,7 +167,7 @@ export function ResourceInventoryHome() {
     setDeleteMode(true);
   }
 
-  async function handleAddUnit() {
+  function handleAddUnit() {
     if (!unitName.trim() || !location.trim()) {
       toast.error("Unit Name and Location are required.");
       return;
@@ -175,30 +179,25 @@ export function ResourceInventoryHome() {
     const slotIndex = units.length;
     setSubmitting(true);
     try {
-      const { data: created, error } = await supabase
-        .from("units")
-        .insert({ code: slotCode(slotIndex), name: unitName.trim(), description: location.trim() })
-        .select("*")
-        .single();
-      if (error) throw error;
+      const created = addOperationalUnit({
+        code: slotCode(slotIndex),
+        name: unitName.trim(),
+        description: location.trim(),
+      });
 
       const selected = RESOURCE_OPTIONS.filter((n) => resourceDrafts[n]?.enabled);
-      if (selected.length > 0) {
-        const rows = selected
-          .map((n) => {
-            const cat = categories.find((c) => c.name === n);
-            const val = resourceDrafts[n]?.value.trim();
-            if (!cat || !val) return null;
-            return { unit_id: created.id, category_id: cat.id, name: val };
-          })
-          .filter(Boolean);
-        if (rows.length > 0) {
-          const { error: eqErr } = await supabase.from("equipment").insert(rows);
-          if (eqErr) throw eqErr;
-        }
+      for (const n of selected) {
+        const cat = categories.find((c) => c.name === n);
+        const val = resourceDrafts[n]?.value.trim();
+        if (!cat || !val) continue;
+        insertOperationalEquipment({
+          unit_id: created.id,
+          category_id: cat.id,
+          name: val,
+        });
       }
 
-      await qc.invalidateQueries({ queryKey: ["units"] });
+      void qc.invalidateQueries({ queryKey: ["units"] });
       toast.success(`${UNIT_SLOTS[slotIndex]?.label ?? "Unit"} registered.`);
       setAddUnitOpen(false);
       resetAddUnitForm();
@@ -209,13 +208,15 @@ export function ResourceInventoryHome() {
     }
   }
 
-  async function confirmDelete() {
+  function confirmDelete() {
     if (!pendingDelete) return;
     setSubmitting(true);
     try {
-      const { error } = await supabase.from("units").delete().eq("id", pendingDelete.unit.id);
-      if (error) throw error;
-      await qc.invalidateQueries({ queryKey: ["units"] });
+      if (!removeOperationalUnit(pendingDelete.unit.id)) {
+        toast.error("Failed to delete unit.");
+        return;
+      }
+      void qc.invalidateQueries({ queryKey: ["units"] });
       toast.success(`${pendingDelete.label} removed.`);
       setPendingDelete(null);
       if (units.length <= 1) setDeleteMode(false);
@@ -226,7 +227,7 @@ export function ResourceInventoryHome() {
     }
   }
 
-  async function handleAddEquipment() {
+  function handleAddEquipment() {
     if (!addEqTarget || !eqCategory) {
       toast.error("Please select a category.");
       return;
@@ -281,7 +282,7 @@ export function ResourceInventoryHome() {
 
     setSubmitting(true);
     try {
-      const { error } = await supabase.from("equipment").insert({
+      const created = insertOperationalEquipment({
         unit_id: addEqTarget.unit.id,
         category_id: category.id,
         name,
@@ -290,10 +291,13 @@ export function ResourceInventoryHome() {
         specifications,
         remarks,
       });
-      if (error) throw error;
+      if (!created) {
+        toast.error("Failed to add equipment.");
+        return;
+      }
 
-      await qc.invalidateQueries({ queryKey: ["eq-counts", addEqTarget.unit.id] });
-      await qc.invalidateQueries({ queryKey: ["eq", addEqTarget.unit.id] });
+      void qc.invalidateQueries({ queryKey: ["eq-counts", addEqTarget.unit.id] });
+      void qc.invalidateQueries({ queryKey: ["eq", addEqTarget.unit.id] });
 
       toast.success("Equipment added successfully.");
       setAddEqTarget(null);
