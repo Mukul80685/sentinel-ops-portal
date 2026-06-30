@@ -2,8 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
 import { ccModuleBackLink } from "@/lib/controlCenter";
-import { exportCsv } from "@/lib/queries";
-import { supabase } from "@/integrations/supabase/client";
+import { exportCsv, getUnitById } from "@/lib/queries";
 import { useCanEdit } from "@/lib/auth";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
@@ -159,8 +158,7 @@ function PriorityUnit() {
 
   const { data: unit } = useQuery({
     queryKey: ["unit", unitId],
-    queryFn: async () =>
-      (await supabase.from("units").select("*").eq("id", unitId).maybeSingle()).data,
+    queryFn: () => getUnitById(unitId),
   });
 
   const slot = unit?.code ? unitCodeToSlot(unit.code) : null;

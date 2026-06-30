@@ -11,7 +11,6 @@ import { VISIBILITY_SATELLITE_PROFILES } from "@/lib/intelAnalysisData";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listSatellites } from "@/lib/queries";
-import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -122,7 +121,51 @@ type FreqRow = {
   _polarization?: string;
 };
 
-// Demo rows — shown when the Supabase table is empty (layout preview only).
+const IMPORTANT_FREQUENCIES_KEY = "ssacc_important_frequencies";
+
+type StoredImportantFrequency = Omit<
+  FreqRow,
+  "_mock" | "_satName" | "_refKey" | "_polarization"
+>;
+
+function loadImportantFrequencies(): StoredImportantFrequency[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(IMPORTANT_FREQUENCIES_KEY);
+    return raw ? (JSON.parse(raw) as StoredImportantFrequency[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveImportantFrequencies(rows: StoredImportantFrequency[]): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(IMPORTANT_FREQUENCIES_KEY, JSON.stringify(rows));
+}
+
+function insertImportantFrequencies(
+  entries: Omit<StoredImportantFrequency, "id">[],
+): void {
+  const existing = loadImportantFrequencies();
+  const next = [
+    ...entries.map((entry) => ({
+      ...entry,
+      id: crypto.randomUUID(),
+    })),
+    ...existing,
+  ];
+  saveImportantFrequencies(next);
+}
+
+function deleteImportantFrequency(id: string): void {
+  saveImportantFrequencies(loadImportantFrequencies().filter((row) => row.id !== id));
+}
+
+function clearImportantFrequencies(): void {
+  saveImportantFrequencies([]);
+}
+
+// Demo rows — shown when the local store is empty (layout preview only).
 const MOCK_FREQUENCIES: FreqRow[] = [
   {
     id: "mock-1", satellite_id: "", frequency: "3 785 MHz",
@@ -264,14 +307,7 @@ export function ImportantFrequenciesView() {
   const { data: sats = [] } = useQuery({ queryKey: ["sats"], queryFn: listSatellites });
   const { data: rows = [] } = useQuery({
     queryKey: ["important"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("important_frequencies")
-        .select("*")
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return data ?? [];
-    },
+    queryFn: () => loadImportantFrequencies(),
   });
 
   const satMap = useMemo(
@@ -413,9 +449,8 @@ export function ImportantFrequenciesView() {
     XLSX.writeFile(wb, "important-frequencies-template.xlsx");
   }
 
-  async function clearAllEntries() {
-    const { error } = await supabase.from("important_frequencies").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-    if (error) { toast.error(error.message); return; }
+  function clearAllEntries() {
+    clearImportantFrequencies();
     qc.invalidateQueries({ queryKey: ["important"] });
     toast.success("All frequency entries cleared");
     setClearConfirm(false);
@@ -423,9 +458,8 @@ export function ImportantFrequenciesView() {
   }
 
   // ── Row actions ──────────────────────────────────────────────────────────────
-  async function deleteRow(id: string) {
-    const { error } = await supabase.from("important_frequencies").delete().eq("id", id);
-    if (error) return toast.error(error.message);
+  function deleteRow(id: string) {
+    deleteImportantFrequency(id);
     toast.success("Frequency removed");
     qc.invalidateQueries({ queryKey: ["important"] });
   }
@@ -446,7 +480,7 @@ export function ImportantFrequenciesView() {
     toast.success("Frequency removed");
   }
 
-  async function removeRow(row: FreqRow) {
+  function removeRow(row: FreqRow) {
     if (row._refKey) {
       removeIntRef(row._refKey);
       setSelectedIds((prev) => {
@@ -460,7 +494,7 @@ export function ImportantFrequenciesView() {
       dismissLocalRow(row.id);
       return;
     }
-    await deleteRow(row.id);
+    deleteRow(row.id);
     setSelectedIds((prev) => {
       const next = new Set(prev);
       next.delete(row.id);
@@ -724,7 +758,7 @@ export function ImportantFrequenciesView() {
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          void removeRow(row);
+                          removeRow(row);
                         }}
                         title="Remove frequency entry"
                         className="h-6 w-6 grid place-items-center rounded-sm border border-destructive/30
@@ -806,7 +840,7 @@ export function ImportantFrequenciesView() {
           <AlertDialogHeader>
             <AlertDialogTitle>Clear All Frequency Entries?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete all frequency records from the database. This cannot be undone.
+              This will permanently delete all saved frequency records. This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -864,18 +898,20 @@ function AddFrequencyDialog({
     setForm((prev) => ({ ...prev, [k]: v }));
   }
 
-  async function submit(e: React.FormEvent) {
+  function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!form.satelliteId || !form.frequency.trim()) return;
     setBusy(true);
-    const { error } = await supabase.from("important_frequencies").insert({
-      satellite_id: form.satelliteId,
-      frequency:    form.frequency.trim(),
-      band:         form.unit,            // unit stored in band column
-      label:        form.notes.trim() || null,
-    });
+    insertImportantFrequencies([
+      {
+        satellite_id: form.satelliteId,
+        frequency: form.frequency.trim(),
+        band: form.unit,
+        label: form.notes.trim() || null,
+        created_at: new Date().toISOString(),
+      },
+    ]);
     setBusy(false);
-    if (error) { toast.error(error.message); return; }
     toast.success("Frequency entry added");
     setForm(EMPTY_ADD_FORM);
     onSaved();
@@ -1196,11 +1232,7 @@ function ImportFrequencyFileInput({
         return;
       }
 
-      const { error } = await supabase.from("important_frequencies").insert(inserts);
-      if (error) {
-        toast.error(error.message);
-        return;
-      }
+      insertImportantFrequencies(inserts);
 
       toast.success(`Imported ${inserts.length} frequenc${inserts.length === 1 ? "y" : "ies"}.`);
       onImported();

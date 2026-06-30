@@ -1,9 +1,16 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
-import { supabase } from "@/integrations/supabase/client";
 import { fileUrl, signedUrl, uploadFile } from "@/lib/storage";
-import { statusClass } from "@/lib/queries";
+import { getEquipmentById, statusClass } from "@/lib/queries";
+import {
+  getOperationalEquipmentById,
+  insertEquipmentAttachment,
+  listEquipmentAttachments,
+  removeEquipmentAttachment,
+  removeOperationalEquipment,
+  updateOperationalEquipment,
+} from "@/lib/operationalStore";
 import { useCanEdit } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,24 +33,12 @@ function EquipmentDetail() {
 
   const { data: eq } = useQuery({
     queryKey: ["eq-detail", equipmentId],
-    queryFn: async () => {
-      const { data, error } = await supabase.from("equipment").select("*").eq("id", equipmentId).maybeSingle();
-      if (error) throw error;
-      return data;
-    },
+    queryFn: () => getEquipmentById(equipmentId),
   });
 
   const { data: attachments = [] } = useQuery({
     queryKey: ["att", equipmentId],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from("attachments")
-        .select("*")
-        .eq("entity_type", "equipment")
-        .eq("entity_id", equipmentId)
-        .order("created_at", { ascending: false });
-      return data ?? [];
-    },
+    queryFn: () => listEquipmentAttachments(equipmentId),
   });
 
   const [form, setForm] = useState<any>(null);
@@ -52,44 +47,47 @@ function EquipmentDetail() {
   }, [eq]);
 
   async function save() {
-    const { error } = await supabase
-      .from("equipment")
-      .update({
-        name: form.name,
-        make: form.make,
-        model: form.model,
-        serial_number: form.serial_number,
-        date_of_procurement: form.date_of_procurement || null,
-        specifications: form.specifications,
-        remarks: form.remarks,
-        serviceability: form.serviceability,
-      })
-      .eq("id", equipmentId);
-    if (error) return toast.error(error.message);
+    if (!updateOperationalEquipment(equipmentId, {
+      name: form.name,
+      make: form.make,
+      model: form.model,
+      serial_number: form.serial_number,
+      date_of_procurement: form.date_of_procurement || null,
+      specifications: form.specifications,
+      remarks: form.remarks,
+      serviceability: form.serviceability,
+    })) {
+      return toast.error("Equipment not found.");
+    }
     toast.success("Saved");
     qc.invalidateQueries({ queryKey: ["eq-detail", equipmentId] });
+    qc.invalidateQueries({ queryKey: ["eq", unitId, categoryId] });
   }
 
   async function changePhoto(file: File) {
     const path = await uploadFile(file, `equipment/${unitId}`);
-    const { error } = await supabase.from("equipment").update({ photo_url: path }).eq("id", equipmentId);
-    if (error) return toast.error(error.message);
+    if (!updateOperationalEquipment(equipmentId, { photo_url: path })) {
+      return toast.error("Equipment not found.");
+    }
     toast.success("Photo updated");
     qc.invalidateQueries({ queryKey: ["eq-detail", equipmentId] });
+    qc.invalidateQueries({ queryKey: ["eq", unitId, categoryId] });
   }
 
   async function addAttachment(file: File) {
     try {
+      if (!getOperationalEquipmentById(equipmentId)) {
+        toast.error("Equipment not found.");
+        return;
+      }
       const path = await uploadFile(file, `equipment/${equipmentId}/docs`);
-      const { error } = await supabase.from("attachments").insert({
-        entity_type: "equipment",
+      insertEquipmentAttachment({
         entity_id: equipmentId,
         file_name: file.name,
         file_url: path,
         mime_type: file.type,
         size_bytes: file.size,
       });
-      if (error) throw error;
       toast.success("Attachment uploaded");
       qc.invalidateQueries({ queryKey: ["att", equipmentId] });
     } catch (e: any) {
@@ -98,16 +96,19 @@ function EquipmentDetail() {
   }
 
   async function removeAttachment(id: string) {
-    const { error } = await supabase.from("attachments").delete().eq("id", id);
-    if (error) return toast.error(error.message);
+    if (!removeEquipmentAttachment(id)) {
+      return toast.error("Attachment not found.");
+    }
     qc.invalidateQueries({ queryKey: ["att", equipmentId] });
   }
 
   async function deleteEquipment() {
     if (!confirm("Delete this equipment record?")) return;
-    const { error } = await supabase.from("equipment").delete().eq("id", equipmentId);
-    if (error) return toast.error(error.message);
+    if (!removeOperationalEquipment(equipmentId)) {
+      return toast.error("Equipment not found.");
+    }
     toast.success("Deleted");
+    qc.invalidateQueries({ queryKey: ["eq", unitId, categoryId] });
     navigate({ to: "/inventory/$unitId/$categoryId", params: { unitId, categoryId } });
   }
 

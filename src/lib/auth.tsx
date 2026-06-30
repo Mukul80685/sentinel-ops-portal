@@ -1,22 +1,31 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import type { Session, User } from "@supabase/supabase-js";
 import {
-  clearMockSession,
   getMockSession,
   MOCK_AUTH_EVENT,
   type MockSession,
 } from "@/lib/passwordRecovery";
 import { performSignOut } from "@/lib/signOutSession";
+import {
+  getRolesForEmail,
+  USER_ACCOUNT_EVENT,
+  type AppRole,
+} from "@/lib/userAccountStore";
 
 export { performSignOut };
+export type { AppRole };
 
-export type AppRole = "admin" | "operator" | "viewer";
+export type AuthUser = {
+  id: string;
+  email: string;
+  app_metadata: Record<string, unknown>;
+  user_metadata: { full_name?: string };
+  aud: string;
+  created_at: string;
+};
 
 interface AuthState {
-  session: Session | null;
-  user: User | null;
-  /** Mock session when Supabase sign-in uses recovery override (demo/local) */
+  user: AuthUser | null;
+  /** Active local session (ssacc_mock_session). */
   mockSession: MockSession | null;
   roles: AppRole[];
   loading: boolean;
@@ -24,7 +33,6 @@ interface AuthState {
 }
 
 const AuthCtx = createContext<AuthState>({
-  session: null,
   user: null,
   mockSession: null,
   roles: [],
@@ -32,82 +40,52 @@ const AuthCtx = createContext<AuthState>({
   signOut: async () => {},
 });
 
-function mockUserFromSession(mock: MockSession): User {
+function userFromLocalSession(session: MockSession): AuthUser {
   return {
-    id: mock.userId,
-    email: mock.email,
+    id: session.userId,
+    email: session.email,
     app_metadata: {},
-    user_metadata: { full_name: mock.email.split("@")[0] },
+    user_metadata: { full_name: session.email.split("@")[0] },
     aud: "authenticated",
-    created_at: new Date(mock.createdAt).toISOString(),
-  } as User;
+    created_at: new Date(session.createdAt).toISOString(),
+  };
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
   const [mockSession, setMockSession] = useState<MockSession | null>(null);
   const [roles, setRoles] = useState<AppRole[]>([]);
   const [loading, setLoading] = useState(true);
 
-  function refreshMockSession() {
-    setMockSession(getMockSession());
-  }
-
   useEffect(() => {
-    refreshMockSession();
-
-    const onMockAuth = () => refreshMockSession();
-    window.addEventListener(MOCK_AUTH_EVENT, onMockAuth);
-
-    const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
-      setSession(s);
-      if (s?.user) {
-        // Only drop mock session on explicit Supabase sign-in — not on INITIAL_SESSION
-        // with a stale token, which would silently revoke recovery-override access.
-        if (event === "SIGNED_IN") {
-          clearMockSession();
-          setMockSession(null);
-        }
-        setTimeout(() => loadRoles(s.user.id), 0);
-      } else if (!getMockSession()) {
-        setRoles([]);
-      } else {
-        setRoles(["operator"]);
-      }
-    });
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      if (data.session?.user) {
-        loadRoles(data.session.user.id);
-      } else if (getMockSession()) {
-        setRoles(["operator"]);
-      }
+    function syncAuthState() {
+      const local = getMockSession();
+      setMockSession(local);
+      setRoles(local ? getRolesForEmail(local.email) : []);
       setLoading(false);
-    });
+    }
+
+    syncAuthState();
+
+    window.addEventListener(MOCK_AUTH_EVENT, syncAuthState);
+    window.addEventListener(USER_ACCOUNT_EVENT, syncAuthState);
+
     return () => {
-      sub.subscription.unsubscribe();
-      window.removeEventListener(MOCK_AUTH_EVENT, onMockAuth);
+      window.removeEventListener(MOCK_AUTH_EVENT, syncAuthState);
+      window.removeEventListener(USER_ACCOUNT_EVENT, syncAuthState);
     };
   }, []);
 
-  async function loadRoles(uid: string) {
-    const { data } = await supabase.from("user_roles").select("role").eq("user_id", uid);
-    setRoles((data ?? []).map((r) => r.role as AppRole));
-  }
-
-  const user = session?.user ?? (mockSession ? mockUserFromSession(mockSession) : null);
+  const user = mockSession ? userFromLocalSession(mockSession) : null;
 
   return (
     <AuthCtx.Provider
       value={{
-        session,
         user,
         mockSession,
         roles,
         loading,
         signOut: async () => {
           setMockSession(null);
-          setSession(null);
           setRoles([]);
           await performSignOut();
         },

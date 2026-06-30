@@ -1,25 +1,19 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { toast } from "sonner";
 import { Satellite } from "lucide-react";
 import { PasswordRecoveryDialog } from "@/components/auth/PasswordRecoveryDialog";
 import {
-  canSignInWithRecoveryOverride,
+  createLocalAccount,
   createMockSession,
-  registerRecoveryProfileForSignup,
+  findRecoveryProfileByEmail,
+  lookupRecoveryUser,
+  validateLocalCredentials,
 } from "@/lib/passwordRecovery";
+import { upsertAuthorizedUserForSignup } from "@/lib/userAccountStore";
 
 const RECOVERY_SECURITY_QUESTIONS = [
   "What is your first school?",
@@ -48,35 +42,25 @@ function AuthPage() {
   const [busy, setBusy] = useState(false);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
 
-  async function signIn(e: React.FormEvent) {
+  function signIn(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
-    if (error) {
-      if (canSignInWithRecoveryOverride(email, password)) {
-        await supabase.auth.signOut({ scope: "local" });
-        createMockSession(email);
-        toast.success("Access granted");
-        setBusy(false);
-        navigate({ to: "/" });
-        return;
-      }
-
+    if (!validateLocalCredentials(email, password)) {
       setBusy(false);
-      return toast.error(error.message);
+      return toast.error("Invalid credentials.");
     }
 
+    const profile = lookupRecoveryUser(email.trim()) ?? findRecoveryProfileByEmail(email.trim());
+    const sessionEmail = profile?.accountKey ?? email.trim();
+
+    createMockSession(sessionEmail);
     setBusy(false);
     toast.success("Access granted");
     navigate({ to: "/" });
   }
 
-  async function signUp(e: React.FormEvent) {
+  function signUp(e: React.FormEvent) {
     e.preventDefault();
 
     if (
@@ -89,29 +73,29 @@ function AuthPage() {
 
     setBusy(true);
 
-    const origin =
-      typeof window !== "undefined" ? window.location.origin : "";
-
-    const { error } = await supabase.auth.signUp({
+    const result = createLocalAccount({
       email,
       password,
-      options: {
-        emailRedirectTo: origin,
-        data: { full_name: fullName },
-      },
-    });
-
-    setBusy(false);
-
-    if (error) return toast.error(error.message);
-
-    registerRecoveryProfileForSignup(email, {
       userId: recoveryUserId.trim(),
       serviceNumber: recoveryServiceNumber.trim(),
       securityQuestion: recoverySecurityQuestion,
       securityAnswer: recoverySecurityAnswer.trim(),
     });
 
+    if (!result.ok) {
+      setBusy(false);
+      return toast.error(result.error);
+    }
+
+    upsertAuthorizedUserForSignup({
+      email,
+      userId: recoveryUserId.trim(),
+      serviceNumber: recoveryServiceNumber.trim(),
+      fullName,
+    });
+
+    createMockSession(email);
+    setBusy(false);
     toast.success("Account created — signed in");
     navigate({ to: "/" });
   }
@@ -140,10 +124,10 @@ function AuthPage() {
           <TabsContent value="signin">
             <form onSubmit={signIn} className="space-y-3 mt-4">
               <Input
-                type="email"
+                type="text"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="Email"
+                placeholder="User ID"
                 required
               />
               <Input

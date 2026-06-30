@@ -44,6 +44,17 @@ export function resolveIntUnitSlug(
   return null;
 }
 
+/** Map INT slug → operational unit id (inverse of resolveIntUnitSlug). */
+export function resolveOperationalUnitId(
+  intUnitSlug: string,
+  dbUnits: { id: string; code: string }[],
+): string {
+  const direct = dbUnits.find((d) => d.id === `op-unit-${intUnitSlug}`);
+  if (direct) return direct.id;
+  const viaCode = dbUnits.find((d) => resolveIntUnitSlug(d.id, d.code) === intUnitSlug);
+  return viaCode?.id ?? intUnitSlug;
+}
+
 /** Rule 3 — INT generation metrics indicate completion. */
 export function isIntGenerationComplete(
   scanned: number,

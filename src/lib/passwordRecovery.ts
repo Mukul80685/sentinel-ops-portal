@@ -1,6 +1,6 @@
 /**
- * Password recovery — mock/local implementation.
- * Replace storage + validation calls with backend APIs when available.
+ * Local auth & password recovery — client-side SSOT (localStorage).
+ * Sessions, credentials, and recovery profiles never leave the browser.
  */
 
 export type RecoveryUserProfile = {
@@ -22,10 +22,20 @@ export type PasswordResetRecord = {
   displayLine: string;
 };
 
+/** Active local session (stored in ssacc_mock_session). */
 export type MockSession = {
   email: string;
   userId: string;
   createdAt: number;
+};
+
+export type CreateLocalAccountInput = {
+  email: string;
+  password: string;
+  userId: string;
+  serviceNumber: string;
+  securityQuestion: string;
+  securityAnswer: string;
 };
 
 const STORAGE_PROFILES = "ssacc_recovery_profiles";
@@ -36,6 +46,9 @@ const STORAGE_MOCK_SESSION = "ssacc_mock_session";
 export const MOCK_AUTH_EVENT = "ssacc-mock-auth";
 
 const NOTIFICATION_DAYS = 15;
+
+/** Default password for seeded demo accounts when no override is stored yet. */
+const DEMO_DEFAULT_PASSWORD = "ssacc123";
 
 /** Seed demo operators — internal only; never surface in recovery UI */
 const DEMO_RECOVERY_USERS: RecoveryUserProfile[] = [
@@ -83,6 +96,23 @@ function loadJson<T>(key: string, fallback: T): T {
 function saveJson(key: string, value: unknown): void {
   if (typeof window === "undefined") return;
   localStorage.setItem(key, JSON.stringify(value));
+}
+
+function loadStoredPasswordOverrides(): Record<string, string> {
+  return loadJson<Record<string, string>>(STORAGE_OVERRIDES, {});
+}
+
+/** Merges stored overrides with demo defaults (stored wins). */
+function loadPasswordOverrides(): Record<string, string> {
+  const stored = loadStoredPasswordOverrides();
+  const merged: Record<string, string> = { ...stored };
+  for (const user of DEMO_RECOVERY_USERS) {
+    const key = normalizeUsername(user.accountKey);
+    if (!(key in merged)) {
+      merged[key] = DEMO_DEFAULT_PASSWORD;
+    }
+  }
+  return merged;
 }
 
 function loadProfiles(): Record<string, RecoveryUserProfile> {
@@ -141,6 +171,69 @@ export function registerRecoveryProfileForSignup(
     recovery.securityQuestion,
     recovery.securityAnswer,
   );
+}
+
+/** Primary login gate — accepts User ID or email; password checked against profile accountKey. */
+export function validateLocalCredentials(userIdOrEmail: string, password: string): boolean {
+  const trimmed = userIdOrEmail.trim();
+  if (!trimmed) return false;
+
+  const profile = lookupRecoveryUser(trimmed) ?? findRecoveryProfileByEmail(trimmed);
+  if (!profile) return false;
+
+  const override = getPasswordOverride(profile.accountKey);
+  return override !== null && override === password;
+}
+
+/** Persist a password for a local account (sign-up or admin reset). */
+export function setLocalPassword(email: string, password: string): void {
+  const key = normalizeUsername(email);
+  const overrides = loadStoredPasswordOverrides();
+  overrides[key] = password;
+  saveJson(STORAGE_OVERRIDES, overrides);
+}
+
+export type CreateLocalAccountResult =
+  | { ok: true; profile: RecoveryUserProfile }
+  | { ok: false; error: string };
+
+/** Create a new local account: recovery profile + password. */
+export function createLocalAccount(input: CreateLocalAccountInput): CreateLocalAccountResult {
+  const email = input.email.trim();
+  const userId = input.userId.trim();
+  const serviceNumber = input.serviceNumber.trim();
+
+  if (!email || !userId || !serviceNumber || !input.password.trim()) {
+    return { ok: false, error: "All account fields are required." };
+  }
+
+  if (input.password.length < 6) {
+    return { ok: false, error: "Password must be at least 6 characters." };
+  }
+
+  if (findRecoveryProfileByEmail(email)) {
+    return { ok: false, error: "An account with this email already exists." };
+  }
+
+  if (lookupRecoveryUser(userId)) {
+    return { ok: false, error: "This User ID is already registered." };
+  }
+
+  registerRecoveryProfile(
+    userId,
+    serviceNumber,
+    email,
+    input.securityQuestion,
+    input.securityAnswer,
+  );
+  setLocalPassword(email, input.password);
+
+  const profile = findRecoveryProfileByEmail(email);
+  if (!profile) {
+    return { ok: false, error: "Failed to create local account." };
+  }
+
+  return { ok: true, profile };
 }
 
 /** Dual-identity check — both User ID (case-sensitive) and Service Number must match */
@@ -206,9 +299,7 @@ export function recordPasswordReset(
     displayLine: formatResetDisplayLine(at),
   };
 
-  const overrides = loadJson<Record<string, string>>(STORAGE_OVERRIDES, {});
-  overrides[key] = newPassword;
-  saveJson(STORAGE_OVERRIDES, overrides);
+  setLocalPassword(profile.accountKey, newPassword);
 
   const resets = loadJson<Record<string, PasswordResetRecord>>(STORAGE_RESETS, {});
   resets[key] = record;
@@ -219,7 +310,7 @@ export function recordPasswordReset(
 
 export function getPasswordOverride(username: string): string | null {
   const key = normalizeUsername(username);
-  const overrides = loadJson<Record<string, string>>(STORAGE_OVERRIDES, {});
+  const overrides = loadPasswordOverrides();
   return overrides[key] ?? null;
 }
 
@@ -237,17 +328,17 @@ export function getActiveResetNotification(username: string): PasswordResetRecor
   return record;
 }
 
+/** @deprecated Use validateLocalCredentials — kept for callers not yet migrated. */
 export function canSignInWithRecoveryOverride(username: string, password: string): boolean {
-  const override = getPasswordOverride(username);
-  if (!override || override !== password) return false;
-  const key = normalizeUsername(username);
-  return Object.values(loadProfiles()).some((p) => normalizeUsername(p.accountKey) === key);
+  return validateLocalCredentials(username, password);
 }
 
 export function createMockSession(email: string): MockSession {
+  const trimmed = email.trim();
+  const profile = findRecoveryProfileByEmail(trimmed);
   const session: MockSession = {
-    email: email.trim(),
-    userId: `mock-${normalizeUsername(email).replace(/[^a-z0-9]/g, "-")}`,
+    email: trimmed,
+    userId: profile?.userId ?? `local-${normalizeUsername(trimmed).replace(/[^a-z0-9]/g, "-")}`,
     createdAt: Date.now(),
   };
   saveJson(STORAGE_MOCK_SESSION, session);

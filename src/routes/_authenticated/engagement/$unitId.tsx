@@ -4,7 +4,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
 import { Empty } from "@/components/Empty";
 import { getUnitById, listEquipmentForUnit, listEngagementsForUnit, listIntelRecordsForUnit, listSatellites } from "@/lib/queries";
-import { supabase } from "@/integrations/supabase/client";
+import {
+  insertOperationalEngagement,
+  removeOperationalEngagement,
+  updateOperationalEngagement,
+} from "@/lib/operationalStore";
 import { useCanEdit } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -39,9 +43,6 @@ import { toast } from "sonner";
 const STATUSES = ["Planned", "In Progress", "Completed", "Paused", "Failed"] as const;
 const QUEUED_ENG  = QUEUED_SCAN_STATUS;
 const DEMOD_TYPES = ["Narrowband", "Wideband", "DVB-S2", "DVB-S2X"] as const;
-
-const ENGAGEMENT_LIST_SELECT =
-  "id,unit_id,status,satellite_id,antenna_id,demodulator_id,processing_server_id,observation_start,updated_at,remarks,satellites:satellite_id(name)";
 
 function attachEquipmentToEngagements(rows: any[], equipment: any[]) {
   const byId = new Map(equipment.map((e) => [e.id, e]));
@@ -408,15 +409,17 @@ function EngagementUnit() {
   }, [capability.assignments]);
 
   async function update(id: string, patch: any) {
-    const { error } = await supabase.from("engagements").update(patch).eq("id", id);
-    if (error) return toast.error(error.message);
+    if (!updateOperationalEngagement(id, patch)) {
+      return toast.error("Engagement not found.");
+    }
     qc.invalidateQueries({ queryKey: ["eng", unitId] });
     qc.invalidateQueries({ queryKey: ENGAGEMENTS_ALL_KEY });
   }
   async function remove(id: string) {
     if (!confirm("Remove engagement?")) return;
-    const { error } = await supabase.from("engagements").delete().eq("id", id);
-    if (error) return toast.error(error.message);
+    if (!removeOperationalEngagement(id)) {
+      return toast.error("Engagement not found.");
+    }
     qc.invalidateQueries({ queryKey: ["eng", unitId] });
     qc.invalidateQueries({ queryKey: ENGAGEMENTS_ALL_KEY });
   }
@@ -965,7 +968,7 @@ function AddEngagement({ unitId, activeRows, equipment, primary }: AddEngagement
       `DEMOD_TYPE:${form.demodulator_type}`,
       form.remarks,
     ].filter(Boolean).join(" | ");
-    const { error } = await supabase.from("engagements").insert({
+    const created = insertOperationalEngagement({
       unit_id: unitId,
       satellite_id: form.satellite_id,
       antenna_id: form.antenna_id || null,
@@ -975,7 +978,7 @@ function AddEngagement({ unitId, activeRows, equipment, primary }: AddEngagement
       status: form.status as any,
       remarks: metaParts || null,
     });
-    if (error) return toast.error(error.message);
+    if (!created) return toast.error("Unknown satellite.");
     toast.success("Engagement created");
     setOpen(false);
     qc.invalidateQueries({ queryKey: ["eng", unitId] });

@@ -4,7 +4,13 @@ import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { Empty } from "@/components/Empty";
 import { listUnits, listCategories, listAllEquipmentDetailed, type Unit } from "@/lib/queries";
-import { supabase } from "@/integrations/supabase/client";
+import type { OpServiceability } from "@/lib/operationalDataset";
+import {
+  addOperationalUnit,
+  insertFaultDetail,
+  removeOperationalUnit,
+  updateOperationalEquipment,
+} from "@/lib/operationalStore";
 import { useCanEdit } from "@/lib/auth";
 import {
   Dialog,
@@ -198,11 +204,13 @@ function ServiceabilityPage() {
     setSubmitting(true);
     try {
       const nextCode = `UNIT-${String.fromCharCode(65 + (units as Unit[]).length)}`;
-      const { error } = await supabase
-        .from("units")
-        .insert({ code: nextCode, name: unitName.trim(), description: unitLocation.trim() });
-      if (error) throw error;
+      addOperationalUnit({
+        code: nextCode,
+        name: unitName.trim(),
+        description: unitLocation.trim(),
+      });
       await qc.invalidateQueries({ queryKey: ["units"] });
+      await qc.invalidateQueries({ queryKey: ["equipment-all"] });
       toast.success(`${unitName.trim()} registered.`);
       setAddUnitOpen(false);
     } catch (err: any) {
@@ -216,9 +224,11 @@ function ServiceabilityPage() {
     if (!pendingDelete) return;
     setSubmitting(true);
     try {
-      const { error } = await supabase.from("units").delete().eq("id", pendingDelete.unit.id);
-      if (error) throw error;
+      if (!removeOperationalUnit(pendingDelete.unit.id)) {
+        throw new Error("Unit not found.");
+      }
       await qc.invalidateQueries({ queryKey: ["units"] });
+      await qc.invalidateQueries({ queryKey: ["equipment-all"] });
       toast.success(`${pendingDelete.label} removed.`);
       setPendingDelete(null);
       if ((units as Unit[]).length <= 1) setDeleteMode(false);
@@ -737,29 +747,24 @@ function StatusChangeModal({
     if (!canSubmit) return;
     setBusy(true);
 
-    // 1 — Update equipment serviceability
-    const { error: eqErr } = await supabase
-      .from("equipment")
-      .update({ serviceability: newStatus })
-      .eq("id", item.id);
-    if (eqErr) { toast.error(eqErr.message); setBusy(false); return; }
-
-    // 2 — Insert immutable audit record
-    const direction = isUpgrade ? "UPGRADE" : "DEGRADE";
-    const auditRow = {
-      equipment_id:         item.id,
-      date_raised:          form.date,
-      category:             `${direction} — ${isUpgrade ? "Rectified by" : "Reported by"}: ${form.person}`,
-      description:          form.details,
-      maintenance_remarks:  form.vendor || "—",
-      estimated_restoration: isUpgrade ? form.date : null,
-    };
-    const { error: auditErr } = await supabase.from("fault_details").insert(auditRow);
-    if (auditErr) {
-      toast.error(`Status updated but audit log failed: ${auditErr.message}`);
-    } else {
-      toast.success(`Status changed to "${newStatus}". Audit record logged.`);
+    if (!updateOperationalEquipment(item.id, {
+      serviceability: newStatus as OpServiceability,
+    })) {
+      toast.error("Equipment not found.");
+      setBusy(false);
+      return;
     }
+
+    const direction = isUpgrade ? "UPGRADE" : "DEGRADE";
+    insertFaultDetail({
+      equipment_id: item.id,
+      date_raised: form.date,
+      category: `${direction} — ${isUpgrade ? "Rectified by" : "Reported by"}: ${form.person}`,
+      description: form.details,
+      maintenance_remarks: form.vendor || "—",
+      estimated_restoration: isUpgrade ? form.date : null,
+    });
+    toast.success(`Status changed to "${newStatus}". Audit record logged.`);
 
     setBusy(false);
     onSaved();
@@ -1078,7 +1083,7 @@ function FaultForm({
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
-    const { error } = await supabase.from("fault_details").insert({
+    insertFaultDetail({
       equipment_id: equipmentId,
       date_raised: form.date_raised,
       category: form.category || null,
@@ -1087,7 +1092,6 @@ function FaultForm({
       maintenance_remarks: form.maintenance_remarks || null,
     });
     setBusy(false);
-    if (error) { toast.error(error.message); return; }
     toast.success("Fault record logged");
     setForm({ date_raised: new Date().toISOString().slice(0, 10), category: "", description: "", estimated_restoration: "", maintenance_remarks: "" });
     onSaved();

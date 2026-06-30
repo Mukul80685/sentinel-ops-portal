@@ -43,6 +43,7 @@ export type OpEquipment = {
   specifications: string;
   serviceability: OpServiceability;
   remarks: string | null;
+  photo_url?: string | null;
   category: { id: string; name: string };
   units?: { code: string; name: string };
 };

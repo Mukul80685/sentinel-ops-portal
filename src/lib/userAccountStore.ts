@@ -1,27 +1,31 @@
 /**
- * User account SSOT — profile, settings, authorized users.
- * Syncs with auth / password recovery; consumed by Settings and User Profile modals.
+ * User account SSOT — profile, settings, authorized users, roles.
+ * Syncs with local auth / password recovery; consumed by Settings and User Profile modals.
  */
 
 import { useEffect, useState } from "react";
 import {
   findRecoveryProfileByEmail,
+  getMockSession,
   getPasswordOverride,
   lookupRecoveryUser,
   recordPasswordReset,
 } from "@/lib/passwordRecovery";
-import { supabase } from "@/integrations/supabase/client";
 
 export const USER_ACCOUNT_EVENT = "ssacc-user-account";
 
 const STORAGE_KEY = "ssacc_user_account";
 const AUTH_USERS_KEY = "ssacc_authorized_users";
 
+export type AppRole = "admin" | "operator" | "viewer";
+
 export type AuthorizedUser = {
   id: string;
   name: string;
   rank: string;
   armyNumber: string;
+  email: string;
+  role: AppRole;
 };
 
 export type UserAccountState = {
@@ -32,10 +36,38 @@ export type UserAccountState = {
 };
 
 const DEFAULT_AUTH_USERS: AuthorizedUser[] = [
-  { id: "au-1", name: "Rajesh Mehta", rank: "Colonel", armyNumber: "IC80685A" },
-  { id: "au-2", name: "Priya Sharma", rank: "Lieutenant Colonel", armyNumber: "IC80685P" },
-  { id: "au-3", name: "Vikram Singh", rank: "Major", armyNumber: "IC80685C" },
-  { id: "au-4", name: "Ananya Reddy", rank: "Captain", armyNumber: "IC80685R" },
+  {
+    id: "au-1",
+    name: "Rajesh Mehta",
+    rank: "Colonel",
+    armyNumber: "IC80685A",
+    email: "operator@ssacc.demo",
+    role: "operator",
+  },
+  {
+    id: "au-2",
+    name: "Priya Sharma",
+    rank: "Lieutenant Colonel",
+    armyNumber: "IC80685P",
+    email: "admin@ssacc.demo",
+    role: "admin",
+  },
+  {
+    id: "au-3",
+    name: "Vikram Singh",
+    rank: "Major",
+    armyNumber: "IC80685C",
+    email: "analyst@ssacc.demo",
+    role: "viewer",
+  },
+  {
+    id: "au-4",
+    name: "Ananya Reddy",
+    rank: "Captain",
+    armyNumber: "IC80685R",
+    email: "",
+    role: "viewer",
+  },
 ];
 
 const DEFAULT_ACCOUNT: UserAccountState = {
@@ -77,6 +109,20 @@ function normalizeAuthorizedUser(u: AuthorizedUser): AuthorizedUser {
   return { ...u, rank, name };
 }
 
+function applyAuthUserDefaults(u: AuthorizedUser): AuthorizedUser {
+  const normalized = normalizeAuthorizedUser(u);
+  const seed = DEFAULT_AUTH_USERS.find(
+    (d) =>
+      d.id === normalized.id ||
+      d.armyNumber.toUpperCase() === normalized.armyNumber.toUpperCase(),
+  );
+  return {
+    ...normalized,
+    email: normalized.email?.trim() || seed?.email || "",
+    role: normalized.role ?? seed?.role ?? "viewer",
+  };
+}
+
 function loadAccount(): UserAccountState {
   if (typeof window === "undefined") return DEFAULT_ACCOUNT;
   try {
@@ -108,7 +154,7 @@ export function getAuthorizedUsers(): AuthorizedUser[] {
   try {
     const raw = localStorage.getItem(AUTH_USERS_KEY);
     const users = raw ? (JSON.parse(raw) as AuthorizedUser[]) : DEFAULT_AUTH_USERS;
-    return users.map(normalizeAuthorizedUser);
+    return users.map(applyAuthUserDefaults);
   } catch {
     return DEFAULT_AUTH_USERS;
   }
@@ -116,13 +162,110 @@ export function getAuthorizedUsers(): AuthorizedUser[] {
 
 export function saveAuthorizedUsers(users: AuthorizedUser[]): void {
   if (typeof window === "undefined") return;
-  localStorage.setItem(AUTH_USERS_KEY, JSON.stringify(users));
+  localStorage.setItem(AUTH_USERS_KEY, JSON.stringify(users.map(applyAuthUserDefaults)));
   window.dispatchEvent(new Event(USER_ACCOUNT_EVENT));
 }
 
 export function findAuthorizedUserByArmyNumber(armyNumber: string): AuthorizedUser | null {
   const norm = armyNumber.trim().toUpperCase();
   return getAuthorizedUsers().find((u) => u.armyNumber.toUpperCase() === norm) ?? null;
+}
+
+export function findAuthorizedUserByEmail(email: string): AuthorizedUser | null {
+  const norm = email.trim().toLowerCase();
+  if (!norm) return null;
+  return (
+    getAuthorizedUsers().find((u) => u.email.trim().toLowerCase() === norm) ?? null
+  );
+}
+
+/** Roles for the logged-in account — keyed by email, with service-number fallback. */
+export function getRolesForEmail(email: string): AppRole[] {
+  const byEmail = findAuthorizedUserByEmail(email);
+  if (byEmail) return [byEmail.role];
+
+  const profile = findRecoveryProfileByEmail(email);
+  if (profile) {
+    const byArmy = findAuthorizedUserByArmyNumber(profile.serviceNumber);
+    if (byArmy) return [byArmy.role];
+  }
+
+  return [];
+}
+
+export function updateAuthorizedUserRole(email: string, role: AppRole): void {
+  const trimmedEmail = email.trim();
+  const norm = trimmedEmail.toLowerCase();
+  const profile = findRecoveryProfileByEmail(trimmedEmail);
+  const users = getAuthorizedUsers();
+
+  const idx = users.findIndex(
+    (u) =>
+      u.email.trim().toLowerCase() === norm ||
+      (profile && u.armyNumber.toUpperCase() === profile.serviceNumber.toUpperCase()),
+  );
+
+  if (idx >= 0) {
+    const next = [...users];
+    next[idx] = { ...next[idx], email: trimmedEmail || next[idx].email, role };
+    saveAuthorizedUsers(next);
+    return;
+  }
+
+  if (!profile) return;
+
+  saveAuthorizedUsers([
+    ...users,
+    {
+      id: `au-${Date.now()}`,
+      name: profile.userId,
+      rank: "",
+      armyNumber: profile.serviceNumber,
+      email: trimmedEmail,
+      role,
+    },
+  ]);
+}
+
+export function upsertAuthorizedUserForSignup(input: {
+  email: string;
+  userId: string;
+  serviceNumber: string;
+  fullName?: string;
+}): void {
+  const email = input.email.trim();
+  const users = getAuthorizedUsers();
+  const hasRegisteredLogin = users.some((u) => u.email.trim().length > 0);
+  const role: AppRole = hasRegisteredLogin ? "viewer" : "admin";
+
+  const existingByArmy = findAuthorizedUserByArmyNumber(input.serviceNumber);
+  if (existingByArmy) {
+    saveAuthorizedUsers(
+      users.map((u) =>
+        u.id === existingByArmy.id
+          ? {
+              ...u,
+              email,
+              name: input.fullName?.trim() || u.name,
+              role: u.email.trim() ? u.role : role,
+            }
+          : u,
+      ),
+    );
+    return;
+  }
+
+  saveAuthorizedUsers([
+    ...users,
+    {
+      id: `au-${Date.now()}`,
+      name: input.fullName?.trim() || input.userId.trim(),
+      rank: "",
+      armyNumber: input.serviceNumber.trim(),
+      email,
+      role,
+    },
+  ]);
 }
 
 /** Security gate for editing authorized users list. */
@@ -138,21 +281,17 @@ export function verifySecurityGate(answers: {
   return dateOk && aiOk && mottoOk;
 }
 
-export async function getCurrentAccountEmail(): Promise<string | null> {
-  const { data } = await supabase.auth.getSession();
-  if (data.session?.user?.email) return data.session.user.email;
-  return null;
+export function getCurrentAccountEmail(): string | null {
+  return getMockSession()?.email ?? null;
 }
 
 function recoveryProfileForEmail(email: string) {
   return findRecoveryProfileByEmail(email);
 }
 
-export async function verifyCurrentPassword(email: string, password: string): Promise<boolean> {
+export function verifyCurrentPassword(email: string, password: string): boolean {
   const override = getPasswordOverride(email);
-  if (override && override === password) return true;
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
-  return !error;
+  return override !== null && override === password;
 }
 
 export type PasswordChangeInput = {
@@ -163,20 +302,24 @@ export type PasswordChangeInput = {
   newPassword: string;
 };
 
-export async function changeAccountPassword(input: PasswordChangeInput): Promise<{ ok: true } | { ok: false; error: string }> {
+export async function changeAccountPassword(
+  input: PasswordChangeInput,
+): Promise<{ ok: true } | { ok: false; error: string }> {
   const authorized = findAuthorizedUserByArmyNumber(input.armyNumber);
   if (!authorized) {
     return { ok: false, error: "Army number not found in authorized users list." };
   }
-  if (authorized.name.trim().toLowerCase() !== input.name.trim().toLowerCase() &&
-      formatAuthorizedUserLabel(authorized).toLowerCase() !== input.name.trim().toLowerCase()) {
+  if (
+    authorized.name.trim().toLowerCase() !== input.name.trim().toLowerCase() &&
+    formatAuthorizedUserLabel(authorized).toLowerCase() !== input.name.trim().toLowerCase()
+  ) {
     return { ok: false, error: "Name does not match authorized user record." };
   }
-  const valid = await verifyCurrentPassword(input.email, input.currentPassword);
-  if (!valid) {
+  if (!verifyCurrentPassword(input.email, input.currentPassword)) {
     return { ok: false, error: "Current password is incorrect." };
   }
-  const profile = recoveryProfileForEmail(input.email) ?? lookupRecoveryUser(getUserAccount().loginUserId);
+  const profile =
+    recoveryProfileForEmail(input.email) ?? lookupRecoveryUser(getUserAccount().loginUserId);
   if (!profile) {
     return { ok: false, error: "Recovery profile not found for this account." };
   }
@@ -185,7 +328,10 @@ export async function changeAccountPassword(input: PasswordChangeInput): Promise
   return { ok: true };
 }
 
-export function updateLoginUserId(newUserId: string, accountEmail: string): { ok: true } | { ok: false; error: string } {
+export function updateLoginUserId(
+  newUserId: string,
+  accountEmail: string,
+): { ok: true } | { ok: false; error: string } {
   const trimmed = newUserId.trim();
   if (!trimmed) return { ok: false, error: "User ID cannot be empty." };
 

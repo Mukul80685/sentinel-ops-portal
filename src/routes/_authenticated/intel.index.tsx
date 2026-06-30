@@ -2,16 +2,17 @@ import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, Database } from "lucide-react";
-import { listUnits, listAllIntelRecords, INTEL_RECORDS_ALL_KEY } from "@/lib/queries";
-import { supabase } from "@/integrations/supabase/client";
+import { listUnits, listAllIntelRecords, listAllEquipment, INTEL_RECORDS_ALL_KEY } from "@/lib/queries";
 import { INT_UNITS } from "@/lib/intelRepository";
 import {
   buildIntelLinkageContext,
+  buildIntelLinkageVisibilityRows,
   buildIntelSatelliteTable,
   formatIntelCompactDate,
   hasIntelData,
   summarizeIntelSatelliteRows,
 } from "@/lib/intelAnalysisData";
+import { resolveOperationalUnitId } from "@/lib/operationalSync";
 import { ENGAGEMENTS_ALL_KEY, fetchAllEngagements } from "@/lib/engagementEngine";
 
 export const Route = createFileRoute("/_authenticated/intel/")({
@@ -30,38 +31,10 @@ export function IntelRepositoryView() {
 
   const { data: dbUnits = [] } = useQuery({ queryKey: ["units"], queryFn: listUnits });
 
-  const intelDbUnitIds = useMemo(() => {
-    return INT_UNITS.filter((u) => hasIntelData(u.id))
-      .map((u) => dbUnits.find((d) => d.code === u.code)?.id ?? u.id);
-  }, [dbUnits]);
-
   const { data: allEquipment = [] } = useQuery({
-    queryKey: ["intel-all-equipment", intelDbUnitIds],
-    queryFn: async () => {
-      if (intelDbUnitIds.length === 0) return [];
-      const { data } = await supabase
-        .from("equipment")
-        .select("id, unit_id, serviceability, category:category_id(name)")
-        .in("unit_id", intelDbUnitIds);
-      return data ?? [];
-    },
-    enabled: intelDbUnitIds.length > 0,
+    queryKey: ["intel-all-equipment"],
+    queryFn: listAllEquipment,
     staleTime: 30_000,
-  });
-
-  const { data: allVisibility = [] } = useQuery({
-    queryKey: ["intel-all-visibility", intelDbUnitIds],
-    queryFn: async () => {
-      if (intelDbUnitIds.length === 0) return [];
-      const { data } = await supabase
-        .from("unit_beam_visibility")
-        .select("unit_id, beam_id, visible, beams:beam_id(band, satellite_id, satellites:satellite_id(name))")
-        .in("unit_id", intelDbUnitIds)
-        .eq("visible", true);
-      return data ?? [];
-    },
-    enabled: intelDbUnitIds.length > 0,
-    staleTime: 5 * 60 * 1000,
   });
 
   const { data: allIntelRows = [] } = useQuery({
@@ -79,11 +52,10 @@ export function IntelRepositoryView() {
         continue;
       }
 
-      const db = dbUnits.find((u) => u.code === unit.code);
-      const dbId = db?.id ?? unit.id;
+      const dbId = resolveOperationalUnitId(unit.id, dbUnits);
       const unitEng = engagements.filter((e: any) => e.unit_id === dbId);
       const unitEq = allEquipment.filter((e: any) => e.unit_id === dbId);
-      const unitVis = allVisibility.filter((v: any) => v.unit_id === dbId);
+      const unitVis = buildIntelLinkageVisibilityRows(unit.id, dbId, unitEng);
       const unitIntel = allIntelRows.filter((r: any) => r.unit_id === dbId);
       const ctx = buildIntelLinkageContext(unit.id, unitEng, unitVis, unitEq, unitIntel);
       const rows = buildIntelSatelliteTable(unit.id, ctx, unitEng);
@@ -91,7 +63,7 @@ export function IntelRepositoryView() {
     }
 
     return map;
-  }, [engagements, dbUnits, allEquipment, allVisibility, allIntelRows]);
+  }, [engagements, dbUnits, allEquipment, allIntelRows]);
 
   return (
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">

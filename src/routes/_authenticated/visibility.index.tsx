@@ -56,14 +56,13 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { supabase } from "@/integrations/supabase/client";
 import { listUnits } from "@/lib/queries";
 import {
-  GEO_REGIONS,
   REGION_BEAMS,
   seedRand,
   getBeamBreakdown,
   getVisibleBeams,
+  findGeoSatelliteEntry,
   type GeoSatellite,
   type GeoRegion,
 } from "@/lib/visibilityMatrix";
@@ -159,6 +158,22 @@ function parseTransponders(sat: GeoSatellite): { total: number; cBand?: string; 
   return { total };
 }
 
+function beamBandFromLabel(label: string): string {
+  const l = label.toLowerCase();
+  if (l.includes("ku")) return "Ku";
+  if (l.includes("ka")) return "Ka";
+  if (l.includes("c-band") || l.includes("c band")) return "C";
+  return "—";
+}
+
+function beamTypeFromLabel(label: string): string | undefined {
+  const l = label.toLowerCase();
+  if (l.includes("spot")) return "Spot";
+  if (l.includes("regional")) return "Regional";
+  if (l.includes("wide")) return "Wide";
+  return undefined;
+}
+
 // ─── Route ────────────────────────────────────────────────────────────────────
 
 export const Route = createFileRoute("/_authenticated/visibility/")({
@@ -229,33 +244,31 @@ function VisibilityPage() {
     [mergedRegions, activeRegionId],
   );
 
-  // Unit-beam visibility data (used inside satellite detail modal)
-  const { data: beams = [] } = useQuery({
-    queryKey: ["beams"],
-    queryFn: async () => (await supabase.from("beams").select("*")).data ?? [],
-  });
-  const { data: ubv = [] } = useQuery({
-    queryKey: ["ubv"],
-    queryFn: async () =>
-      (await supabase.from("unit_beam_visibility").select("*").eq("visible", true)).data ?? [],
-  });
+  // Unit-beam visibility for satellite detail modal (from Visibility Matrix SSOT)
   const { data: units = [] } = useQuery({ queryKey: ["units"], queryFn: listUnits });
 
-  const beamsBySatName = useMemo(() => {
-    const m: Record<string, any[]> = {};
-    beams.forEach((b: any) => {
-      (m[b.satellite_id] ??= []).push(b);
-    });
-    return m;
-  }, [beams]);
+  const activeSatRegionId = useMemo(() => {
+    if (!activeSat) return null;
+    for (const region of mergedRegions) {
+      if (region.satellites.some((s) => s.id === activeSat.id)) return region.id;
+    }
+    return findGeoSatelliteEntry(activeSat.name)?.regionId ?? null;
+  }, [activeSat, mergedRegions]);
 
-  const visByBeam = useMemo(() => {
-    const m: Record<string, string[]> = {};
-    ubv.forEach((v: any) => {
-      (m[v.beam_id] ??= []).push(v.unit_id);
-    });
-    return m;
-  }, [ubv]);
+  const unitBeamVisibility = useMemo(() => {
+    if (!activeSat || !activeSatRegionId) return [];
+    return units
+      .map((u) => ({
+        unit: u,
+        beams: getVisibleBeams(u.id, activeSat.id, activeSatRegionId).map((label) => ({
+          id: `${activeSat.id}:${u.id}:${label}`,
+          name: label,
+          band: beamBandFromLabel(label),
+          beam_type: beamTypeFromLabel(label),
+        })),
+      }))
+      .filter((x) => x.beams.length > 0);
+  }, [activeSat, activeSatRegionId, units]);
 
   const mock = useMemo(
     () => (activeSat ? buildMockVisibility(activeSat.id, activeSat.name) : null),
@@ -467,28 +480,20 @@ function VisibilityPage() {
                 </div>
               </div>
 
-              {/* Unit-beam visibility (live from DB if available) */}
+              {/* Unit-beam visibility (Visibility Matrix SSOT) */}
               {units.length > 0 && (
                 <div className="space-y-2">
                   <div className="label-eyebrow flex items-center gap-1">
                     <Radio className="h-3 w-3" /> Unit Beam Visibility
                   </div>
-                  {units
-                    .map((u) => {
-                      const unitBeams = Object.values(beamsBySatName)
-                        .flat()
-                        .filter((b: any) => (visByBeam[b.id] ?? []).includes(u.id));
-                      return { unit: u, beams: unitBeams };
-                    })
-                    .filter((x) => x.beams.length > 0)
-                    .map(({ unit, beams: ub }) => (
+                  {unitBeamVisibility.map(({ unit, beams: ub }) => (
                       <div key={unit.id} className="panel p-3">
                         <div className="flex items-center justify-between">
                           <div className="mono text-sm font-bold uppercase">{unit.code}</div>
                           <div className="text-[11px] mono text-muted-foreground">{ub.length} beam(s)</div>
                         </div>
                         <ul className="mt-2 space-y-1">
-                          {ub.map((b: any) => (
+                          {ub.map((b) => (
                             <li key={b.id} className="flex items-center gap-2 text-[12px] mono">
                               <Radio className="h-3 w-3 text-primary" />
                               <span className="uppercase text-muted-foreground w-12">{b.band}</span>

@@ -57,8 +57,12 @@ export function SettingsModal() {
     setGateOpen(false);
   }
 
-  async function saveUserId() {
-    const email = user?.email ?? (await getCurrentAccountEmail()) ?? "";
+  function resolveAccountEmail(): string {
+    return user?.email ?? getCurrentAccountEmail() ?? "";
+  }
+
+  function saveUserId() {
+    const email = resolveAccountEmail();
     if (!email) {
       toast.error("No active account email found.");
       return;
@@ -74,7 +78,7 @@ export function SettingsModal() {
       toast.error("New passwords do not match.");
       return;
     }
-    const email = user?.email ?? (await getCurrentAccountEmail()) ?? "";
+    const email = resolveAccountEmail();
     if (!email) {
       toast.error("No active account email found.");
       return;
@@ -140,7 +144,7 @@ export function SettingsModal() {
                 onChange={(e) => setLoginUserId(e.target.value)}
                 className="mono text-[11px]"
               />
-              <Button type="button" size="sm" className="mono text-[10px] shrink-0" onClick={() => void saveUserId()}>
+              <Button type="button" size="sm" className="mono text-[10px] shrink-0" onClick={saveUserId}>
                 Save
               </Button>
             </div>

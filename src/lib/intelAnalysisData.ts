@@ -13,7 +13,7 @@ import {
   resolveScanPolarizationFromEngagement,
   validateIntelReportIntegrity,
 } from "@/lib/intelIntegrity";
-import { resolveMatrixVisibility, isSatelliteVisibleToUnitInMatrix, buildVisibilityDeepLinkSearch } from "@/lib/visibilityMatrix";
+import { resolveMatrixVisibility, isSatelliteVisibleToUnitInMatrix, buildVisibilityDeepLinkSearch, bandsFromVisibleBeams } from "@/lib/visibilityMatrix";
 import { bandToPolarizations, INT_UNITS } from "@/lib/intelRepository";
 
 export const OUTPUT_TYPES = ["voice", "packet", "image", "video", "location"] as const;
@@ -311,6 +311,42 @@ function pick<T>(arr: readonly T[], rand: () => number): T {
 
 function freqId(base: number, pol: string, idx: number): string {
   return `${pol}-${(base + idx * 6.25).toFixed(2)} MHz`;
+}
+
+/** Visibility rows for buildIntelLinkageContext — sourced from Visibility Matrix SSOT. */
+export function buildIntelLinkageVisibilityRows(
+  intUnitSlug: string,
+  dbUnitId: string,
+  engagements: any[],
+): any[] {
+  const rows: any[] = [];
+  const seen = new Set<string>();
+
+  for (const eng of engagements) {
+    const satName = eng.satellites?.name as string | undefined;
+    if (!satName) continue;
+
+    const snap = resolveMatrixVisibility(intUnitSlug, satName);
+    if (!snap?.canScan) continue;
+
+    const bands = bandsFromVisibleBeams(snap.beamsVisibleToUnit);
+    for (const band of bands) {
+      const key = `${snap.satelliteId}:${band}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push({
+        unit_id: dbUnitId,
+        visible: true,
+        beams: {
+          band,
+          satellite_id: snap.satelliteId ?? (eng.satellites?.id as string),
+          satellites: { name: satName },
+        },
+      });
+    }
+  }
+
+  return rows;
 }
 
 export function buildIntelLinkageContext(

@@ -1,9 +1,8 @@
-import { supabase } from "@/integrations/supabase/client";
 import type { OpEngagement, OpEquipment } from "@/lib/operationalDataset";
-import { shouldUseOperationalStore } from "@/lib/operationalDataSource";
 import {
   ensureOperationalDataset,
   getOperationalDataset,
+  getOperationalIntelRows,
 } from "@/lib/operationalStore";
 
 /**
@@ -59,31 +58,14 @@ export type EquipmentRow = OpEquipment;
  */
 
 export async function listUnits(): Promise<Unit[]> {
-  if (await shouldUseOperationalStore()) {
-    return ensureOperationalDataset().units.map(({ slot: _s, ...u }) => u);
-  }
-
-  const { data, error } = await supabase.from("units").select("*").order("code");
-  if (error) throw error;
-  return (data ?? []) as Unit[];
+  return ensureOperationalDataset().units.map(({ slot: _s, ...u }) => u);
 }
 
 export async function getUnitById(unitId: string): Promise<Unit | null> {
-  if (await shouldUseOperationalStore()) {
-    const op = getOperationalDataset().units.find((u) => u.id === unitId);
-    if (!op) return null;
-    const { slot: _s, ...rest } = op;
-    return rest;
-  }
-
-  const { data, error } = await supabase
-    .from("units")
-    .select("*")
-    .eq("id", unitId)
-    .maybeSingle();
-
-  if (error) throw error;
-  return data as Unit | null;
+  const op = getOperationalDataset().units.find((u) => u.id === unitId);
+  if (!op) return null;
+  const { slot: _s, ...rest } = op;
+  return rest;
 }
 
 /**
@@ -93,23 +75,13 @@ export async function getUnitById(unitId: string): Promise<Unit | null> {
  */
 
 export async function listSatellites(): Promise<Satellite[]> {
-  if (await shouldUseOperationalStore()) {
-    const ds = ensureOperationalDataset();
-    return ds.satellites.map((s) => ({
-      id: s.id,
-      name: s.name,
-      orbital_position: s.orbital_position,
-      notes: "Operational dataset",
-    }));
-  }
-
-  const { data, error } = await supabase
-    .from("satellites")
-    .select("*")
-    .order("orbital_position");
-
-  if (error) throw error;
-  return (data ?? []) as Satellite[];
+  const ds = ensureOperationalDataset();
+  return ds.satellites.map((s) => ({
+    id: s.id,
+    name: s.name,
+    orbital_position: s.orbital_position,
+    notes: "Operational dataset",
+  }));
 }
 
 /**
@@ -119,17 +91,7 @@ export async function listSatellites(): Promise<Satellite[]> {
  */
 
 export async function listCategories(): Promise<Category[]> {
-  if (await shouldUseOperationalStore()) {
-    return ensureOperationalDataset().categories;
-  }
-
-  const { data, error } = await supabase
-    .from("equipment_categories")
-    .select("*")
-    .order("sort_order");
-
-  if (error) throw error;
-  return (data ?? []) as Category[];
+  return ensureOperationalDataset().categories;
 }
 
 /**
@@ -139,34 +101,11 @@ export async function listCategories(): Promise<Category[]> {
  */
 
 export async function listAllEquipment(): Promise<EquipmentRow[]> {
-  if (await shouldUseOperationalStore()) {
-    return ensureOperationalDataset().equipment;
-  }
-
-  const { data, error } = await supabase
-    .from("equipment")
-    .select(
-      "id,unit_id,serviceability,category_id,name,make,model,serial_number,date_of_procurement,specifications,remarks,category:category_id(id,name)",
-    );
-
-  if (error) throw error;
-  return (data ?? []) as EquipmentRow[];
+  return ensureOperationalDataset().equipment;
 }
 
 export async function listAllEquipmentDetailed(): Promise<EquipmentRow[]> {
-  if (await shouldUseOperationalStore()) {
-    return ensureOperationalDataset().equipment;
-  }
-
-  const { data, error } = await supabase
-    .from("equipment")
-    .select(
-      "id,name,unit_id,serviceability,category_id,make,model,serial_number,date_of_procurement,specifications,remarks,units:unit_id(code,name),category:category_id(id,name)",
-    )
-    .order("name");
-
-  if (error) throw error;
-  return (data ?? []) as EquipmentRow[];
+  return ensureOperationalDataset().equipment;
 }
 
 export async function listEquipmentForUnit(
@@ -174,6 +113,12 @@ export async function listEquipmentForUnit(
 ): Promise<EquipmentRow[]> {
   const all = await listAllEquipment();
   return all.filter((e) => e.unit_id === unitId);
+}
+
+export async function getEquipmentById(
+  equipmentId: string,
+): Promise<EquipmentRow | null> {
+  return getOperationalDataset().equipment.find((e) => e.id === equipmentId) ?? null;
 }
 
 /**
@@ -185,22 +130,9 @@ export async function listEquipmentForUnit(
 export async function listEngagementsForUnit(
   unitId: string
 ): Promise<OpEngagement[]> {
-  if (await shouldUseOperationalStore()) {
-    return ensureOperationalDataset().engagements.filter(
-      (e) => e.unit_id === unitId
-    );
-  }
-
-  const { data, error } = await supabase
-    .from("engagements")
-    .select(
-      "id,unit_id,status,satellite_id,antenna_id,demodulator_id,processing_server_id,observation_start,updated_at,remarks,satellites:satellite_id(name)",
-    )
-    .eq("unit_id", unitId)
-    .order("observation_start", { ascending: false });
-
-  if (error) throw error;
-  return (data ?? []) as OpEngagement[];
+  return ensureOperationalDataset().engagements.filter(
+    (e) => e.unit_id === unitId
+  );
 }
 
 /**
@@ -259,20 +191,31 @@ export function engStatusClass(s: EngStatus) {
 export const INTEL_RECORDS_ALL_KEY = ["intel-records", "all"] as const;
 
 export async function listAllIntelRecords(): Promise<any[]> {
-  if (await shouldUseOperationalStore()) {
-    const { getOperationalIntelRows } = await import("@/lib/operationalStore");
-    return getOperationalIntelRows();
-  }
-  const { data, error } = await supabase
-    .from("intel_records")
-    .select("id, unit_id, satellite_id, band, summary, analysis_report, observation_date, updated_at, remarks");
-  if (error) throw error;
-  return data ?? [];
+  return getOperationalIntelRows();
 }
 
 export async function listIntelRecordsForUnit(unitId: string): Promise<any[]> {
   const all = await listAllIntelRecords();
   return all.filter((r) => r.unit_id === unitId);
+}
+
+export async function getIntelRecordById(intelId: string): Promise<any | null> {
+  const row = getOperationalIntelRows().find((r) => r.id === intelId);
+  if (!row) return null;
+
+  const ds = ensureOperationalDataset();
+  const satRecord = ds.satellites.find((s) => s.id === row.satellite_id);
+  const eng = ds.engagements.find((e) => e.satellite_id === row.satellite_id);
+  const satName = satRecord?.name ?? eng?.satellites?.name ?? "—";
+
+  const freqMatch = row.summary?.match(/Frequency\s+([\d.]+\s*MHz)/i);
+  const frequency = freqMatch?.[1] ?? row.band;
+
+  return {
+    ...row,
+    frequency,
+    satellites: { id: row.satellite_id, name: satName },
+  };
 }
 
 /**

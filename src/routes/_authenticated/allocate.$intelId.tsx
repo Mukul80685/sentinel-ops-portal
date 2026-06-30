@@ -3,8 +3,14 @@ import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { AppShell } from "@/components/AppShell";
 import { Empty } from "@/components/Empty";
-import { listUnits } from "@/lib/queries";
-import { supabase } from "@/integrations/supabase/client";
+import { listUnits, listAllEquipment, getIntelRecordById } from "@/lib/queries";
+import { fetchAllEngagements } from "@/lib/engagementEngine";
+import { insertOperationalEngagement } from "@/lib/operationalStore";
+import {
+  findGeoSatelliteEntry,
+  getVisibleBeams,
+  bandsFromVisibleBeams,
+} from "@/lib/visibilityMatrix";
 import { Button } from "@/components/ui/button";
 import { useCanEdit } from "@/lib/auth";
 import { Target, CheckCircle2, XCircle, ArrowRight, Sigma, TrendingUp, Eye, Activity } from "lucide-react";
@@ -28,34 +34,21 @@ function AllocateRecommendation() {
 
   const { data: intel } = useQuery({
     queryKey: ["intel-single", intelId],
-    queryFn: async () =>
-      (
-        await supabase
-          .from("intel_records")
-          .select("*, satellites:satellite_id(id,name)")
-          .eq("id", intelId)
-          .maybeSingle()
-      ).data,
+    queryFn: () => getIntelRecordById(intelId),
   });
 
-  const satId = (intel as any)?.satellite_id ?? null;
+  const satId = intel?.satellite_id ?? null;
+  const satelliteName = intel?.satellites?.name ?? null;
+  const satEntry = satelliteName ? findGeoSatelliteEntry(satelliteName) : null;
 
   const { data: units = [] } = useQuery({ queryKey: ["units"], queryFn: listUnits });
   const { data: equipment = [] } = useQuery({
     queryKey: ["equipment-all"],
-    queryFn: async () => (await supabase.from("equipment").select("id,unit_id,serviceability")).data ?? [],
+    queryFn: listAllEquipment,
   });
   const { data: engagements = [] } = useQuery({
     queryKey: ["eng-all"],
-    queryFn: async () => (await supabase.from("engagements").select("id,unit_id,status")).data ?? [],
-  });
-  const { data: beams = [] } = useQuery({
-    queryKey: ["beams"],
-    queryFn: async () => (await supabase.from("beams").select("*")).data ?? [],
-  });
-  const { data: ubv = [] } = useQuery({
-    queryKey: ["ubv"],
-    queryFn: async () => (await supabase.from("unit_beam_visibility").select("*").eq("visible", true)).data ?? [],
+    queryFn: fetchAllEngagements,
   });
 
   const evaluations = useMemo(() => {
@@ -66,13 +59,14 @@ function AllocateRecommendation() {
       const available = Math.max(0, serviceable - active);
       const pct = serviceable === 0 ? 100 : Math.round((active / serviceable) * 100);
 
-      const satBeams = satId ? beams.filter((b: any) => b.satellite_id === satId) : [];
-      const unitBeams = satBeams.filter((b: any) =>
-        ubv.some((v: any) => v.unit_id === u.id && v.beam_id === b.id),
-      );
-      const sees = unitBeams.length > 0;
-      const visibleBands = Array.from(new Set(unitBeams.map((b: any) => b.band)));
-      const visibleBeams = unitBeams.map((b: any) => b.name);
+      let sees = false;
+      let visibleBeams: string[] = [];
+      let visibleBands: string[] = [];
+      if (satEntry) {
+        visibleBeams = getVisibleBeams(u.id, satEntry.sat.id, satEntry.regionId);
+        sees = visibleBeams.length > 0;
+        visibleBands = bandsFromVisibleBeams(visibleBeams);
+      }
 
       const reasons: string[] = [];
       if (!sees) reasons.push("No visibility of satellite");
@@ -103,7 +97,7 @@ function AllocateRecommendation() {
         satPenalty,
       };
     });
-  }, [units, equipment, engagements, beams, ubv, satId]);
+  }, [units, equipment, engagements, satEntry]);
 
   const eligible = evaluations.filter((e) => e.eligible).sort((a, b) => b.score - a.score);
   const ineligible = evaluations.filter((e) => !e.eligible);
@@ -112,13 +106,13 @@ function AllocateRecommendation() {
   async function commitAllocation(unitId: string) {
     if (!intel) return;
     if (!satId) return toast.error("Frequency has no satellite assigned");
-    const { error } = await supabase.from("engagements").insert({
+    const created = insertOperationalEngagement({
       unit_id: unitId,
       satellite_id: satId,
       status: "Planned",
-      remarks: `Allotted from INT ${(intel as any).frequency ?? ""} ${(intel as any).band ?? ""}`.trim(),
+      remarks: `Allotted from INT ${intel.frequency ?? ""} ${intel.band ?? ""}`.trim(),
     });
-    if (error) return toast.error(error.message);
+    if (!created) return toast.error("Unknown satellite.");
     toast.success("Frequency allotted");
     router.navigate({ to: "/engagement/$unitId", params: { unitId } });
   }
@@ -126,14 +120,14 @@ function AllocateRecommendation() {
   return (
     <AppShell
       title="Allocation Recommendation"
-      subtitle={`Frequency ${(intel as any)?.frequency ?? "—"} · ${(intel as any)?.satellites?.name ?? "—"}`}
+      subtitle={`Frequency ${intel?.frequency ?? "—"} · ${intel?.satellites?.name ?? "—"}`}
       showBack
       horizontalNav={null}
     >
       <div className="panel p-3 mb-3 grid grid-cols-1 md:grid-cols-4 gap-3 text-[12px] mono">
-        <Stat label="Satellite" value={(intel as any)?.satellites?.name ?? "—"} />
-        <Stat label="Frequency" value={(intel as any)?.frequency ?? "—"} />
-        <Stat label="Band" value={(intel as any)?.band ?? "—"} />
+        <Stat label="Satellite" value={intel?.satellites?.name ?? "—"} />
+        <Stat label="Frequency" value={intel?.frequency ?? "—"} />
+        <Stat label="Band" value={intel?.band ?? "—"} />
         <Stat label="Eligible Units" value={String(eligible.length)} accent />
       </div>
 

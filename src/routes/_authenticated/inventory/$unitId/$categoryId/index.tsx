@@ -2,8 +2,8 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
 import { Empty } from "@/components/Empty";
-import { supabase } from "@/integrations/supabase/client";
 import { useCanEdit } from "@/lib/auth";
+import { updateOperationalEquipment } from "@/lib/operationalStore";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -173,19 +173,16 @@ function AddDetailsDialog({
     setBusy(true);
     try {
       const photo_url = await uploadFile(photo, `equipment/${unitId}`);
-      const { error } = await supabase
-        .from("equipment")
-        .update({
-          name: form.name.trim() || undefined,
-          make: form.make.trim(),
-          model: form.model.trim(),
-          serial_number: form.serial_number.trim(),
-          serviceability: form.serviceability,
-          remarks: form.remarks.trim() || null,
-          photo_url,
-        })
-        .eq("id", selectedId);
-      if (error) throw error;
+      const ok = updateOperationalEquipment(selectedId, {
+        name: form.name.trim() || undefined,
+        make: form.make.trim(),
+        model: form.model.trim(),
+        serial_number: form.serial_number.trim(),
+        serviceability: form.serviceability as EqItem["serviceability"],
+        remarks: form.remarks.trim() || null,
+        photo_url,
+      });
+      if (!ok) throw new Error("Equipment not found.");
       toast.success("Details submitted.");
       setOpen(false);
       reset();
