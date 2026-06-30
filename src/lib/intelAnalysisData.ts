@@ -3,7 +3,7 @@
  */
 import {
   isIntGenerationComplete,
-  isIntGenerationInProgress,
+  resolveOperationalUnitId,
 } from "@/lib/operationalSync";
 import { computeSatelliteAnalysis } from "@/lib/engagementEngine";
 import {
@@ -13,7 +13,13 @@ import {
   resolveScanPolarizationFromEngagement,
   validateIntelReportIntegrity,
 } from "@/lib/intelIntegrity";
-import { resolveMatrixVisibility, isSatelliteVisibleToUnitInMatrix, buildVisibilityDeepLinkSearch, bandsFromVisibleBeams } from "@/lib/visibilityMatrix";
+import {
+  resolveMatrixVisibility,
+  isSatelliteVisibleToUnitInMatrix,
+  buildVisibilityDeepLinkSearch,
+  bandsFromVisibleBeams,
+  normalizeSatelliteName,
+} from "@/lib/visibilityMatrix";
 import { bandToPolarizations, INT_UNITS } from "@/lib/intelRepository";
 
 export const OUTPUT_TYPES = ["voice", "packet", "image", "video", "location"] as const;
@@ -180,6 +186,60 @@ export function isSatelliteInIntRoster(unitId: string, satelliteName: string): b
 export function hasIntVisibilityCrossLink(unitId: string, satelliteName: string): boolean {
   if (!isSatelliteInIntRoster(unitId, satelliteName)) return false;
   return isSatelliteVisibleToUnitInMatrix(unitId, satelliteName);
+}
+
+/** Scan phase from frequency metrics — pending zero means fully analyzed. */
+export function deriveIntScanPhaseStatus(
+  scanned: number,
+  analyzed: number,
+  pending: number,
+): "Completed" | "In Progress" | null {
+  if (scanned <= 0) return null;
+  if (pending <= 0) return "Completed";
+  return "In Progress";
+}
+
+export type IntScanLookupEntry = {
+  pending: number;
+  scanned: number;
+  activelyScanning: boolean;
+};
+
+/** Per-satellite scan metrics for INT ↔ Visibility Matrix cross-link badges. */
+export function buildIntScanLookupForUnit(
+  unitId: string,
+  engagements: any[],
+  intelRows: any[],
+  equipment: any[],
+  dbUnits: { id: string; code?: string }[],
+): Map<string, IntScanLookupEntry> {
+  if (!hasIntelData(unitId)) return new Map();
+
+  const dbUnitId = resolveOperationalUnitId(unitId, dbUnits);
+  const unitEngagements = engagements.filter((e: any) => e.unit_id === dbUnitId);
+  const unitEquipment = equipment.filter((e: any) => e.unit_id === dbUnitId);
+  const unitIntel = intelRows.filter((r: any) => r.unit_id === dbUnitId);
+  const visibilityRows = buildIntelLinkageVisibilityRows(unitId, dbUnitId, unitEngagements);
+  const ctx = buildIntelLinkageContext(
+    unitId,
+    unitEngagements,
+    visibilityRows,
+    unitEquipment,
+    unitIntel,
+  );
+  const rows = buildIntelSatelliteTable(unitId, ctx, unitEngagements);
+  const map = new Map<string, IntScanLookupEntry>();
+
+  for (const row of rows) {
+    if (!row.scanEligible || row.totalScanned <= 0) continue;
+    map.set(normalizeSatelliteName(row.satelliteName), {
+      pending: row.pending,
+      scanned: row.totalScanned,
+      activelyScanning: row.pending > 0,
+    });
+  }
+
+  return map;
 }
 
 export { buildVisibilityDeepLinkSearch };
@@ -446,26 +506,19 @@ function buildScanCounts(
 
   if (eng && ctx.resourcesServiceable) {
     const complete = isIntGenerationComplete(eng.scanned, eng.analyzed, eng.pending);
-    const inProgress = isIntGenerationInProgress(
-      eng.scanned,
-      eng.analyzed,
-      eng.pending,
-      eng.status,
-    );
+    const scanPhase = deriveIntScanPhaseStatus(eng.scanned, eng.analyzed, eng.pending);
     return {
       totalScanned: eng.scanned,
       analyzed: eng.analyzed,
       pending: eng.pending,
       processingStatus: complete
         ? "Analysis Complete"
-        : eng.status === "In Progress"
+        : eng.pending > 0
           ? "Active Scanning"
           : eng.status === "Paused"
             ? "Scan Paused"
-            : inProgress
-              ? "Processing"
-              : "Queued",
-      engagementStatus: complete ? null : eng.status,
+            : "Processing",
+      engagementStatus: scanPhase,
     };
   }
 
@@ -480,12 +533,14 @@ function buildScanCounts(
   const rand = seedRand(`${unitId}-${satName}-counts`);
   const totalScanned = 32 + Math.floor(rand() * 19);
   const analyzed = Math.floor(totalScanned * (0.55 + rand() * 0.3));
+  const pending = totalScanned - analyzed;
+  const scanPhase = deriveIntScanPhaseStatus(totalScanned, analyzed, pending);
   return {
     totalScanned,
     analyzed,
-    pending: totalScanned - analyzed,
-    processingStatus: analyzed === totalScanned ? "Analysis Complete" : "Processing",
-    engagementStatus: null,
+    pending,
+    processingStatus: pending === 0 ? "Analysis Complete" : "Active Scanning",
+    engagementStatus: scanPhase,
   };
 }
 

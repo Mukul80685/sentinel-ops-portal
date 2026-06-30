@@ -1,7 +1,24 @@
 /**
  * INT Repository – shared data model, mock generation, filtering, and CSV utilities.
  */
-import * as XLSX from "xlsx";
+import {
+  ACCEPTED_SPREADSHEET_ACCEPT,
+  buildCsv,
+  getSpreadsheetExtension,
+  readSpreadsheetFile,
+  validateImportFile,
+} from "@/lib/dataTableUtils";
+import { INT_UNITS, UNIT_LABELS, type IntelUnit } from "@/lib/intelUnits";
+
+export { INT_UNITS, UNIT_LABELS, type IntelUnit };
+
+/** @deprecated Use ACCEPTED_SPREADSHEET_ACCEPT from dataTableUtils */
+export const ACCEPTED_FILE_TYPES = ACCEPTED_SPREADSHEET_ACCEPT;
+
+export function validateUploadFile(file: File): string | null {
+  const result = validateImportFile(file);
+  return result.ok ? null : (result.error ?? "Invalid file");
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -17,13 +34,6 @@ export const PRODUCTIVITY_LABELS: Record<ProductivityStatus, string> = {
   "partially-productive": "Partially Productive",
   unknown:              "Unknown",
 };
-
-export interface IntelUnit {
-  id: string;
-  code: string;
-  name: string;
-  location: string;
-}
 
 export interface IntelRecord {
   id: string;
@@ -90,21 +100,6 @@ export const EMPTY_INTEL_FILTER: IntelFilter = {
   freqMin: "", freqMax: "", dateFrom: "", dateTo: "",
   productivity: "", operator: "", signalType: "", status: "",
 };
-
-// ─── Static unit roster (A–H) ─────────────────────────────────────────────────
-
-export const INT_UNITS: IntelUnit[] = [
-  { id: "alpha",   code: "A", name: "Unit A", location: "Northern Sector" },
-  { id: "bravo",   code: "B", name: "Unit B", location: "Eastern Sector" },
-  { id: "charlie", code: "C", name: "Unit C", location: "Western Sector" },
-  { id: "delta",   code: "D", name: "Unit D", location: "Southern Sector" },
-  { id: "echo",    code: "E", name: "Unit E", location: "Central Sector" },
-  { id: "foxtrot", code: "F", name: "Unit F", location: "Forward Sector" },
-  { id: "golf",    code: "G", name: "Unit G", location: "Rear Sector" },
-  { id: "hotel",   code: "H", name: "Unit H", location: "Coastal Sector" },
-];
-
-export const UNIT_LABELS = INT_UNITS.map((u) => u.name);
 
 // ─── Seeded randomness ────────────────────────────────────────────────────────
 
@@ -646,59 +641,25 @@ export function bandToPolarizations(band: string): string[] {
 
 // ─── XLSX / CSV file parsing ──────────────────────────────────────────────────
 
-/** Accepted upload MIME types and extensions. */
-export const ACCEPTED_FILE_TYPES = ".csv,.xlsx,.xls";
-
-export function validateUploadFile(file: File): string | null {
-  const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
-  if (!["csv", "xlsx", "xls"].includes(ext)) {
-    return "Invalid format. Only CSV or Excel (.xlsx / .xls) files allowed.";
-  }
-  return null;
-}
-
 /** Parse a CSV text string into IntelRecord[]. Wraps existing parseIntelCsv. */
 export function parseCsvFile(text: string, unitId: string, unitLabel: string): IntelRecord[] {
   return parseIntelCsv(text, unitId, unitLabel);
 }
 
-/** Parse an XLSX/XLS file buffer into IntelRecord[]. */
-export function parseXlsxFile(buffer: ArrayBuffer, unitId: string, unitLabel: string): IntelRecord[] {
-  const workbook = XLSX.read(buffer, { type: "array" });
-  const sheetName = workbook.SheetNames[0];
-  if (!sheetName) return [];
-  const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName]);
-  return parseIntelCsv(csv, unitId, unitLabel);
-}
-
-/** Read a File and parse it into IntelRecord[], returning a Promise. */
-export function parseUploadedFile(
+/** Read a CSV or Excel upload and parse into IntelRecord[]. */
+export async function parseUploadedFile(
   file: File,
   unitId: string,
   unitLabel: string,
 ): Promise<IntelRecord[]> {
-  return new Promise((resolve, reject) => {
-    const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
-    const reader = new FileReader();
+  if (getSpreadsheetExtension(file) === "csv") {
+    const text = await file.text();
+    return parseCsvFile(text, unitId, unitLabel);
+  }
 
-    if (ext === "csv") {
-      reader.onload = (e) => {
-        const text = e.target?.result as string;
-        resolve(parseCsvFile(text, unitId, unitLabel));
-      };
-      reader.onerror = () => reject(new Error("Failed to read CSV file"));
-      reader.readAsText(file);
-    } else {
-      reader.onload = (e) => {
-        const buf = e.target?.result as ArrayBuffer;
-        try {
-          resolve(parseXlsxFile(buf, unitId, unitLabel));
-        } catch (err) {
-          reject(err);
-        }
-      };
-      reader.onerror = () => reject(new Error("Failed to read XLSX file"));
-      reader.readAsArrayBuffer(file);
-    }
-  });
+  const rows = await readSpreadsheetFile(file);
+  if (rows.length === 0) return [];
+
+  const csv = buildCsv(rows[0], rows.slice(1));
+  return parseIntelCsv(csv, unitId, unitLabel);
 }

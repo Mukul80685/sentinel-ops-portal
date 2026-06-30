@@ -39,6 +39,7 @@ import {
 import { toast } from "sonner";
 import { ccModuleBackLink } from "@/lib/controlCenter";
 import {
+  ACCEPTED_SPREADSHEET_ACCEPT,
   validateImportFile,
   buildCsv,
   downloadCsv,
@@ -62,7 +63,7 @@ import {
   makeSatelliteKey,
   displaySatelliteName,
   displayPolarization,
-  parseIntelCsv,
+  parseUploadedFile,
   loadImportedRecords,
   saveImportedRecords,
   formatDisplayDate,
@@ -185,15 +186,13 @@ function SatelliteIntelRepository() {
     toast.success(`Exported ${recs.length} record${recs.length !== 1 ? "s" : ""}`);
   }
 
-  function handleImport(file: File) {
+  async function handleImport(file: File) {
     const check = validateImportFile(file);
     if (!check.ok) return toast.error(check.error);
+    if (!unit) return;
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const text = String(reader.result ?? "");
-      if (!unit) return;
-      const imported = parseIntelCsv(text, intUnitSlug, unit.name);
+    try {
+      const imported = await parseUploadedFile(file, intUnitSlug, unit.name);
       if (imported.length === 0) return toast.error("No valid records found in file");
 
       const existing = loadImportedRecords(intUnitSlug);
@@ -201,8 +200,9 @@ function SatelliteIntelRepository() {
       setLocalRecords((prev) => [...prev, ...imported]);
       toast.success(`Imported ${imported.length} record${imported.length !== 1 ? "s" : ""}`);
       qc.invalidateQueries({ queryKey: ["intel"] });
-    };
-    reader.readAsText(file);
+    } catch {
+      toast.error("Failed to read file. Ensure it is a valid CSV or Excel workbook.");
+    }
   }
 
   function executeBulkAction() {
@@ -302,19 +302,16 @@ function SatelliteIntelRepository() {
         <input
           ref={fileRef}
           type="file"
-          accept=".csv,.xlsx,.xls"
+          accept={ACCEPTED_SPREADSHEET_ACCEPT}
           className="hidden"
           onChange={(e) => {
             const f = e.target.files?.[0];
-            if (f) handleImport(f);
+            if (f) void handleImport(f);
             e.target.value = "";
           }}
         />
         <Button variant="outline" size="sm" className="h-8 mono text-[11px] uppercase tracking-wider" onClick={() => fileRef.current?.click()}>
-          <Upload className="h-3.5 w-3.5 mr-1" /> Import CSV
-        </Button>
-        <Button variant="outline" size="sm" className="h-8 mono text-[11px] uppercase tracking-wider" onClick={() => fileRef.current?.click()}>
-          <Upload className="h-3.5 w-3.5 mr-1" /> Import Excel
+          <Upload className="h-3.5 w-3.5 mr-1" /> Import CSV / Excel
         </Button>
         <Button variant="outline" size="sm" className="h-8 mono text-[11px] uppercase tracking-wider" onClick={() => exportRecords(satelliteRecords, "all")}>
           <Download className="h-3.5 w-3.5 mr-1" /> Export All

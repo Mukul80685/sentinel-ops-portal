@@ -22,7 +22,6 @@ import {
 import {
   buildAllocatedIds,
   computeSatelliteAnalysis,
-  engColor,
   engagementDisplayStatus,
   NON_OPERATIONAL,
   CHAIN_CATEGORIES,
@@ -37,6 +36,7 @@ import {
 } from "@/lib/liveEngagementModel";
 import { INT_UNITS } from "@/lib/intelRepository";
 import { ccModuleBackLink } from "@/lib/controlCenter";
+import { loadRingPalette, useEngagementRingVisuals } from "@/lib/engagementRingVisuals";
 import { AlertTriangle, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -111,21 +111,22 @@ function SmallRing({
   faulty: number; total: number;
 }) {
   const sz = 48, sw = 4.5, r = (sz - sw) / 2, c = 2 * Math.PI * r;
-  const color = total === 0 ? "#6b7280" : engColor(pct);
+  const palette = total === 0 ? loadRingPalette(0) : loadRingPalette(pct);
+  const { trackStroke, arcStroke, defs } = useEngagementRingVisuals(palette);
+  const textColor = total === 0 ? "#374151" : palette.base;
   return (
     <div className="flex flex-col items-center gap-1 px-1 py-0.5">
-      <div className="relative" style={{ width: sz, height: sz }}>
+      <div className="le-progress-ring relative" style={{ width: sz, height: sz }}>
         <svg width={sz} height={sz} viewBox={`0 0 ${sz} ${sz}`} className="-rotate-90">
-          <circle cx={sz/2} cy={sz/2} r={r} stroke="currentColor" strokeWidth={sw}
-            fill="none" className="text-secondary" />
+          {defs}
+          <circle cx={sz / 2} cy={sz / 2} r={r} stroke={trackStroke} strokeWidth={sw} fill="none" />
           {total > 0 && (
-            <circle cx={sz/2} cy={sz/2} r={r} stroke={color} strokeWidth={sw} fill="none"
-              strokeDasharray={`${(pct/100)*c} ${c}`} strokeLinecap="round" />
+            <circle cx={sz / 2} cy={sz / 2} r={r} stroke={arcStroke} strokeWidth={sw} fill="none"
+              strokeDasharray={`${(pct / 100) * c} ${c}`} strokeLinecap="round" />
           )}
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className="mono font-bold leading-none text-[11px]"
-            style={{ color: total === 0 ? "#374151" : color }}>
+          <span className="mono font-bold leading-none text-[11px]" style={{ color: textColor }}>
             {total === 0 ? "—" : `${pct}%`}
           </span>
         </div>
@@ -148,18 +149,19 @@ function SmallRing({
 
 function LargeEngagementRing({ pct }: { pct: number }) {
   const sz = 108, sw = 8, r = (sz - sw) / 2, c = 2 * Math.PI * r;
-  const color = engColor(pct);
+  const palette = loadRingPalette(pct);
+  const { trackStroke, arcStroke, defs } = useEngagementRingVisuals(palette);
   return (
     <div className="flex flex-col items-center justify-center shrink-0">
-      <div className="relative" style={{ width: sz, height: sz }}>
+      <div className="le-progress-ring relative" style={{ width: sz, height: sz }}>
         <svg width={sz} height={sz} viewBox={`0 0 ${sz} ${sz}`} className="-rotate-90">
-          <circle cx={sz/2} cy={sz/2} r={r} stroke="currentColor" strokeWidth={sw}
-            fill="none" className="text-secondary" />
-          <circle cx={sz/2} cy={sz/2} r={r} stroke={color} strokeWidth={sw} fill="none"
-            strokeDasharray={`${(pct/100)*c} ${c}`} strokeLinecap="round" />
+          {defs}
+          <circle cx={sz / 2} cy={sz / 2} r={r} stroke={trackStroke} strokeWidth={sw} fill="none" />
+          <circle cx={sz / 2} cy={sz / 2} r={r} stroke={arcStroke} strokeWidth={sw} fill="none"
+            strokeDasharray={`${(pct / 100) * c} ${c}`} strokeLinecap="round" />
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className="mono text-[22px] font-bold leading-none" style={{ color }}>{pct}%</span>
+          <span className="mono text-[22px] font-bold leading-none" style={{ color: palette.base }}>{pct}%</span>
         </div>
       </div>
       <div className="mono text-[10px] font-bold uppercase tracking-[0.15em] text-foreground mt-1.5">

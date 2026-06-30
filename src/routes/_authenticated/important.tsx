@@ -54,7 +54,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { validateImportFile, buildCsv, downloadCsv, toggleSelection, allSelected } from "@/lib/dataTableUtils";
+import { validateImportFile, buildCsv, downloadCsv, ACCEPTED_SPREADSHEET_ACCEPT, readSpreadsheetFile, toggleSelection, allSelected } from "@/lib/dataTableUtils";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
 
@@ -1044,26 +1044,6 @@ function FreqTh({
 
 // ─── CSV / Excel import ───────────────────────────────────────────────────────
 
-function parseFreqCsvLine(line: string): string[] {
-  const result: string[] = [];
-  let current = "";
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i];
-    if (inQuotes) {
-      if (char === '"' && line[i + 1] === '"') { current += '"'; i++; continue; }
-      if (char === '"') { inQuotes = false; continue; }
-      current += char;
-    } else {
-      if (char === '"') inQuotes = true;
-      else if (char === ",") { result.push(current); current = ""; }
-      else current += char;
-    }
-  }
-  result.push(current);
-  return result.map((c) => c.trim());
-}
-
 function normalizeHeader(h: string): string {
   return h.replace(/^"|"$/g, "").trim().toLowerCase();
 }
@@ -1089,19 +1069,6 @@ function parseReportDateForImport(raw: string): string | null {
   }
   const d = new Date(t);
   return isNaN(d.getTime()) ? null : d.toISOString();
-}
-
-async function readSpreadsheetRows(file: File): Promise<string[][]> {
-  const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
-  if (ext === "csv") {
-    const text = await file.text();
-    return text.split(/\r?\n/).filter((l) => l.trim()).map(parseFreqCsvLine);
-  }
-  const buf = await file.arrayBuffer();
-  const wb = XLSX.read(buf, { type: "array" });
-  const sheet = wb.Sheets[wb.SheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json<(string | number)[]>(sheet, { header: 1, defval: "" });
-  return rows.map((r) => r.map((c) => String(c ?? "").trim()));
 }
 
 function ImportFrequencyButton({
@@ -1168,7 +1135,7 @@ function ImportFrequencyFileInput({
 
     setBusy(true);
     try {
-      const rows = await readSpreadsheetRows(file);
+      const rows = await readSpreadsheetFile(file);
       if (rows.length < 2) {
         toast.error("File has no data rows.");
         return;
@@ -1248,7 +1215,7 @@ function ImportFrequencyFileInput({
       <input
         ref={fileRef}
         type="file"
-        accept=".csv,.xlsx,.xls,text/csv"
+        accept={ACCEPTED_SPREADSHEET_ACCEPT}
         className="hidden"
         onChange={handleFile}
       />

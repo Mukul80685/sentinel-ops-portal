@@ -130,7 +130,7 @@ function IntelUnitView() {
   useEffect(() => {
     if (!searchSatellite || !dataAvailable || tableRows.length === 0) return;
     const target = searchSatellite.trim().toLowerCase();
-    const match = tableRows.find((r) => r.satelliteName.toLowerCase() === target);
+    const match = tableRows.find((r) => r.satelliteName.trim().toLowerCase() === target);
     if (match) setSelectedReportId(match.reportId);
   }, [searchSatellite, tableRows, dataAvailable]);
 
@@ -245,7 +245,13 @@ function IntelUnitView() {
                         </span>
                       )}
                       {row.engagementStatus && row.scanEligible && (
-                        <span className="inline-block mt-0.5 mono text-[8px] font-bold uppercase px-1 py-px rounded-sm border border-primary/30 text-primary bg-primary/8">
+                        <span
+                          className={`inline-block mt-0.5 mono text-[8px] font-bold uppercase px-1 py-px rounded-sm border ${
+                            row.engagementStatus === "Completed"
+                              ? "border-emerald-500/40 text-emerald-700 bg-emerald-500/10"
+                              : "border-primary/30 text-primary bg-primary/8"
+                          }`}
+                        >
                           {row.engagementStatus}
                         </span>
                       )}

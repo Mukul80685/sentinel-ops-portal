@@ -1,7 +1,7 @@
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { useMemo } from "react";
 import { Empty } from "@/components/Empty";
-import { engColor } from "@/lib/engagementEngine";
+import { loadRingPalette, useEngagementRingVisuals } from "@/lib/engagementRingVisuals";
 import { INT_UNITS } from "@/lib/intelRepository";
 import { useOperationalState } from "@/hooks/useOperationalState";
 import { formatLiveEngagementSatelliteLabel } from "@/lib/operationalSync";
@@ -116,25 +116,26 @@ function EngagementRing({ pct, compact }: { pct: number; compact?: boolean }) {
   const stroke = compact ? 5 : 6;
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
-  const color = engColor(pct);
+  const palette = loadRingPalette(pct);
+  const { trackStroke, arcStroke, defs } = useEngagementRingVisuals(palette);
   const pctSize = compact ? "text-[10px]" : "text-[12px]";
   return (
-    <div className="relative" style={{ width: size, height: size }}>
+    <div className="le-progress-ring relative" style={{ width: size, height: size }}>
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90">
+        {defs}
         <circle
           cx={size / 2}
           cy={size / 2}
           r={r}
-          stroke="currentColor"
+          stroke={trackStroke}
           strokeWidth={stroke}
           fill="none"
-          className="text-secondary"
         />
         <circle
           cx={size / 2}
           cy={size / 2}
           r={r}
-          stroke={color}
+          stroke={arcStroke}
           strokeWidth={stroke}
           fill="none"
           strokeDasharray={`${(pct / 100) * c} ${c}`}
@@ -142,7 +143,7 @@ function EngagementRing({ pct, compact }: { pct: number; compact?: boolean }) {
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className={`mono font-bold leading-none ${pctSize}`} style={{ color }}>
+        <span className={`mono font-bold leading-none ${pctSize}`} style={{ color: palette.base }}>
           {pct}%
         </span>
       </div>

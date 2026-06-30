@@ -10,7 +10,7 @@ import {
 } from "@/lib/visibilityMatrix";
 import { getVisibilityOverlay, VISIBILITY_OVERLAY_EVENT } from "@/lib/visibilityOverlay";
 import { useEffect, useState } from "react";
-import { INT_UNITS } from "@/lib/intelRepository";
+import { INT_UNITS } from "@/lib/intelUnits";
 
 export type FlatSatelliteRow = {
   id: string;
@@ -24,11 +24,12 @@ export type FlatSatelliteRow = {
 export function mergeRegionsWithOverlay(
   overlay = getVisibilityOverlay(),
 ): GeoRegion[] {
+  const deleted = new Set(overlay.deletedSatIds ?? []);
   return GEO_REGIONS.map((r) => ({
     ...r,
-    satellites: [...r.satellites, ...(overlay.addedSats[r.id] ?? [])].map(
-      (s) => overlay.editedSats[s.id] ?? s,
-    ),
+    satellites: [...r.satellites, ...(overlay.addedSats[r.id] ?? [])]
+      .map((s) => overlay.editedSats[s.id] ?? s)
+      .filter((s) => !deleted.has(s.id)),
   }));
 }
 

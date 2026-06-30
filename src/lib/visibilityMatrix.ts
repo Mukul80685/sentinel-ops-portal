@@ -33,7 +33,7 @@ export interface GeoRegion {
 /** Legacy name aliases — prefer GEO_REGIONS entries when present. */
 const INT_SATELLITE_MATRIX_ALIASES: Record<string, { matrixId: string; regionId: string }> = {};
 
-function normalizeSatelliteName(name: string): string {
+export function normalizeSatelliteName(name: string): string {
   return name.trim().toLowerCase();
 }
 
@@ -341,13 +341,12 @@ export function buildVisibilityDeepLinkSearch(
   unitId: string,
   satelliteName: string,
 ): VisibilityDeepLinkSearch | null {
-  if (!findGeoSatelliteEntry(satelliteName)) return null;
-  const snap = resolveMatrixVisibility(unitId, satelliteName);
-  if (!snap?.canScan) return null;
+  const entry = findGeoSatelliteEntry(satelliteName);
+  if (!entry) return null;
   return {
     unit: unitId,
-    satellite: satelliteName,
-    region: snap.regionId,
+    satellite: entry.sat.name,
+    region: entry.regionId,
   };
 }
 

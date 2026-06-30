@@ -1,7 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
-/** Semantic icon themes for the home dashboard + home sidebar only. */
+/** Semantic icon themes for the home dashboard and app sidebar. */
 export type HomeIconTheme =
   | "satellite"
   | "discussions"
@@ -37,7 +37,7 @@ const THEME_BOX: Record<HomeIconTheme, string> = {
   inventory:
     "border-amber-600/40 bg-gradient-to-br from-amber-500/20 to-orange-600/15 shadow-[inset_0_1px_0_rgba(255,255,255,0.18),0_3px_0_rgba(217,119,6,0.12),0_6px_12px_rgba(217,119,6,0.28)]",
   serviceability:
-    "home-icon-metal border-slate-400/60 shadow-[inset_0_1px_0_rgba(255,255,255,0.65),inset_0_-1px_0_rgba(0,0,0,0.08),0_3px_0_rgba(100,116,139,0.12),0_6px_12px_rgba(100,116,139,0.35)]",
+    "border-slate-400/60 bg-gradient-to-br from-slate-200/80 to-slate-400/30 shadow-[inset_0_1px_0_rgba(255,255,255,0.65),inset_0_-1px_0_rgba(0,0,0,0.08),0_3px_0_rgba(100,116,139,0.12),0_6px_12px_rgba(100,116,139,0.35)]",
 };
 
 const THEME_ICON: Record<HomeIconTheme, string> = {
@@ -46,11 +46,11 @@ const THEME_ICON: Record<HomeIconTheme, string> = {
   reports: "text-slate-600",
   important: "text-amber-500 drop-shadow-[0_0_4px_rgba(234,179,8,0.45)]",
   discarded: "text-red-600",
-  engagement: "text-emerald-600",
-  intel: "text-indigo-600",
+  engagement: "text-emerald-700",
+  intel: "text-indigo-700",
   priority: "text-red-600",
-  visibility: "text-sky-600",
-  inventory: "text-amber-700",
+  visibility: "text-sky-700",
+  inventory: "text-amber-800",
   serviceability: "text-slate-600",
 };
 
@@ -71,12 +71,24 @@ export function HomeNavIconBadge({
   size?: keyof typeof SIZE_CLASSES;
 }) {
   const { box, icon: iconSz } = SIZE_CLASSES[size];
+  const isHomeSurface = size === "lg" || size === "xl";
 
   return (
     <span
-      className={`grid place-items-center shrink-0 border transition-transform duration-200 group-hover:scale-105 ${box} ${THEME_BOX[theme]}`}
+      className={
+        isHomeSurface
+          ? `home-icon-badge home-icon-badge--${theme} grid place-items-center shrink-0 transition-transform duration-200 group-hover:scale-105 group-hover/tab:scale-105 ${box}`
+          : `grid place-items-center shrink-0 border transition-transform duration-200 group-hover:scale-105 ${box} ${THEME_BOX[theme]}`
+      }
     >
-      <Icon className={`${iconSz} ${THEME_ICON[theme]}`} strokeWidth={2.25} />
+      <Icon
+        className={
+          isHomeSurface
+            ? `home-icon-badge__glyph ${iconSz} ${THEME_ICON[theme]}`
+            : `${iconSz} ${THEME_ICON[theme]}`
+        }
+        strokeWidth={2.25}
+      />
     </span>
   );
 }
@@ -92,11 +104,9 @@ export function HomeSidebarIcon({
 }
 
 export function renderSidebarIcon(
-  isHome: boolean,
   Icon: LucideIcon,
   theme: HomeIconTheme,
 ): ReactNode {
-  if (!isHome) return <Icon className="h-3 w-3 shrink-0" />;
   return <HomeSidebarIcon icon={Icon} theme={theme} />;
 }
 

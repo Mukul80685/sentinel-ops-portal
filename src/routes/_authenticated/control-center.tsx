@@ -9,6 +9,7 @@ import {
   isControlCenterModule,
   type ControlCenterModuleId,
 } from "@/lib/controlCenter";
+import { scoreRingPalette, useEngagementRingVisuals } from "@/lib/engagementRingVisuals";
 import {
   EngagementDashboardView,
   ImportantFrequenciesView,
@@ -1838,13 +1839,15 @@ function SortThOpt({
 // ── Radial gauge (SVG-based circular progress) ───────────────────────────────
 function RadialGauge({ score, label, size = 88 }: { score: number; label: string; size?: number }) {
   const sw = 9, r = (size - sw) / 2, c = 2 * Math.PI * r, cx = size / 2;
-  const stroke = score >= 70 ? "#10b981" : score >= 45 ? "#f59e0b" : "#ef4444";
+  const palette = scoreRingPalette(score);
+  const { trackStroke, arcStroke, defs } = useEngagementRingVisuals(palette);
   return (
     <div className="flex flex-col items-center gap-1.5">
-      <div className="relative" style={{ width: size, height: size }}>
+      <div className="le-progress-ring relative" style={{ width: size, height: size }}>
         <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
-          <circle cx={cx} cy={cx} r={r} fill="none" stroke="currentColor" strokeWidth={sw} className="text-secondary" />
-          <circle cx={cx} cy={cx} r={r} fill="none" stroke={stroke} strokeWidth={sw}
+          {defs}
+          <circle cx={cx} cy={cx} r={r} fill="none" stroke={trackStroke} strokeWidth={sw} />
+          <circle cx={cx} cy={cx} r={r} fill="none" stroke={arcStroke} strokeWidth={sw}
             strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - score / 100)} />
         </svg>
         <div className="absolute inset-0 flex items-center justify-center">
@@ -1856,6 +1859,26 @@ function RadialGauge({ score, label, size = 88 }: { score: number; label: string
         <div className={`mono text-[8px] font-bold ${scoreColor(score)}`}>
           {score >= 70 ? "Good" : score >= 45 ? "Average" : "Poor"}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function CompositeScoreRing({ score }: { score: number }) {
+  const sz = 120, sw = 12, r = (sz - sw) / 2, c = 2 * Math.PI * r, cx = sz / 2;
+  const palette = scoreRingPalette(score);
+  const { trackStroke, arcStroke, defs } = useEngagementRingVisuals(palette);
+  return (
+    <div className="le-progress-ring relative" style={{ width: sz, height: sz }}>
+      <svg width={sz} height={sz} style={{ transform: "rotate(-90deg)" }}>
+        {defs}
+        <circle cx={cx} cy={cx} r={r} fill="none" stroke={trackStroke} strokeWidth={sw} />
+        <circle cx={cx} cy={cx} r={r} fill="none" stroke={arcStroke} strokeWidth={sw}
+          strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - score / 100)} />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className={`mono text-[28px] font-bold leading-none ${scoreColor(score)}`}>{score}</span>
+        <span className="mono text-[9px] text-muted-foreground/40">/100</span>
       </div>
     </div>
   );
@@ -1893,28 +1916,12 @@ function UnitDetailView({ unit, onBack }: { unit: UnitLabel; onBack: () => void 
 
         <div className="px-4 py-4 flex flex-col sm:flex-row items-start sm:items-center gap-5">
           {/* Large composite score gauge */}
-          {(() => {
-            const sz = 120, sw = 12, r = (sz - sw) / 2, c = 2 * Math.PI * r, cx = sz / 2;
-            const stroke = data.compositeScore >= 70 ? "#10b981" : data.compositeScore >= 45 ? "#f59e0b" : "#ef4444";
-            return (
-              <div className="flex flex-col items-center shrink-0">
-                <div className="relative" style={{ width: sz, height: sz }}>
-                  <svg width={sz} height={sz} style={{ transform: "rotate(-90deg)" }}>
-                    <circle cx={cx} cy={cx} r={r} fill="none" stroke="currentColor" strokeWidth={sw} className="text-secondary" />
-                    <circle cx={cx} cy={cx} r={r} fill="none" stroke={stroke} strokeWidth={sw}
-                      strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - data.compositeScore / 100)} />
-                  </svg>
-                  <div className="absolute inset-0 flex flex-col items-center justify-center">
-                    <span className={`mono text-[28px] font-bold leading-none ${scoreColor(data.compositeScore)}`}>{data.compositeScore}</span>
-                    <span className="mono text-[9px] text-muted-foreground/40">/100</span>
-                  </div>
-                </div>
-                <span className={`inline-block mt-2 mono text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-sm border ${statusBadgeCls}`}>
-                  {data.status}
-                </span>
-              </div>
-            );
-          })()}
+          <div className="flex flex-col items-center shrink-0">
+            <CompositeScoreRing score={data.compositeScore} />
+            <span className={`inline-block mt-2 mono text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-sm border ${statusBadgeCls}`}>
+              {data.status}
+            </span>
+          </div>
 
           {/* Meta cards + fault alert */}
           <div className="flex-1 space-y-2.5 w-full">

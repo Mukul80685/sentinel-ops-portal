@@ -115,24 +115,21 @@ type TzStamp = ReturnType<typeof useLiveTzStamp>;
 function SidebarClock({
   stamp,
   onClockClick,
-  muted = false,
 }: {
   stamp: TzStamp;
   onClockClick: () => void;
-  muted?: boolean;
 }) {
-  const textCls = muted ? "text-muted-foreground" : "text-foreground";
   return (
     <button
       type="button"
       onClick={onClockClick}
       title="Open Date / Time Control Panel"
-      className="w-full text-left px-2 py-1 hover:bg-secondary/50 transition-colors rounded-sm flex items-start gap-2"
+      className={`${HOME_SIDEBAR_BTN} mono text-[10px] uppercase tracking-wide whitespace-nowrap`}
     >
-      <Clock className={`h-3 w-3 shrink-0 mt-0.5 ${textCls}`} />
-      <span className="flex flex-col gap-0.5 min-w-0 leading-tight">
-        <span className={`mono text-[10px] ${textCls}`}>{stamp.date || "\u00A0"}</span>
-        <span className={`mono text-[10px] ${textCls}`}>{stamp.time || "\u00A0"}</span>
+      <Clock className="h-3.5 w-3.5 shrink-0 text-foreground" />
+      <span className="flex flex-col gap-0.5 min-w-0 leading-tight text-left">
+        <span className="text-foreground">{stamp.date || "\u00A0"}</span>
+        <span className="text-foreground">{stamp.time || "\u00A0"}</span>
       </span>
     </button>
   );
@@ -143,10 +140,6 @@ function navActive(pathname: string, to: string, exact?: boolean) {
   return pathname === to || pathname.startsWith(to + "/");
 }
 
-/** Shared style for Settings + Sign Out — identical font/size/weight */
-const secondaryCtrlCls =
-  "flex w-full items-center gap-2 px-2 py-1 mono text-[11px] uppercase tracking-wider text-foreground rounded-sm hover:bg-secondary/50 transition-colors";
-
 function SidebarLink({
   to,
   label,
@@ -154,7 +147,6 @@ function SidebarLink({
   active,
   bold = false,
   search,
-  isHome = false,
   iconTheme,
 }: {
   to: string;
@@ -163,23 +155,14 @@ function SidebarLink({
   active: boolean;
   bold?: boolean;
   search?: Record<string, unknown>;
-  isHome?: boolean;
   iconTheme?: HomeIconTheme;
 }) {
-  const base = isHome
-    ? `${HOME_SIDEBAR_BTN} mono text-[10px] uppercase tracking-wide whitespace-nowrap`
-    : "flex items-center gap-2 px-2 py-1 mono text-[11px] uppercase tracking-wider rounded-sm transition-colors leading-tight text-left";
-  const state = active
-    ? isHome
-      ? "home-sidebar-btn-active"
-      : "bg-secondary text-foreground"
-    : isHome
-      ? ""
-      : "text-sidebar-foreground hover:bg-secondary/50 hover:text-foreground";
+  const base = `${HOME_SIDEBAR_BTN} mono text-[10px] uppercase tracking-wide whitespace-nowrap`;
+  const state = active ? "home-sidebar-btn-active" : "";
 
   return (
     <Link to={to} search={search} className={`${base} ${state} ${bold ? "font-bold" : ""}`}>
-      {iconTheme ? renderSidebarIcon(isHome, Icon, iconTheme) : <Icon className="h-3 w-3 shrink-0" />}
+      {iconTheme ? renderSidebarIcon(Icon, iconTheme) : <Icon className="h-3.5 w-3.5 shrink-0" />}
       <span className="min-w-0">{label}</span>
     </Link>
   );
@@ -190,30 +173,20 @@ function SidebarModalButton({
   icon: Icon,
   active,
   onClick,
-  isHome = false,
   iconTheme,
 }: {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   active?: boolean;
   onClick: () => void;
-  isHome?: boolean;
   iconTheme?: HomeIconTheme;
 }) {
-  const base = isHome
-    ? `${HOME_SIDEBAR_BTN} mono text-[10px] uppercase tracking-wide whitespace-nowrap`
-    : "flex w-full items-center gap-2 px-2 py-1 mono text-[11px] uppercase tracking-wider rounded-sm transition-colors leading-tight text-left";
-  const state = active
-    ? isHome
-      ? "home-sidebar-btn-active"
-      : "bg-secondary text-foreground"
-    : isHome
-      ? ""
-      : "text-sidebar-foreground hover:bg-secondary/50 hover:text-foreground";
+  const base = `${HOME_SIDEBAR_BTN} mono text-[10px] uppercase tracking-wide whitespace-nowrap`;
+  const state = active ? "home-sidebar-btn-active" : "";
 
   return (
     <button type="button" onClick={onClick} className={`${base} ${state}`}>
-      {iconTheme ? renderSidebarIcon(isHome, Icon, iconTheme) : <Icon className="h-3 w-3 shrink-0" />}
+      {iconTheme ? renderSidebarIcon(Icon, iconTheme) : <Icon className="h-3.5 w-3.5 shrink-0" />}
       <span className="min-w-0">{label}</span>
     </button>
   );
@@ -378,12 +351,10 @@ function PrimaryNavSidebar({
   pathname,
   stamp,
   onClockClick,
-  isHome = false,
 }: {
   pathname: string;
   stamp: TzStamp;
   onClockClick: () => void;
-  isHome?: boolean;
 }) {
   const { activeModule, openModule } = useSidebarModules();
   const ccModule = useRouterState({
@@ -392,6 +363,11 @@ function PrimaryNavSidebar({
   const importantActive =
     pathname === "/control-center" && ccModule === "important";
 
+  const profileBtnCls = (active: boolean) =>
+    `${HOME_SIDEBAR_BTN} mono text-[10px] uppercase tracking-wide whitespace-nowrap cursor-pointer ${
+      active ? "home-sidebar-btn-active" : ""
+    }`;
+
   return (
     <div className="flex flex-col h-full">
       {/* TOP — profile name, then Clock */}
@@ -399,7 +375,7 @@ function PrimaryNavSidebar({
         <SidebarProfileButton
           active={activeModule === "profile"}
           onClick={() => openModule("profile")}
-          className={`${secondaryCtrlCls} cursor-pointer ${activeModule === "profile" ? "bg-secondary" : ""}`}
+          className={profileBtnCls(activeModule === "profile")}
         />
         <SidebarClock stamp={stamp} onClockClick={onClockClick} />
       </div>
@@ -407,13 +383,12 @@ function PrimaryNavSidebar({
       <div className="border-t border-border mx-1.5 shrink-0" />
 
       {/* MAIN — utility navigation */}
-      <nav className={`flex-1 py-1 px-1.5 flex flex-col gap-0.5 min-h-0 ${isHome ? "home-sidebar-nav" : ""}`}>
+      <nav className="flex-1 py-1 px-1.5 flex flex-col gap-0.5 min-h-0 home-sidebar-nav">
         <SidebarModalButton
           label="Satellites"
           icon={Orbit}
           active={activeModule === "satellites"}
           onClick={() => openModule("satellites")}
-          isHome={isHome}
           iconTheme="satellite"
         />
         <SidebarModalButton
@@ -421,7 +396,6 @@ function PrimaryNavSidebar({
           icon={Megaphone}
           active={activeModule === "discussions"}
           onClick={() => openModule("discussions")}
-          isHome={isHome}
           iconTheme="discussions"
         />
         <SidebarModalButton
@@ -429,7 +403,6 @@ function PrimaryNavSidebar({
           icon={FileText}
           active={activeModule === "reports"}
           onClick={() => openModule("reports")}
-          isHome={isHome}
           iconTheme="reports"
         />
         <SidebarLink
@@ -438,7 +411,6 @@ function PrimaryNavSidebar({
           label="Important Frequency"
           icon={Star}
           active={importantActive}
-          isHome={isHome}
           iconTheme="important"
         />
         <SidebarLink
@@ -446,7 +418,6 @@ function PrimaryNavSidebar({
           label="Discarded Frequency"
           icon={Trash2}
           active={navActive(pathname, "/discarded")}
-          isHome={isHome}
           iconTheme="discarded"
         />
       </nav>
@@ -456,11 +427,9 @@ function PrimaryNavSidebar({
         <button
           type="button"
           onClick={() => openModule("settings")}
-          className={
-            isHome
-              ? `${HOME_SIDEBAR_BTN} mono text-[10px] uppercase tracking-wide whitespace-nowrap ${activeModule === "settings" ? "home-sidebar-btn-active" : ""}`
-              : `${secondaryCtrlCls} ${activeModule === "settings" ? "bg-secondary" : ""}`
-          }
+          className={`${HOME_SIDEBAR_BTN} mono text-[10px] uppercase tracking-wide whitespace-nowrap ${
+            activeModule === "settings" ? "home-sidebar-btn-active" : ""
+          }`}
           title="Settings"
         >
           <Settings className="h-3.5 w-3.5 shrink-0" />
@@ -469,7 +438,7 @@ function PrimaryNavSidebar({
         <button
           type="button"
           onClick={() => void performSignOut()}
-          className={isHome ? `${HOME_SIDEBAR_BTN} mono text-[10px] uppercase tracking-wide whitespace-nowrap` : secondaryCtrlCls}
+          className={`${HOME_SIDEBAR_BTN} mono text-[10px] uppercase tracking-wide whitespace-nowrap`}
         >
           <Power className="h-3.5 w-3.5 shrink-0" />
           <span>Sign Out</span>
@@ -496,20 +465,35 @@ function SecondarySidebar({
 }) {
   const { activeModule, openModule } = useSidebarModules();
 
+  const profileBtnCls = (active: boolean) =>
+    `${HOME_SIDEBAR_BTN} mono text-[10px] uppercase tracking-wide whitespace-nowrap cursor-pointer ${
+      active ? "home-sidebar-btn-active" : ""
+    }`;
+
+  const secondaryIconTheme: Partial<Record<(typeof standardNavItems)[number]["key"], HomeIconTheme>> = {
+    units: "inventory",
+    satellites: "satellite",
+    reports: "reports",
+    discarded: "discarded",
+    minutes: "discussions",
+  };
+
   return (
     <div className="flex flex-col h-full">
-      <nav className="flex-1 flex flex-col justify-between px-1.5 py-3">
+      <div className="px-2 pt-1.5 pb-1 flex flex-col gap-0.5 shrink-0">
         <SidebarProfileButton
           active={activeModule === "profile"}
           onClick={() => openModule("profile")}
-          className={`flex w-full items-center gap-2 px-2 py-1.5 mono text-[11px] uppercase tracking-wider rounded-sm transition-colors ${
-            activeModule === "profile"
-              ? "bg-secondary text-foreground font-bold"
-              : "text-sidebar-foreground hover:bg-secondary/50"
-          } cursor-pointer`}
+          className={profileBtnCls(activeModule === "profile")}
         />
+        <SidebarClock stamp={stamp} onClockClick={onClockClick} />
+      </div>
 
+      <div className="border-t border-border mx-1.5 shrink-0" />
+
+      <nav className="flex-1 py-1 px-1.5 flex flex-col gap-0.5 min-h-0 home-sidebar-nav">
         {standardNavItems.map((item) => {
+          const iconTheme = secondaryIconTheme[item.key];
           if (item.key === "satellites") {
             return (
               <SidebarModalButton
@@ -518,6 +502,7 @@ function SecondarySidebar({
                 icon={item.icon}
                 active={activeModule === "satellites"}
                 onClick={() => openModule("satellites")}
+                iconTheme={iconTheme}
               />
             );
           }
@@ -529,6 +514,7 @@ function SecondarySidebar({
                 icon={item.icon}
                 active={activeModule === "discussions"}
                 onClick={() => openModule("discussions")}
+                iconTheme={iconTheme}
               />
             );
           }
@@ -540,6 +526,7 @@ function SecondarySidebar({
                 icon={item.icon}
                 active={activeModule === "reports"}
                 onClick={() => openModule("reports")}
+                iconTheme={iconTheme}
               />
             );
           }
@@ -551,28 +538,31 @@ function SecondarySidebar({
               label={item.label}
               icon={item.icon}
               active={navActive(pathname, to)}
+              iconTheme={iconTheme}
             />
           );
         })}
       </nav>
 
-      <div className="border-t border-border px-2 py-1.5">
+      <div className="border-t border-border px-2 py-1.5 flex flex-col gap-1 shrink-0">
         <button
           type="button"
           onClick={() => openModule("settings")}
-          className={`${secondaryCtrlCls} ${activeModule === "settings" ? "bg-secondary" : ""}`}
+          className={`${HOME_SIDEBAR_BTN} mono text-[10px] uppercase tracking-wide whitespace-nowrap ${
+            activeModule === "settings" ? "home-sidebar-btn-active" : ""
+          }`}
           title="Settings"
         >
-          <Settings className="h-3 w-3 shrink-0" />
-          Settings
+          <Settings className="h-3.5 w-3.5 shrink-0" />
+          <span>Settings</span>
         </button>
-      </div>
-
-      <div className="border-t border-border px-2 py-1.5 space-y-0.5">
-        <SidebarClock stamp={stamp} onClockClick={onClockClick} muted />
-        <button type="button" onClick={() => void performSignOut()} className={secondaryCtrlCls}>
-          <Power className="h-3 w-3 shrink-0" />
-          Sign Out
+        <button
+          type="button"
+          onClick={() => void performSignOut()}
+          className={`${HOME_SIDEBAR_BTN} mono text-[10px] uppercase tracking-wide whitespace-nowrap`}
+        >
+          <Power className="h-3.5 w-3.5 shrink-0" />
+          <span>Sign Out</span>
         </button>
       </div>
     </div>
@@ -630,9 +620,9 @@ export function AppShell({
   return (
     <div className="flex h-screen overflow-hidden text-foreground">
       <aside
-        className={`${hideSidebar ? "hidden" : "hidden md:flex"} shrink-0 flex-col border-r border-border bg-sidebar ${
-          isHome ? "w-56 lg:w-[15.5rem] home-sidebar" : "w-48"
-        }`}
+        className={`${
+          hideSidebar ? "hidden" : "hidden md:flex"
+        } shrink-0 flex-col border-r border-border w-56 lg:w-[15.5rem] home-sidebar`}
       >
         {sidebarVariant === "secondary" ? (
           <SecondarySidebar
@@ -646,7 +636,6 @@ export function AppShell({
             pathname={pathname}
             stamp={tzStamp}
             onClockClick={() => setDtOpen(true)}
-            isHome={isHome}
           />
         )}
       </aside>

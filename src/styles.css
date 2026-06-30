@@ -235,16 +235,135 @@
       0 1px 0 oklch(0 0 0 / 0.06);
   }
 
-  /* Metallic silver finish — serviceability shield on home */
-  .home-icon-metal {
+  /* Glassmorphic 3D module icon badges — home dashboard only */
+  .home-dashboard .home-icon-badge {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    border-width: 1px;
+    border-style: solid;
+    box-shadow:
+      inset 0 1px 0 oklch(1 0 0 / 0.42),
+      inset 0 -1px 0 oklch(0 0 0 / 0.1),
+      0 1px 0 oklch(0 0 0 / 0.05),
+      0 2px 4px oklch(0 0 0 / 0.07),
+      0 4px 10px oklch(0 0 0 / 0.05);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .home-dashboard .home-icon-badge::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
     background: linear-gradient(
-      145deg,
-      #eef1f4 0%,
-      #c5cad2 28%,
-      #e2e6eb 52%,
-      #a8b0ba 78%,
-      #d1d7de 100%
+      168deg,
+      oklch(1 0 0 / 0.58) 0%,
+      oklch(1 0 0 / 0.2) 24%,
+      oklch(1 0 0 / 0.04) 42%,
+      transparent 58%
     );
+    z-index: 0;
+  }
+
+  .home-dashboard .home-icon-badge::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    box-shadow: inset 0 -10px 14px oklch(0 0 0 / 0.07);
+    z-index: 0;
+  }
+
+  .home-dashboard .group:hover .home-icon-badge,
+  .home-dashboard .group\/tab:hover .home-icon-badge {
+    box-shadow:
+      inset 0 1px 0 oklch(1 0 0 / 0.5),
+      inset 0 -1px 0 oklch(0 0 0 / 0.1),
+      0 1px 0 oklch(0 0 0 / 0.06),
+      0 3px 6px oklch(0 0 0 / 0.09),
+      0 6px 12px oklch(0 0 0 / 0.06);
+  }
+
+  .home-dashboard .home-icon-badge__glyph {
+    position: relative;
+    z-index: 1;
+    filter:
+      drop-shadow(0 1px 0 oklch(1 0 0 / 0.35))
+      drop-shadow(0 2px 2px oklch(0 0 0 / 0.18));
+  }
+
+  .home-dashboard .home-icon-badge--engagement {
+    border-color: oklch(0.72 0.12 155 / 0.55);
+    background: linear-gradient(
+      180deg,
+      oklch(0.9 0.06 155) 0%,
+      oklch(0.78 0.1 155) 52%,
+      oklch(0.68 0.11 155) 100%
+    );
+  }
+
+  .home-dashboard .home-icon-badge--intel {
+    border-color: oklch(0.68 0.14 275 / 0.55);
+    background: linear-gradient(
+      180deg,
+      oklch(0.88 0.06 275) 0%,
+      oklch(0.74 0.12 275) 52%,
+      oklch(0.64 0.14 275) 100%
+    );
+  }
+
+  .home-dashboard .home-icon-badge--priority {
+    border-color: oklch(0.68 0.16 25 / 0.5);
+    background: linear-gradient(
+      180deg,
+      oklch(0.9 0.05 25) 0%,
+      oklch(0.78 0.1 25) 45%,
+      oklch(0.72 0.08 250) 100%
+    );
+  }
+
+  .home-dashboard .home-icon-badge--visibility {
+    border-color: oklch(0.72 0.12 230 / 0.55);
+    background: linear-gradient(
+      180deg,
+      oklch(0.9 0.05 230) 0%,
+      oklch(0.76 0.1 230) 52%,
+      oklch(0.66 0.11 230) 100%
+    );
+  }
+
+  .home-dashboard .home-icon-badge--inventory {
+    border-color: oklch(0.72 0.14 65 / 0.55);
+    background: linear-gradient(
+      180deg,
+      oklch(0.9 0.06 65) 0%,
+      oklch(0.78 0.12 60) 52%,
+      oklch(0.68 0.13 55) 100%
+    );
+  }
+
+  .home-dashboard .home-icon-badge--serviceability {
+    border-color: oklch(0.72 0.02 250 / 0.55);
+    background: linear-gradient(
+      180deg,
+      oklch(0.94 0.01 250) 0%,
+      oklch(0.82 0.015 250) 48%,
+      oklch(0.72 0.02 250) 100%
+    );
+  }
+
+  /* Live Engagement — 3D progress rings (Control Center + engagement views) */
+  .le-progress-ring {
+    filter:
+      drop-shadow(0 1px 1px oklch(0 0 0 / 0.07))
+      drop-shadow(0 2px 4px oklch(0 0 0 / 0.05));
+  }
+
+  .le-progress-ring svg {
+    overflow: visible;
   }
 
   /* Home sidebar */

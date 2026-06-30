@@ -18,13 +18,24 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   ArrowLeft,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock,
   Compass,
-  Download,
+  FileInput,
+  FileOutput,
   Filter,
   Globe,
   ImageIcon,
@@ -38,10 +49,22 @@ import {
   Settings2,
   Trash2,
   TrendingUp,
-  Upload,
   X,
 } from "lucide-react";
-import { validateImportFile, buildCsv, downloadCsv, toggleSelection, allSelected } from "@/lib/dataTableUtils";
+import {
+  ACCEPTED_SPREADSHEET_ACCEPT,
+  validateImportFile,
+  buildCsv,
+  downloadCsv,
+  readSpreadsheetFile,
+  toggleSelection,
+  allSelected,
+} from "@/lib/dataTableUtils";
+import {
+  VISIBILITY_MATRIX_CSV_HEADERS,
+  parseVisibilityMatrixRow,
+  validateVisibilityMatrixCsvHeader,
+} from "@/lib/visibilityMatrixCsv";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -63,18 +86,25 @@ import {
   getBeamBreakdown,
   getVisibleBeams,
   findGeoSatelliteEntry,
+  normalizeSatelliteName,
   type GeoSatellite,
   type GeoRegion,
 } from "@/lib/visibilityMatrix";
 import {
   getVisibilityOverlay,
   patchVisibilityOverlay,
+  removeSatelliteFromOverlay,
   VISIBILITY_OVERLAY_EVENT,
 } from "@/lib/visibilityOverlay";
 import { mergeRegionsWithOverlay, useVisibleSatelliteCounts } from "@/lib/satelliteCatalog";
 import { INT_UNITS } from "@/lib/intelRepository";
 import { unitTileTitle, UNIT_SLOTS, type UnitSlot } from "@/lib/priorityAllocation";
-import { hasIntVisibilityCrossLink } from "@/lib/intelAnalysisData";
+import {
+  buildIntScanLookupForUnit,
+  isSatelliteInIntRoster,
+  type IntScanLookupEntry,
+} from "@/lib/intelAnalysisData";
+import { useOperationalState } from "@/hooks/useOperationalState";
 
 // ─── Static unit roster for visibility layer (shared naming with INT) ─────────
 
@@ -158,6 +188,63 @@ function parseTransponders(sat: GeoSatellite): { total: number; cBand?: string; 
   return { total };
 }
 
+/** Join export sub-parts on one line using ASCII separators (Excel-safe). */
+function exportDetailLine(total: string, details: string[]): string {
+  const parts = [total, ...details.filter(Boolean)];
+  return parts.join("; ");
+}
+
+/** CSV cell values — mirror SatelliteTable column rendering (excl. # and Edit). */
+function formatSatelliteExportCell(sat: GeoSatellite): string {
+  return `${sat.name} (${sat.orbitType ?? "GEO"})`;
+}
+
+function formatTranspondersExportCell(sat: GeoSatellite): string {
+  const tp = parseTransponders(sat);
+  const details: string[] = [];
+  if (tp.cBand) details.push(`${tp.cBand} C`);
+  if (tp.kuBand) details.push(`${tp.kuBand} Ku`);
+  if (details.length === 0 && sat.transponders?.trim()) {
+    details.push(sat.transponders.trim());
+  }
+  return exportDetailLine(String(tp.total), details);
+}
+
+function formatBeamsExportCell(sat: GeoSatellite): string {
+  const { total, beams } = getBeamBreakdown(sat);
+  return exportDetailLine(String(total), beams);
+}
+
+function formatVisibleBeamsExportCell(
+  sat: GeoSatellite,
+  exportUnitId: string,
+  exportRegionId: string,
+): string {
+  const visibleBeams = getVisibleBeams(exportUnitId, sat.id, exportRegionId);
+  if (visibleBeams.length === 0) return "-";
+  return visibleBeams
+    .map((b) => {
+      const eirp = getBeamEirp(b, sat.id, sat.beamEirp);
+      return `${b} (EIRP ${eirp} dBW)`;
+    })
+    .join("; ");
+}
+
+function buildSatelliteExportRow(
+  sat: GeoSatellite,
+  exportUnitId: string,
+  exportRegionId: string,
+): string[] {
+  return [
+    formatSatelliteExportCell(sat),
+    sat.position,
+    sat.launchDate.slice(0, 4),
+    formatTranspondersExportCell(sat),
+    formatBeamsExportCell(sat),
+    formatVisibleBeamsExportCell(sat, exportUnitId, exportRegionId),
+  ];
+}
+
 function beamBandFromLabel(label: string): string {
   const l = label.toLowerCase();
   if (l.includes("ku")) return "Ku";
@@ -234,6 +321,12 @@ function VisibilityPage() {
     });
   }
 
+  function handleDeleteSat(regionId: string, satId: string) {
+    removeSatelliteFromOverlay(regionId, satId);
+    if (focusSatelliteId === satId) setFocusSatelliteId(null);
+    if (activeSat?.id === satId) setActiveSat(null);
+  }
+
   const mergedRegions = useMemo(
     () => mergeRegionsWithOverlay(),
     [overlayVersion],
@@ -275,6 +368,19 @@ function VisibilityPage() {
     [activeSat],
   );
 
+  const { engagements, intelRows, equipment, units: dbUnits } = useOperationalState();
+
+  const intScanLookup = useMemo(() => {
+    if (!selectedUnitId) return new Map<string, IntScanLookupEntry>();
+    return buildIntScanLookupForUnit(
+      selectedUnitId,
+      engagements,
+      intelRows,
+      equipment,
+      dbUnits,
+    );
+  }, [selectedUnitId, engagements, intelRows, equipment, dbUnits]);
+
   useEffect(() => {
     if (!searchUnit && !searchSatellite && !searchRegion) return;
 
@@ -287,13 +393,18 @@ function VisibilityPage() {
     }
 
     if (searchSatellite || searchRegion) {
-      const targetName = searchSatellite?.trim().toLowerCase();
+      const catalogEntry = searchSatellite ? findGeoSatelliteEntry(searchSatellite) : null;
+      const targetName = catalogEntry
+        ? normalizeSatelliteName(catalogEntry.sat.name)
+        : searchSatellite
+          ? normalizeSatelliteName(searchSatellite)
+          : null;
       let matched = false;
 
       const tryMatchRegions = (regions: typeof mergedRegions) => {
         for (const region of regions) {
           const sat = region.satellites.find(
-            (s) => targetName && s.name.trim().toLowerCase() === targetName,
+            (s) => targetName && normalizeSatelliteName(s.name) === targetName,
           );
           if (sat) {
             setActiveRegionId(region.id);
@@ -360,10 +471,12 @@ function VisibilityPage() {
           }}
           onAddSat={(sat) => handleAddSat(activeRegion.id, sat)}
           onEditSat={handleEditSat}
+          onDeleteSat={(sat) => handleDeleteSat(activeRegion.id, sat.id)}
           unitName={selectedUnit?.name}
           unitId={selectedUnitId}
           highlightSatelliteId={focusSatelliteId}
           onHighlightConsumed={() => setFocusSatelliteId(null)}
+          intScanLookup={intScanLookup}
         />
       )}
 
@@ -791,19 +904,23 @@ function RegionDetail({
   onBack,
   onAddSat,
   onEditSat,
+  onDeleteSat,
   unitName,
   unitId,
   highlightSatelliteId,
   onHighlightConsumed,
+  intScanLookup,
 }: {
   region: Region;
   onBack: () => void;
   onAddSat: (sat: GeoSatellite) => void;
   onEditSat: (sat: GeoSatellite) => void;
+  onDeleteSat: (sat: GeoSatellite) => void;
   unitName?: string;
   unitId: string;
   highlightSatelliteId?: string | null;
   onHighlightConsumed?: () => void;
+  intScanLookup: Map<string, IntScanLookupEntry>;
 }) {
   return (
     <div className="space-y-3">
@@ -835,8 +952,10 @@ function RegionDetail({
         unitId={unitId}
         onAddSat={onAddSat}
         onEditSat={onEditSat}
+        onDeleteSat={onDeleteSat}
         highlightSatelliteId={highlightSatelliteId}
         onHighlightConsumed={onHighlightConsumed}
+        intScanLookup={intScanLookup}
       />
     </div>
   );
@@ -865,8 +984,10 @@ function SatelliteTable({
   unitId,
   onAddSat,
   onEditSat,
+  onDeleteSat,
   highlightSatelliteId,
   onHighlightConsumed,
+  intScanLookup,
 }: {
   satellites: GeoSatellite[];
   regionId: string;
@@ -874,13 +995,17 @@ function SatelliteTable({
   unitId: string;
   onAddSat: (s: GeoSatellite) => void;
   onEditSat: (s: GeoSatellite) => void;
+  onDeleteSat: (sat: GeoSatellite) => void;
   highlightSatelliteId?: string | null;
   onHighlightConsumed?: () => void;
+  intScanLookup: Map<string, IntScanLookupEntry>;
 }) {
   const [editingSat,  setEditingSat]  = useState<GeoSatellite | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<GeoSatellite | null>(null);
   const [filterOpen,  setFilterOpen]  = useState(false);
   const [filter,      setFilter]      = useState<SatFilter>(EMPTY_SAT_FILTER);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [exportConfirmOpen, setExportConfirmOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
   const highlightApplied = useRef<string | null>(null);
@@ -927,16 +1052,47 @@ function SatelliteTable({
   function setF<K extends keyof SatFilter>(k: K, v: string) { setFilter((f) => ({ ...f, [k]: v })); }
 
   // ── Export helpers ───────────────────────────────────────────────────────────
+  function getSelectedSatellites(): GeoSatellite[] {
+    return filteredSats.filter((s) => selectedIds.has(s.id));
+  }
+
+  function requestExport() {
+    if (selectedIds.size === 0) {
+      toast.error("No satellite selected.");
+      return;
+    }
+    setExportConfirmOpen(true);
+  }
+
+  function confirmExport() {
+    const list = getSelectedSatellites();
+    if (list.length === 0) {
+      toast.error("No satellite selected.");
+      setExportConfirmOpen(false);
+      return;
+    }
+    exportSats(list, "selected");
+    setExportConfirmOpen(false);
+  }
+
+  function confirmDelete() {
+    if (!deleteTarget) return;
+    onDeleteSat(deleteTarget);
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.delete(deleteTarget.id);
+      return next;
+    });
+    toast.success(`"${deleteTarget.name}" removed.`);
+    setDeleteTarget(null);
+  }
+
   function exportSats(list: GeoSatellite[], label: string) {
     if (list.length === 0) { toast.error("No records to export."); return; }
     const csv = buildCsv(
-      ["Satellite Name", "Orbital Position", "Launch Date", "Orbit Type",
-       "C-band Transponders", "Ku-band Transponders", "Beam Coverage", "Visibility Notes"],
-      list.map((s) => [
-        s.name, s.position, s.launchDate, s.orbitType ?? "GEO",
-        s.cBandTransponders ?? "", s.kuBandTransponders ?? "",
-        s.beamCoverage, s.visibilityNotes ?? "",
-      ]),
+      [...VISIBILITY_MATRIX_CSV_HEADERS],
+      list.map((s) => buildSatelliteExportRow(s, unitId, regionId)),
+      true,
     );
     downloadCsv(`${regionLabel.toLowerCase().replace(/\s+/g, "_")}_${label}.csv`, csv);
     toast.success(`${list.length} record${list.length !== 1 ? "s" : ""} exported.`);
@@ -960,27 +1116,17 @@ function SatelliteTable({
       </span>
       <div className="flex-1 min-w-2" />
       <div className="flex items-center gap-0.5 shrink-0">
-        <ImportCsvButton regionId={regionId} onImport={onAddSat} iconOnly />
+        <ImportCsvButton regionId={regionId} onImport={onAddSat} compact />
         <button
           type="button"
-          onClick={() => exportSats(satellites, "all")}
-          title="Export all satellites"
-          className="h-7 w-7 grid place-items-center rounded-sm border border-border
+          onClick={requestExport}
+          title="Export selected satellites to CSV"
+          className="h-7 px-2 inline-flex items-center gap-1 rounded-sm border border-border
                      hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
         >
-          <Download className="h-3.5 w-3.5" />
+          <FileOutput className="h-3.5 w-3.5 shrink-0" />
+          <span className="mono text-[9px] uppercase font-bold tracking-wide">Export</span>
         </button>
-        {isFiltered && (
-          <button
-            type="button"
-            onClick={() => exportSats(filteredSats, "filtered")}
-            title={`Export filtered results (${filteredSats.length})`}
-            className="h-7 w-7 grid place-items-center rounded-sm border border-primary/40
-                       text-primary hover:bg-primary/10 transition-colors"
-          >
-            <Download className="h-3 w-3" />
-          </button>
-        )}
         {satellites.length > 0 && (
           <>
             <button
@@ -1086,10 +1232,10 @@ function SatelliteTable({
       <span className="text-muted-foreground/40">·</span>
       <button
         type="button"
-        onClick={() => exportSats(filteredSats.filter((s) => selectedIds.has(s.id)), "selected")}
+        onClick={requestExport}
         className="inline-flex items-center gap-1 text-primary hover:text-primary/80 transition-colors"
       >
-        <Download className="h-3 w-3" /> Export Selected
+        <FileOutput className="h-3 w-3" /> Export Selected
       </button>
       <span className="text-muted-foreground/40">·</span>
       <button
@@ -1106,6 +1252,37 @@ function SatelliteTable({
     </div>
   );
 
+  const selectedExportCount = selectedIds.size;
+  const exportConfirmLabel =
+    selectedExportCount === 1
+      ? "Do you want to export 1 satellite?"
+      : `Do you want to export ${selectedExportCount} satellites?`;
+
+  const exportConfirmDialog = (
+    <AlertDialog open={exportConfirmOpen} onOpenChange={setExportConfirmOpen}>
+      <AlertDialogContent className="max-w-sm">
+        <AlertDialogHeader>
+          <AlertDialogTitle className="mono text-sm uppercase tracking-wide">Confirm Export</AlertDialogTitle>
+          <AlertDialogDescription className="mono text-[11px] text-foreground">
+            {exportConfirmLabel}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel className="mono text-[11px] uppercase tracking-wider">Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            className="mono text-[11px] uppercase tracking-wider"
+            onClick={(e) => {
+              e.preventDefault();
+              confirmExport();
+            }}
+          >
+            Export
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+
   if (satellites.length === 0) {
     return (
       <>
@@ -1115,7 +1292,7 @@ function SatelliteTable({
           <div className="p-8 flex flex-col items-center gap-2 text-center">
             <SatIcon className="h-8 w-8 text-muted-foreground opacity-40" />
             <div className="mono text-sm font-bold uppercase tracking-wide text-muted-foreground">No satellites recorded</div>
-            <div className="mono text-[11px] text-muted-foreground">Use "Add New Satellite" or "Import CSV" to populate data.</div>
+            <div className="mono text-[11px] text-muted-foreground">Use "Add New Satellite" or "Import" with an exported CSV (same 6-column format).</div>
           </div>
         </div>
         <SatelliteEditDialog
@@ -1124,6 +1301,7 @@ function SatelliteTable({
           onClose={() => setEditingSat(null)}
           onSave={(updated) => { onEditSat(updated); setEditingSat(null); }}
         />
+        {exportConfirmDialog}
       </>
     );
   }
@@ -1204,15 +1382,22 @@ function SatelliteTable({
                     <td className="px-2 py-1.5">
                       <div className="flex items-center gap-1 flex-wrap">
                         <div className="font-bold text-foreground uppercase tracking-tight leading-tight">{sat.name}</div>
-                        {hasIntVisibilityCrossLink(unitId, sat.name) && (
+                        {isSatelliteInIntRoster(unitId, sat.name) && (
                           <Link
                             to="/intel/$unitId"
                             params={{ unitId }}
                             search={{ satellite: sat.name }}
-                            title={`Open ${sat.name} INT report`}
-                            className="inline-flex items-center px-1 py-0 rounded border border-primary/40
-                                       bg-primary/10 mono text-[8px] font-bold uppercase text-primary
-                                       hover:bg-primary/20 transition-colors shrink-0"
+                            title={
+                              intScanLookup.get(normalizeSatelliteName(sat.name))?.activelyScanning
+                                ? `${sat.name} — active INT scan in progress`
+                                : `Open ${sat.name} INT report`
+                            }
+                            className={`inline-flex items-center px-1 py-0 rounded border mono text-[8px] font-bold uppercase
+                                       hover:opacity-90 transition-colors shrink-0 ${
+                              intScanLookup.get(normalizeSatelliteName(sat.name))?.activelyScanning
+                                ? "border-amber-500/50 bg-amber-500/15 text-amber-800"
+                                : "border-primary/40 bg-primary/10 text-primary hover:bg-primary/20"
+                            }`}
                           >
                             INT
                           </Link>
@@ -1279,6 +1464,7 @@ function SatelliteTable({
         onClose={() => setEditingSat(null)}
         onSave={(updated) => { onEditSat(updated); setEditingSat(null); }}
       />
+      {exportConfirmDialog}
     </>
   );
 }
@@ -1528,68 +1714,61 @@ function FootprintModal({
 function ImportCsvButton({
   regionId,
   onImport,
-  iconOnly,
+  compact,
 }: {
   regionId: string;
   onImport: (sat: GeoSatellite) => void;
-  iconOnly?: boolean;
+  /** Compact toolbar: icon + "Import" label */
+  compact?: boolean;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
 
-  function parseCsvLine(line: string): string[] {
-    const result: string[] = [];
-    let current = "";
-    let inQuotes = false;
-    for (const char of line) {
-      if (char === '"') { inQuotes = !inQuotes; continue; }
-      if (char === "," && !inQuotes) { result.push(current); current = ""; continue; }
-      current += char;
-    }
-    result.push(current);
-    return result;
-  }
-
-  function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     e.target.value = "";
 
     const check = validateImportFile(file);
     if (!check.ok) { toast.error(check.error); return; }
-    if (!file.name.toLowerCase().endsWith(".csv")) {
-      toast.error("Excel file detected. Please export to CSV format (.csv) first, then re-import.");
-      return;
-    }
 
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const text = ev.target?.result as string;
-      const lines = text.split(/\r?\n/).filter((l) => l.trim());
-      if (lines.length < 2) { toast.error("File appears empty or has no data rows."); return; }
+    try {
+      const rows = await readSpreadsheetFile(file);
+      if (rows.length < 2) {
+        toast.error("File appears empty or has no data rows.");
+        return;
+      }
+
+      const headerCheck = validateVisibilityMatrixCsvHeader(rows[0]);
+      if (!headerCheck.ok) {
+        toast.error(headerCheck.error);
+        return;
+      }
+
       let added = 0;
-      lines.slice(1).forEach((line, i) => {
-        const [satName, position, launchDate, cBand, kuBand, beamCoverage, visNotes] = parseCsvLine(line);
-        if (!satName?.trim()) return;
-        const cNum  = parseInt(cBand  ?? "0") || 0;
-        const kuNum = parseInt(kuBand ?? "0") || 0;
-        const sat: GeoSatellite = {
-          id:                 `${regionId}-csv-${Date.now()}-${i}`,
-          name:               satName.trim(),
-          position:           position?.trim() || "—",
-          launchDate:         launchDate?.trim() || "—",
-          transponders:       [cNum  > 0 ? `${cNum} C-band` : "", kuNum > 0 ? `${kuNum} Ku-band` : ""]
-                                .filter(Boolean).join(" / ") || "—",
-          cBandTransponders:  cBand?.trim()  || undefined,
-          kuBandTransponders: kuBand?.trim() || undefined,
-          beamCoverage:       beamCoverage?.trim() || "—",
-          visibilityNotes:    visNotes?.trim() || undefined,
-        };
+      let skipped = 0;
+
+      rows.slice(1).forEach((cells, i) => {
+        const sat = parseVisibilityMatrixRow(cells, regionId, i);
+        if (!sat) {
+          skipped += 1;
+          return;
+        }
         onImport(sat);
-        added++;
+        added += 1;
       });
-      if (added > 0) toast.success(`${added} satellite${added > 1 ? "s" : ""} imported successfully.`);
-    };
-    reader.readAsText(file);
+
+      if (added > 0) {
+        toast.success(`${added} satellite${added > 1 ? "s" : ""} imported successfully.`);
+      } else {
+        toast.error(
+          skipped > 0
+            ? "No valid satellite rows found. Each row needs a Satellite name and 6 columns."
+            : "No data rows to import.",
+        );
+      }
+    } catch {
+      toast.error("Failed to read file. Ensure it is a valid CSV or Excel workbook.");
+    }
   }
 
   return (
@@ -1597,7 +1776,7 @@ function ImportCsvButton({
       <input
         ref={fileRef}
         type="file"
-        accept=".csv,.xlsx,.xls,text/csv"
+        accept={ACCEPTED_SPREADSHEET_ACCEPT}
         className="hidden"
         onChange={handleFile}
       />
@@ -1605,12 +1784,16 @@ function ImportCsvButton({
         type="button"
         variant="outline"
         size="sm"
-        className={iconOnly ? "h-7 w-7 p-0" : "h-8 mono text-[11px] uppercase tracking-wider"}
+        className={
+          compact
+            ? "h-7 px-2 inline-flex items-center gap-1 mono text-[9px] uppercase font-bold tracking-wide"
+            : "h-8 mono text-[11px] uppercase tracking-wider"
+        }
         onClick={() => fileRef.current?.click()}
-        title="Import satellite data from CSV file"
+        title="Import satellite CSV or Excel (same format as Export)"
       >
-        <Upload className={iconOnly ? "h-3.5 w-3.5" : "h-3.5 w-3.5 mr-1"} />
-        {!iconOnly && " Import CSV"}
+        <FileInput className={compact ? "h-3.5 w-3.5 shrink-0" : "h-3.5 w-3.5 mr-1"} />
+        {compact ? "Import" : " Import CSV / Excel"}
       </Button>
     </>
   );

@@ -12,9 +12,11 @@ const STORAGE_KEY = "ssacc_visibility_overlay";
 export type VisibilityOverlay = {
   addedSats: Record<string, GeoSatellite[]>;
   editedSats: Record<string, GeoSatellite>;
+  /** Base-catalog satellite ids hidden by the user (user-added sats are removed from addedSats). */
+  deletedSatIds?: string[];
 };
 
-const EMPTY: VisibilityOverlay = { addedSats: {}, editedSats: {} };
+const EMPTY: VisibilityOverlay = { addedSats: {}, editedSats: {}, deletedSatIds: [] };
 
 function loadJson(): VisibilityOverlay {
   if (typeof window === "undefined") return EMPTY;
@@ -56,5 +58,25 @@ export function editSatelliteInOverlay(sat: GeoSatellite): void {
   const overlay = loadJson();
   patchVisibilityOverlay({
     editedSats: { ...overlay.editedSats, [sat.id]: sat },
+  });
+}
+
+/** Remove a satellite from the visibility matrix (user-added or base catalog). */
+export function removeSatelliteFromOverlay(regionId: string, satId: string): void {
+  const overlay = loadJson();
+  const deleted = new Set(overlay.deletedSatIds ?? []);
+  deleted.add(satId);
+
+  const addedList = (overlay.addedSats[regionId] ?? []).filter((s) => s.id !== satId);
+  const addedSats = { ...overlay.addedSats };
+  if (addedList.length > 0) addedSats[regionId] = addedList;
+  else delete addedSats[regionId];
+
+  const { [satId]: _removed, ...editedSats } = overlay.editedSats;
+
+  patchVisibilityOverlay({
+    deletedSatIds: [...deleted],
+    addedSats,
+    editedSats,
   });
 }
