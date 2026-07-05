@@ -11,10 +11,21 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { exportCsv, listSatellites } from "@/lib/queries";
+import { toggleSelection, allSelected } from "@/lib/dataTableUtils";
 
 export const Route = createFileRoute("/_authenticated/admin/satellites")({ component: SatellitesAdmin });
 
@@ -99,6 +110,9 @@ function SatellitesAdmin() {
     },
   });
 
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+
   if (!isAdmin)
     return (
       <AppShell title="Satellites" subtitle="Admin" showBack>
@@ -121,6 +135,24 @@ function SatellitesAdmin() {
     toast.success("Satellite removed.");
   }
 
+  const visibleIds = sats.map((s) => s.id);
+  const selectAll = allSelected(visibleIds, selectedIds);
+
+  function handleSelectAll() {
+    setSelectedIds(selectAll ? new Set() : new Set(visibleIds));
+  }
+
+  function confirmBulkDelete() {
+    const count = selectedIds.size;
+    for (const id of selectedIds) {
+      removeOperationalSatellite(id);
+    }
+    setSelectedIds(new Set());
+    setBulkDeleteOpen(false);
+    qc.invalidateQueries({ queryKey: ["sats"] });
+    toast.success(`${count} satellite(s) deleted.`);
+  }
+
   return (
     <AppShell
       title="Satellites"
@@ -140,10 +172,35 @@ function SatellitesAdmin() {
         </div>
       }
     >
+      {selectedIds.size > 0 && (
+        <div className="mb-2 px-3 py-2 rounded-md border border-border bg-primary/5 flex items-center gap-3 mono text-[11px]">
+          <span className="text-primary font-bold">
+            {selectedIds.size} satellite{selectedIds.size !== 1 ? "s" : ""} selected
+          </span>
+          <Button
+            variant="destructive"
+            size="sm"
+            className="mono text-[11px] uppercase tracking-wider h-7"
+            onClick={() => setBulkDeleteOpen(true)}
+          >
+            <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete Selected
+          </Button>
+        </div>
+      )}
+
       <div className="panel overflow-auto">
         <table className="min-w-full text-sm mono">
           <thead className="bg-secondary">
             <tr>
+              <th className="px-3 py-2 w-8 border-r border-border">
+                <input
+                  type="checkbox"
+                  checked={selectAll}
+                  onChange={handleSelectAll}
+                  title="Select / deselect all"
+                  className="cursor-pointer accent-primary"
+                />
+              </th>
               {["Name", "Orbital Position", "Notes", ""].map((h) => (
                 <th
                   key={h}
@@ -156,7 +213,18 @@ function SatellitesAdmin() {
           </thead>
           <tbody>
             {sats.map((s) => (
-              <tr key={s.id} className="border-t border-border">
+              <tr
+                key={s.id}
+                className={`border-t border-border ${selectedIds.has(s.id) ? "bg-primary/5" : ""}`}
+              >
+                <td className="px-3 py-2">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(s.id)}
+                    onChange={() => setSelectedIds((prev) => toggleSelection(prev, s.id))}
+                    className="cursor-pointer accent-primary"
+                  />
+                </td>
                 <td className="px-3 py-2">
                   <input
                     defaultValue={s.name}
@@ -195,6 +263,34 @@ function SatellitesAdmin() {
           </tbody>
         </table>
       </div>
+
+      <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <AlertDialogContent className="max-w-sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="mono text-sm uppercase tracking-wide">
+              Delete Satellites
+            </AlertDialogTitle>
+            <AlertDialogDescription className="mono text-[11px] text-foreground">
+              Delete {selectedIds.size} satellite{selectedIds.size !== 1 ? "s" : ""} and all their
+              related data? This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="mono text-[11px] uppercase tracking-wider">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="mono text-[11px] uppercase tracking-wider bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={(e) => {
+                e.preventDefault();
+                confirmBulkDelete();
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AppShell>
   );
 }

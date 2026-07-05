@@ -1006,6 +1006,7 @@ function SatelliteTable({
   const [filter,      setFilter]      = useState<SatFilter>(EMPTY_SAT_FILTER);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [exportConfirmOpen, setExportConfirmOpen] = useState(false);
+  const [bulkSatDeleteOpen, setBulkSatDeleteOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
   const highlightApplied = useRef<string | null>(null);
@@ -1249,6 +1250,14 @@ function SatelliteTable({
       <button type="button" onClick={clearSelection} className="text-muted-foreground hover:text-destructive transition-colors">
         Clear
       </button>
+      <span className="text-muted-foreground/40">·</span>
+      <button
+        type="button"
+        onClick={() => setBulkSatDeleteOpen(true)}
+        className="inline-flex items-center gap-1 text-destructive hover:text-destructive/80 transition-colors"
+      >
+        <Trash2 className="h-3 w-3" /> Delete Selected
+      </button>
     </div>
   );
 
@@ -1283,6 +1292,33 @@ function SatelliteTable({
     </AlertDialog>
   );
 
+  const deleteConfirmDialog = (
+    <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+      <AlertDialogContent className="max-w-sm">
+        <AlertDialogHeader>
+          <AlertDialogTitle className="mono text-sm uppercase tracking-wide">Delete Satellite</AlertDialogTitle>
+          <AlertDialogDescription className="mono text-[11px] text-foreground">
+            {deleteTarget
+              ? `Remove "${deleteTarget.name}" from ${regionLabel}? This cannot be undone.`
+              : ""}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel className="mono text-[11px] uppercase tracking-wider">Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            className="mono text-[11px] uppercase tracking-wider bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            onClick={(e) => {
+              e.preventDefault();
+              confirmDelete();
+            }}
+          >
+            Delete
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+
   if (satellites.length === 0) {
     return (
       <>
@@ -1302,6 +1338,7 @@ function SatelliteTable({
           onSave={(updated) => { onEditSat(updated); setEditingSat(null); }}
         />
         {exportConfirmDialog}
+        {deleteConfirmDialog}
       </>
     );
   }
@@ -1338,7 +1375,7 @@ function SatelliteTable({
                   { label: "Transponders",     cls: "min-w-[100px]"  },
                   { label: "Beams",            cls: "min-w-[120px]"  },
                   { label: "Visible Beams",    cls: "min-w-[220px]"  },
-                  { label: "Edit",             cls: "w-12"           },
+                  { label: "Actions",          cls: "w-16"           },
                 ].map((col) => (
                   <th key={col.label}
                     className={`sticky top-0 z-10 bg-secondary px-2 py-1.5 text-left
@@ -1444,11 +1481,18 @@ function SatelliteTable({
                     </td>
 
                     <td className="px-2 py-1.5">
-                      <button type="button" title="Edit satellite data" onClick={() => setEditingSat(sat)}
-                        className="h-6 w-6 grid place-items-center rounded-sm border border-border
-                                   hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground">
-                        <Pencil className="h-3 w-3" />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button type="button" title="Edit satellite data" onClick={() => setEditingSat(sat)}
+                          className="h-6 w-6 grid place-items-center rounded-sm border border-border
+                                     hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground">
+                          <Pencil className="h-3 w-3" />
+                        </button>
+                        <button type="button" title="Delete satellite entry" onClick={() => setDeleteTarget(sat)}
+                          className="h-6 w-6 grid place-items-center rounded-sm border border-border
+                                     hover:bg-destructive/10 transition-colors text-muted-foreground hover:text-destructive">
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -1465,6 +1509,34 @@ function SatelliteTable({
         onSave={(updated) => { onEditSat(updated); setEditingSat(null); }}
       />
       {exportConfirmDialog}
+      {deleteConfirmDialog}
+
+      <AlertDialog open={bulkSatDeleteOpen} onOpenChange={setBulkSatDeleteOpen}>
+        <AlertDialogContent className="max-w-sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="mono text-sm uppercase tracking-wide">
+              Delete Selected Satellites
+            </AlertDialogTitle>
+            <AlertDialogDescription className="mono text-[11px] text-foreground">
+              Delete {selectedIds.size} satellite{selectedIds.size !== 1 ? "s" : ""} and all their related data? This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="mono text-[11px] uppercase tracking-wider">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="mono text-[11px] uppercase tracking-wider bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={(e) => {
+                e.preventDefault();
+                filteredSats.filter((s) => selectedIds.has(s.id)).forEach((s) => onDeleteSat(s));
+                clearSelection();
+                setBulkSatDeleteOpen(false);
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

@@ -16,7 +16,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Satellite, Download, ArrowUpDown } from "lucide-react";
+import { Satellite, FileOutput, ArrowUpDown, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -26,9 +26,10 @@ import {
   type NameSort,
   type DateSort,
 } from "@/lib/satelliteCatalog";
-import { buildCsv, downloadCsv, downloadExcel, toggleSelection } from "@/lib/dataTableUtils";
+import { buildCsv, downloadCsv, downloadExcel, toggleSelection, allSelected } from "@/lib/dataTableUtils";
 import { useSidebarModules } from "./SidebarModulesProvider";
 import type { GeoSatellite } from "@/lib/visibilityMatrix";
+import { removeSatelliteFromOverlay } from "@/lib/visibilityOverlay";
 
 const EXPORT_HEADERS = ["Satellite Name", "Country of Origin", "Date of Launch"];
 
@@ -82,15 +83,19 @@ export function SatellitesModuleModal() {
 
   const [nameSort, setNameSort] = useState<NameSort>("asc");
   const [dateSort, setDateSort] = useState<DateSort>(null);
-  const [exportMode, setExportMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirmExport, setConfirmExport] = useState(false);
   const [detailRow, setDetailRow] = useState<FlatSatelliteRow | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<FlatSatelliteRow | null>(null);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
   const rows = useMemo(
     () => sortSatelliteRows(catalog, nameSort, dateSort),
     [catalog, nameSort, dateSort],
   );
+
+  const visibleIds = rows.map((r) => r.id);
+  const selectAll = allSelected(visibleIds, selected);
 
   function cycleNameSort() {
     setDateSort(null);
@@ -102,34 +107,40 @@ export function SatellitesModuleModal() {
     setDateSort((s) => (s === "asc" ? "desc" : "asc"));
   }
 
-  function handleExportClick() {
-    if (!exportMode) {
-      setExportMode(true);
-      return;
-    }
-    if (selected.size === 0) {
-      toast.error("No satellite selected for export");
-      return;
-    }
-    setConfirmExport(true);
-  }
-
   function doExport() {
     const list = rows.filter((r) => selected.has(r.id));
+    if (list.length === 0) { toast.error("No satellites selected for export."); return; }
     const data = list.map((r) => [r.name, r.countryOfOrigin, r.launchDate]);
     const stamp = new Date().toISOString().slice(0, 10);
     downloadCsv(`satellites-${stamp}.csv`, buildCsv(EXPORT_HEADERS, data));
     downloadExcel(`satellites-${stamp}.xlsx`, EXPORT_HEADERS, data);
     toast.success(`${list.length} satellite${list.length !== 1 ? "s" : ""} exported.`);
     setConfirmExport(false);
-    setExportMode(false);
+  }
+
+  function doDeleteSingle() {
+    if (!deleteTarget) return;
+    removeSatelliteFromOverlay(deleteTarget.regionId, deleteTarget.id);
+    setSelected((s) => { const n = new Set(s); n.delete(deleteTarget.id); return n; });
+    toast.success("Satellite removed.");
+    setDeleteTarget(null);
+  }
+
+  function doBulkDelete() {
+    const list = rows.filter((r) => selected.has(r.id));
+    for (const row of list) {
+      removeSatelliteFromOverlay(row.regionId, row.id);
+    }
+    toast.success(`${list.length} satellite${list.length !== 1 ? "s" : ""} removed.`);
+    setBulkDeleteOpen(false);
     setSelected(new Set());
   }
 
   function handleClose() {
-    setExportMode(false);
     setSelected(new Set());
     setConfirmExport(false);
+    setDeleteTarget(null);
+    setBulkDeleteOpen(false);
     closeModule();
   }
 
@@ -148,22 +159,65 @@ export function SatellitesModuleModal() {
               </DialogTitle>
               <Button
                 type="button"
-                variant={exportMode ? "default" : "outline"}
+                variant="outline"
                 size="sm"
                 className="mono text-[10px] uppercase h-7 shrink-0 mr-2"
-                onClick={handleExportClick}
+                onClick={() => {
+                  if (selected.size === 0) { toast.error("Select satellites to export."); return; }
+                  setConfirmExport(true);
+                }}
               >
-                <Download className="h-3 w-3 mr-1" />
+                <FileOutput className="h-3 w-3 mr-1" />
                 Export
               </Button>
             </div>
           </DialogHeader>
 
+          {/* Bulk action bar */}
+          {selected.size > 0 && (
+            <div className="px-4 py-2 border-b border-border bg-primary/5 flex items-center gap-3 mono text-[11px] shrink-0">
+              <span className="text-primary font-bold">
+                {selected.size} satellite{selected.size !== 1 ? "s" : ""} selected
+              </span>
+              <span className="text-muted-foreground/40">·</span>
+              <button
+                type="button"
+                onClick={() => { if (selected.size === 0) return; setConfirmExport(true); }}
+                className="inline-flex items-center gap-1 text-primary hover:text-primary/80 transition-colors"
+              >
+                <FileOutput className="h-3 w-3" /> Export Selected
+              </button>
+              <span className="text-muted-foreground/40">·</span>
+              <button
+                type="button"
+                onClick={() => setBulkDeleteOpen(true)}
+                className="inline-flex items-center gap-1 text-destructive hover:text-destructive/80 transition-colors"
+              >
+                <Trash2 className="h-3 w-3" /> Delete Selected
+              </button>
+              <span className="text-muted-foreground/40">·</span>
+              <button
+                type="button"
+                onClick={() => setSelected(new Set())}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Clear
+              </button>
+            </div>
+          )}
+
           <div className="overflow-auto flex-1 min-h-0 px-4 py-2">
             <table className="w-full text-[11px] mono">
               <thead className="text-muted-foreground sticky top-0 bg-card z-10">
                 <tr className="border-b border-border">
-                  {exportMode && <th className="w-8 py-2" />}
+                  <th className="w-8 py-2">
+                    <Checkbox
+                      checked={selectAll}
+                      onCheckedChange={() =>
+                        setSelected(selectAll ? new Set() : new Set(visibleIds))
+                      }
+                    />
+                  </th>
                   <th className="text-left py-2">
                     <button
                       type="button"
@@ -187,19 +241,21 @@ export function SatellitesModuleModal() {
                       {dateSort && <span className="text-primary">{dateSort === "asc" ? "↑" : "↓"}</span>}
                     </button>
                   </th>
+                  <th className="w-8 py-2" />
                 </tr>
               </thead>
               <tbody>
                 {rows.map((row) => (
-                  <tr key={row.id} className="border-b border-border/60 hover:bg-secondary/30">
-                    {exportMode && (
-                      <td className="py-1.5">
-                        <Checkbox
-                          checked={selected.has(row.id)}
-                          onCheckedChange={() => setSelected((s) => toggleSelection(s, row.id))}
-                        />
-                      </td>
-                    )}
+                  <tr
+                    key={row.id}
+                    className={`border-b border-border/60 hover:bg-secondary/30 ${selected.has(row.id) ? "bg-primary/5" : ""}`}
+                  >
+                    <td className="py-1.5">
+                      <Checkbox
+                        checked={selected.has(row.id)}
+                        onCheckedChange={() => setSelected((s) => toggleSelection(s, row.id))}
+                      />
+                    </td>
                     <td className="py-1.5">
                       <button
                         type="button"
@@ -211,6 +267,16 @@ export function SatellitesModuleModal() {
                     </td>
                     <td className="py-1.5 text-muted-foreground">{row.countryOfOrigin}</td>
                     <td className="py-1.5 text-muted-foreground">{row.launchDate}</td>
+                    <td className="py-1.5">
+                      <button
+                        type="button"
+                        title="Delete satellite"
+                        onClick={() => setDeleteTarget(row)}
+                        className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -226,17 +292,64 @@ export function SatellitesModuleModal() {
         onClose={() => setDetailRow(null)}
       />
 
+      {/* Export confirm */}
       <AlertDialog open={confirmExport} onOpenChange={setConfirmExport}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="mono uppercase">Confirm Export</AlertDialogTitle>
             <AlertDialogDescription>
-              Confirm export of selected satellites?
+              Export {selected.size} selected satellite{selected.size !== 1 ? "s" : ""}?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={doExport}>Confirm</AlertDialogAction>
+            <AlertDialogAction onClick={doExport}>Export</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Single delete confirm */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
+        <AlertDialogContent className="max-w-sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="mono text-sm uppercase tracking-wide">
+              Remove Satellite
+            </AlertDialogTitle>
+            <AlertDialogDescription className="mono text-[11px] text-foreground">
+              Remove <span className="font-bold">{deleteTarget?.name}</span> from the Visibility Matrix? This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="mono text-[11px] uppercase tracking-wider">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="mono text-[11px] uppercase tracking-wider bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={(e) => { e.preventDefault(); doDeleteSingle(); }}
+            >
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Bulk delete confirm */}
+      <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <AlertDialogContent className="max-w-sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="mono text-sm uppercase tracking-wide">
+              Delete Selected Satellites
+            </AlertDialogTitle>
+            <AlertDialogDescription className="mono text-[11px] text-foreground">
+              Remove {selected.size} satellite{selected.size !== 1 ? "s" : ""} from the Visibility Matrix? This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="mono text-[11px] uppercase tracking-wider">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="mono text-[11px] uppercase tracking-wider bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={(e) => { e.preventDefault(); doBulkDelete(); }}
+            >
+              Delete
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

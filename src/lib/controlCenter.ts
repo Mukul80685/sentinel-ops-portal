@@ -25,7 +25,7 @@ export type ControlCenterModuleMeta = {
 export const CONTROL_CENTER_MODULES: ControlCenterModuleMeta[] = [
   {
     id: "engagement",
-    title: "Live Engagement Status",
+    title: "Engagement Status",
     subtitle: "",
     icon: Activity,
     description: "Real-time resource utilization and satellite tasking.",

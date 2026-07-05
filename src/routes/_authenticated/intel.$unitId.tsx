@@ -1,11 +1,11 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
 import { Empty } from "@/components/Empty";
 import { IntelSatelliteDrillDown } from "@/components/intel/IntelSatelliteDrillDown";
 import { listUnits, listIntelRecordsForUnit, listEquipmentForUnit } from "@/lib/queries";
-import { ArrowLeft, Database, Satellite } from "lucide-react";
+import { ArrowLeft, Database, Satellite, Trash2 } from "lucide-react";
 import { ccModuleBackLink } from "@/lib/controlCenter";
 import {
   buildIntelDrillDownReport,
@@ -18,6 +18,20 @@ import {
 import { INT_UNITS } from "@/lib/intelRepository";
 import { resolveIntUnitSlug, resolveOperationalUnitId } from "@/lib/operationalSync";
 import { ENGAGEMENTS_ALL_KEY, fetchAllEngagements } from "@/lib/engagementEngine";
+import { removeOperationalIntelRows } from "@/lib/operationalStore";
+import { loadImportedRecords, saveImportedRecords } from "@/lib/intelRepository";
+import { useCanEdit } from "@/lib/auth";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/intel/$unitId")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -51,7 +65,12 @@ function IntelUnitView() {
   const { unitId } = Route.useParams();
   const { satellite: searchSatellite } = Route.useSearch();
   const navigate = useNavigate();
+  const qc = useQueryClient();
+  const canEdit = useCanEdit();
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
   const { data: dbUnits = [] } = useQuery({ queryKey: ["units"], queryFn: listUnits });
 
@@ -134,6 +153,49 @@ function IntelUnitView() {
     if (match) setSelectedReportId(match.reportId);
   }, [searchSatellite, tableRows, dataAvailable]);
 
+  function deleteIntelForSatNames(satNames: string[]) {
+    const nameSet = new Set(satNames.map((n) => n.toLowerCase()));
+    const remaining = loadImportedRecords(intUnitSlug).filter(
+      (r) => !nameSet.has(r.satellite.toLowerCase()),
+    );
+    saveImportedRecords(intUnitSlug, remaining);
+    const opIds = (intelRows as any[])
+      .filter((r) => nameSet.has((r.satellites?.name ?? "").toLowerCase()))
+      .map((r) => r.id)
+      .filter((id: string) => id.startsWith("op-intel-"));
+    if (opIds.length > 0) removeOperationalIntelRows(opIds);
+    qc.invalidateQueries({ queryKey: ["intel-eng", dbUnitId] });
+    qc.invalidateQueries({ queryKey: ENGAGEMENTS_ALL_KEY });
+  }
+
+  function confirmDeleteSingle() {
+    if (!deleteTargetId) return;
+    const row = tableRows.find((r) => r.reportId === deleteTargetId);
+    if (!row) return;
+    deleteIntelForSatNames([row.satelliteName]);
+    toast.success("Intel records cleared for satellite.");
+    setDeleteTargetId(null);
+    setSelectedIds((s) => { const n = new Set(s); n.delete(deleteTargetId); return n; });
+  }
+
+  function confirmBulkDelete() {
+    const names = tableRows
+      .filter((r) => selectedIds.has(r.reportId))
+      .map((r) => r.satelliteName);
+    deleteIntelForSatNames(names);
+    toast.success(`${names.length} satellite intel record${names.length !== 1 ? "s" : ""} cleared.`);
+    setSelectedIds(new Set());
+    setBulkDeleteOpen(false);
+  }
+
+  const deleteTargetRow = tableRows.find((r) => r.reportId === deleteTargetId) ?? null;
+  const visibleIds = tableRows.map((r) => r.reportId);
+  const selectAll = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
+
+  function handleSelectAll() {
+    setSelectedIds(selectAll ? new Set() : new Set(visibleIds));
+  }
+
   if (!unit) {
     return (
       <AppShell title="INT Repository" showBack backLink={ccModuleBackLink("intel")} horizontalNav={null}>
@@ -168,6 +230,28 @@ function IntelUnitView() {
             </span>
           )}
         </div>
+
+        {selectedIds.size > 0 && canEdit && (
+          <div className="px-3 py-2 rounded-md border border-border bg-primary/5 flex items-center gap-3 mono text-[11px] shrink-0">
+            <span className="text-primary font-bold">
+              {selectedIds.size} report{selectedIds.size !== 1 ? "s" : ""} selected
+            </span>
+            <button
+              type="button"
+              onClick={() => setBulkDeleteOpen(true)}
+              className="inline-flex items-center gap-1 text-destructive hover:text-destructive/80 transition-colors"
+            >
+              <Trash2 className="h-3 w-3" /> Delete Selected
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedIds(new Set())}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Clear
+            </button>
+          </div>
+        )}
 
         {!dataAvailable ? (
           <div className="panel p-4 flex flex-col items-center justify-center text-center gap-2 flex-1">
@@ -207,11 +291,23 @@ function IntelUnitView() {
             </div>
 
             <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-1">
-              {/* Column template: # | satellite (slightly wider) | 3 equal numeric | productivity | date */}
+              {/* Column template: checkbox | # | satellite | 3 numeric | productivity | date | actions */}
               <div
                 className="grid items-center gap-x-2 sticky top-0 z-10 bg-secondary/30 backdrop-blur-sm border-b border-border
-                           [grid-template-columns:2rem_minmax(0,1.35fr)_repeat(3,minmax(0,1fr))_minmax(0,1fr)_minmax(0,0.9fr)]"
+                           [grid-template-columns:1.5rem_2rem_minmax(0,1.35fr)_repeat(3,minmax(0,1fr))_minmax(0,1fr)_minmax(0,0.9fr)_2rem]"
               >
+                {canEdit && (
+                  <div className="px-1 py-2 flex items-center justify-center">
+                    <input
+                      type="checkbox"
+                      checked={selectAll}
+                      onChange={handleSelectAll}
+                      className="cursor-pointer accent-primary"
+                      title="Select / deselect all"
+                    />
+                  </div>
+                )}
+                {!canEdit && <div />}
                 <Th align="center">#</Th>
                 <Th align="left">Satellite</Th>
                 <Th align="center">Scanned</Th>
@@ -219,74 +315,122 @@ function IntelUnitView() {
                 <Th align="center">Pending</Th>
                 <Th align="center">Productivity</Th>
                 <Th align="center">Last Updated</Th>
+                <div />
               </div>
               <div className="divide-y divide-border/50">
-                {tableRows.map((row, idx) => (
-                  <div
-                    key={row.reportId}
-                    role="row"
-                    tabIndex={0}
-                    onClick={() => setSelectedReportId(row.reportId)}
-                    onKeyDown={(e) => e.key === "Enter" && setSelectedReportId(row.reportId)}
-                    className="grid items-center gap-x-2 cursor-pointer hover:bg-primary/8 transition-colors
-                               [grid-template-columns:2rem_minmax(0,1.35fr)_repeat(3,minmax(0,1fr))_minmax(0,1fr)_minmax(0,0.9fr)]"
-                  >
-                    <div className="px-1 py-2 mono text-[11px] text-foreground tabular-nums text-center">
-                      {idx + 1}
-                    </div>
-                    <div className="px-1 py-2 min-w-0 text-left">
-                      <div className="mono text-[12px] font-bold text-foreground uppercase leading-tight">
-                        {row.satelliteName}
-                      </div>
-                      <div className="mono text-[10px] text-foreground/75 leading-tight">{row.polarization}</div>
-                      {!row.scanEligible && (
-                        <span className="inline-block mt-0.5 mono text-[8px] font-bold uppercase px-1 py-px rounded-sm border border-muted-foreground/30 text-muted-foreground bg-secondary/40">
-                          No visibility
-                        </span>
-                      )}
-                      {row.engagementStatus && row.scanEligible && (
-                        <span
-                          className={`inline-block mt-0.5 mono text-[8px] font-bold uppercase px-1 py-px rounded-sm border ${
-                            row.engagementStatus === "Completed"
-                              ? "border-emerald-500/40 text-emerald-700 bg-emerald-500/10"
-                              : "border-primary/30 text-primary bg-primary/8"
-                          }`}
-                        >
-                          {row.engagementStatus}
-                        </span>
-                      )}
-                    </div>
-                    <div className={`px-1 py-2 mono text-[12px] text-center font-semibold tabular-nums ${!row.scanEligible ? "text-muted-foreground" : "text-foreground"}`}>
-                      {row.totalScanned.toLocaleString()}
-                    </div>
-                    <div className={`px-1 py-2 mono text-[12px] text-center font-semibold tabular-nums ${!row.scanEligible ? "text-muted-foreground" : "text-foreground"}`}>
-                      {row.analyzed.toLocaleString()}
-                    </div>
-                    <div className={`px-1 py-2 mono text-[12px] text-center font-semibold tabular-nums ${!row.scanEligible ? "text-muted-foreground" : "text-foreground"}`}>
-                      {row.pending.toLocaleString()}
-                    </div>
-                    <div className="px-1 py-2 text-center">
-                      {row.productivityScore === null ? (
-                        <span className="mono text-[10px] font-bold uppercase text-muted-foreground">N/A</span>
+                {tableRows.map((row, idx) => {
+                  const checked = selectedIds.has(row.reportId);
+                  return (
+                    <div
+                      key={row.reportId}
+                      role="row"
+                      className={`grid items-center gap-x-2 transition-colors
+                                 [grid-template-columns:1.5rem_2rem_minmax(0,1.35fr)_repeat(3,minmax(0,1fr))_minmax(0,1fr)_minmax(0,0.9fr)_2rem]
+                                 ${checked ? "bg-primary/5" : "hover:bg-primary/8"}`}
+                    >
+                      {/* Checkbox */}
+                      {canEdit ? (
+                        <div className="px-1 py-2 flex items-center justify-center">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() =>
+                              setSelectedIds((s) => {
+                                const n = new Set(s);
+                                if (n.has(row.reportId)) n.delete(row.reportId);
+                                else n.add(row.reportId);
+                                return n;
+                              })
+                            }
+                            className="cursor-pointer accent-primary"
+                          />
+                        </div>
                       ) : (
-                        <span
-                          className={`mono text-[12px] font-bold tabular-nums ${
-                            row.productivityScore >= 60
-                              ? "text-emerald-700"
-                              : row.productivityScore >= 35
-                                ? "text-amber-700"
-                                : "text-foreground"
-                          }`}
-                        >
-                          {row.productivityScore}%
-                        </span>
+                        <div />
+                      )}
+
+                      {/* # */}
+                      <div className="px-1 py-2 mono text-[11px] text-foreground tabular-nums text-center">
+                        {idx + 1}
+                      </div>
+
+                      {/* Satellite name — clickable for drill-down */}
+                      <div
+                        className="px-1 py-2 min-w-0 text-left cursor-pointer"
+                        onClick={() => setSelectedReportId(row.reportId)}
+                        tabIndex={0}
+                        onKeyDown={(e) => e.key === "Enter" && setSelectedReportId(row.reportId)}
+                      >
+                        <div className="mono text-[12px] font-bold text-foreground uppercase leading-tight">
+                          {row.satelliteName}
+                        </div>
+                        <div className="mono text-[10px] text-foreground/75 leading-tight">{row.polarization}</div>
+                        {!row.scanEligible && (
+                          <span className="inline-block mt-0.5 mono text-[8px] font-bold uppercase px-1 py-px rounded-sm border border-muted-foreground/30 text-muted-foreground bg-secondary/40">
+                            No visibility
+                          </span>
+                        )}
+                        {row.engagementStatus && row.scanEligible && (
+                          <span
+                            className={`inline-block mt-0.5 mono text-[8px] font-bold uppercase px-1 py-px rounded-sm border ${
+                              row.engagementStatus === "Completed"
+                                ? "border-emerald-500/40 text-emerald-700 bg-emerald-500/10"
+                                : "border-primary/30 text-primary bg-primary/8"
+                            }`}
+                          >
+                            {row.engagementStatus}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className={`px-1 py-2 mono text-[12px] text-center font-semibold tabular-nums ${!row.scanEligible ? "text-muted-foreground" : "text-foreground"}`}>
+                        {row.totalScanned.toLocaleString()}
+                      </div>
+                      <div className={`px-1 py-2 mono text-[12px] text-center font-semibold tabular-nums ${!row.scanEligible ? "text-muted-foreground" : "text-foreground"}`}>
+                        {row.analyzed.toLocaleString()}
+                      </div>
+                      <div className={`px-1 py-2 mono text-[12px] text-center font-semibold tabular-nums ${!row.scanEligible ? "text-muted-foreground" : "text-foreground"}`}>
+                        {row.pending.toLocaleString()}
+                      </div>
+                      <div className="px-1 py-2 text-center">
+                        {row.productivityScore === null ? (
+                          <span className="mono text-[10px] font-bold uppercase text-muted-foreground">N/A</span>
+                        ) : (
+                          <span
+                            className={`mono text-[12px] font-bold tabular-nums ${
+                              row.productivityScore >= 60
+                                ? "text-emerald-700"
+                                : row.productivityScore >= 35
+                                  ? "text-amber-700"
+                                  : "text-foreground"
+                            }`}
+                          >
+                            {row.productivityScore}%
+                          </span>
+                        )}
+                      </div>
+                      <div className="px-1 py-2 mono text-[11px] text-muted-foreground tabular-nums text-center">
+                        {row.reportTimestamp ? formatIntelCompactDate(row.reportTimestamp) : "—"}
+                      </div>
+
+                      {/* Delete action */}
+                      {canEdit ? (
+                        <div className="px-1 py-2 flex items-center justify-center">
+                          <button
+                            type="button"
+                            title="Clear intel records for this satellite"
+                            onClick={() => setDeleteTargetId(row.reportId)}
+                            className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div />
                       )}
                     </div>
-                    <div className="px-1 py-2 mono text-[11px] text-muted-foreground tabular-nums text-center">
-                      {row.reportTimestamp ? formatIntelCompactDate(row.reportTimestamp) : "—"}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
@@ -304,6 +448,52 @@ function IntelUnitView() {
         open={!!selectedReportId && !!drillDown}
         onClose={() => setSelectedReportId(null)}
       />
+
+      {/* Single delete confirm */}
+      <AlertDialog open={!!deleteTargetId} onOpenChange={(o) => !o && setDeleteTargetId(null)}>
+        <AlertDialogContent className="max-w-sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="mono text-sm uppercase tracking-wide">
+              Clear Intel Records
+            </AlertDialogTitle>
+            <AlertDialogDescription className="mono text-[11px] text-foreground">
+              Clear all stored intel records for <span className="font-bold">{deleteTargetRow?.satelliteName}</span>? Scan counts will reset. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="mono text-[11px] uppercase tracking-wider">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="mono text-[11px] uppercase tracking-wider bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={(e) => { e.preventDefault(); confirmDeleteSingle(); }}
+            >
+              Clear
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Bulk delete confirm */}
+      <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <AlertDialogContent className="max-w-sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="mono text-sm uppercase tracking-wide">
+              Clear Intel Records
+            </AlertDialogTitle>
+            <AlertDialogDescription className="mono text-[11px] text-foreground">
+              Clear stored intel records for {selectedIds.size} satellite{selectedIds.size !== 1 ? "s" : ""}? Scan counts will reset. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="mono text-[11px] uppercase tracking-wider">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="mono text-[11px] uppercase tracking-wider bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={(e) => { e.preventDefault(); confirmBulkDelete(); }}
+            >
+              Clear
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AppShell>
   );
 }

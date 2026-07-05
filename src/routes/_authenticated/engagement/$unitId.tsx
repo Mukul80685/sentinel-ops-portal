@@ -265,7 +265,7 @@ class EngagementErrorBoundary extends Component<
     if (this.state.error) {
       return (
         <AppShell
-          title="Live Engagement Status"
+          title="Engagement Status"
           subtitle="Unit detail"
           showBack
           backLink={{ to: "/control-center", search: { module: "engagement" } }}
@@ -442,7 +442,7 @@ function EngagementUnit() {
 
   return (
     <AppShell
-      title="Live Engagement Status"
+      title="Engagement Status"
       showBack
       backLink={ccModuleBackLink("engagement")}
       horizontalNav={null}

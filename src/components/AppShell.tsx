@@ -43,6 +43,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 /** Support / utility navigation — NOT main dashboard modules (those live on the homepage). */
@@ -84,15 +85,16 @@ function useLiveStamp() {
 }
 
 /** Timezone-aware live clock — returns { time, date, full } */
-function useLiveTzStamp(tz: string) {
+function useLiveTzStamp(tz: string, offsetMs = 0) {
   const [stamp, setStamp] = useState({ time: "", date: "", full: "" });
   useEffect(() => {
     const fmt = () => {
-      const now = new Date();
+      const now = new Date(Date.now() + offsetMs);
       const time = `${now.toLocaleTimeString("en-GB", {
         timeZone: tz,
         hour: "2-digit",
         minute: "2-digit",
+        second: "2-digit",
         hour12: false,
       })} Hrs`;
       const date = now.toLocaleDateString("en-GB", {
@@ -106,7 +108,7 @@ function useLiveTzStamp(tz: string) {
     setStamp(fmt());
     const id = setInterval(() => setStamp(fmt()), 1000);
     return () => clearInterval(id);
-  }, [tz]);
+  }, [tz, offsetMs]);
   return stamp;
 }
 
@@ -226,14 +228,39 @@ function DateTimeModal({
   onOpenChange,
   selectedTz,
   onTzChange,
+  offsetMs,
+  onOffsetChange,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   selectedTz: string;
   onTzChange: (tz: string) => void;
+  offsetMs: number;
+  onOffsetChange: (ms: number) => void;
 }) {
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
-  const tzStamp = useLiveTzStamp(selectedTz);
+  const tzStamp = useLiveTzStamp(selectedTz, offsetMs);
+
+  const [overrideHH, setOverrideHH] = useState("");
+  const [overrideMM, setOverrideMM] = useState("");
+  const [overrideSS, setOverrideSS] = useState("");
+  const [overrideErr, setOverrideErr] = useState("");
+
+  // Pre-fill override inputs with current time in selected TZ whenever the modal opens
+  useEffect(() => {
+    if (!open) return;
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: selectedTz,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }).formatToParts(Date.now() + offsetMs);
+    setOverrideHH(parts.find((p) => p.type === "hour")?.value ?? "00");
+    setOverrideMM(parts.find((p) => p.type === "minute")?.value ?? "00");
+    setOverrideSS(parts.find((p) => p.type === "second")?.value ?? "00");
+    setOverrideErr("");
+  }, [open, selectedTz]);
 
   // Group timezones by region for the dropdown
   const groupedTz = useMemo(() => {
@@ -245,6 +272,40 @@ function DateTimeModal({
   }, []);
 
   const tzLabel = TIMEZONES.find((t) => t.iana === selectedTz)?.label ?? selectedTz;
+
+  function applyOverride() {
+    setOverrideErr("");
+    const hh = parseInt(overrideHH || "0", 10);
+    const mm = parseInt(overrideMM || "0", 10);
+    const ss = parseInt(overrideSS || "0", 10);
+    if (isNaN(hh) || hh < 0 || hh > 23) return setOverrideErr("Hour must be 0–23.");
+    if (isNaN(mm) || mm < 0 || mm > 59) return setOverrideErr("Minute must be 0–59.");
+    if (isNaN(ss) || ss < 0 || ss > 59) return setOverrideErr("Second must be 0–59.");
+
+    // Read current time parts in the selected timezone
+    const now = Date.now();
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: selectedTz,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }).formatToParts(now);
+    const curHH = parseInt(parts.find((p) => p.type === "hour")!.value, 10);
+    const curMM = parseInt(parts.find((p) => p.type === "minute")!.value, 10);
+    const curSS = parseInt(parts.find((p) => p.type === "second")!.value, 10);
+
+    const diffMs = ((hh - curHH) * 3600 + (mm - curMM) * 60 + (ss - curSS)) * 1000;
+    onOffsetChange(diffMs);
+    setOverrideHH("");
+    setOverrideMM("");
+    setOverrideSS("");
+  }
+
+  function resetOverride() {
+    onOffsetChange(0);
+    setOverrideErr("");
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -329,6 +390,79 @@ function DateTimeModal({
                 </SelectContent>
               </Select>
             </div>
+
+            {/* ── Manual Time Override ── */}
+            <div className="border-t border-border pt-4">
+              <div className="mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground mb-2 flex items-center gap-2">
+                Manual Time Override
+                {offsetMs !== 0 && (
+                  <span className="text-amber-500 font-bold text-[9px] tracking-widest">● ACTIVE</span>
+                )}
+              </div>
+              <div className="flex items-end gap-2">
+                <div className="flex flex-col gap-1">
+                  <Label className="mono text-[10px] text-muted-foreground">HH</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={23}
+                    placeholder="00"
+                    value={overrideHH}
+                    onChange={(e) => { setOverrideHH(e.target.value); setOverrideErr(""); }}
+                    className="w-14 mono text-center text-sm h-8"
+                  />
+                </div>
+                <span className="mono text-lg font-bold mb-1.5 text-muted-foreground">:</span>
+                <div className="flex flex-col gap-1">
+                  <Label className="mono text-[10px] text-muted-foreground">MM</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={59}
+                    placeholder="00"
+                    value={overrideMM}
+                    onChange={(e) => { setOverrideMM(e.target.value); setOverrideErr(""); }}
+                    className="w-14 mono text-center text-sm h-8"
+                  />
+                </div>
+                <span className="mono text-lg font-bold mb-1.5 text-muted-foreground">:</span>
+                <div className="flex flex-col gap-1">
+                  <Label className="mono text-[10px] text-muted-foreground">SS</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={59}
+                    placeholder="00"
+                    value={overrideSS}
+                    onChange={(e) => { setOverrideSS(e.target.value); setOverrideErr(""); }}
+                    className="w-14 mono text-center text-sm h-8"
+                  />
+                </div>
+                <Button
+                  size="sm"
+                  onClick={applyOverride}
+                  className="mono text-[10px] uppercase tracking-wider h-8 mb-0.5"
+                >
+                  Apply
+                </Button>
+              </div>
+              {overrideErr && (
+                <p className="mono text-[10px] text-destructive mt-1">{overrideErr}</p>
+              )}
+              {offsetMs !== 0 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={resetOverride}
+                  className="mono text-[10px] uppercase tracking-wider h-7 mt-2 text-amber-600 border-amber-500/40 hover:bg-amber-500/10"
+                >
+                  Reset to System Time
+                </Button>
+              )}
+              <p className="mono text-[10px] text-muted-foreground mt-2">
+                Enter the correct time in the selected timezone. The clock will continue ticking from that point.
+              </p>
+            </div>
           </div>
         </div>
       </DialogContent>
@@ -408,14 +542,14 @@ function PrimaryNavSidebar({
         <SidebarLink
           to="/control-center"
           search={ccHubSearch("important")}
-          label="Important Frequency"
+          label="Important Frequencies"
           icon={Star}
           active={importantActive}
           iconTheme="important"
         />
         <SidebarLink
           to="/discarded"
-          label="Discarded Frequency"
+          label="Discarded Frequencies"
           icon={Trash2}
           active={navActive(pathname, "/discarded")}
           iconTheme="discarded"
@@ -612,7 +746,15 @@ export function AppShell({
   // Timezone selection persists for the session; defaults to IST
   const [selectedTz, setSelectedTz] = useState<string>("Asia/Kolkata");
   const [dtOpen, setDtOpen] = useState(false);
-  const tzStamp = useLiveTzStamp(selectedTz);
+  const [timeOffsetMs, setTimeOffsetMs] = useState<number>(() => {
+    try { return Number(localStorage.getItem("ssacc_time_offset") ?? "0") || 0; } catch { return 0; }
+  });
+  const tzStamp = useLiveTzStamp(selectedTz, timeOffsetMs);
+
+  function handleOffsetChange(ms: number) {
+    setTimeOffsetMs(ms);
+    try { localStorage.setItem("ssacc_time_offset", String(ms)); } catch { /* noop */ }
+  }
 
   const resolveSecondaryTo = (item: (typeof standardNavItems)[number]) =>
     isAdmin ? item.adminTo : item.userTo;
@@ -736,6 +878,8 @@ export function AppShell({
         onOpenChange={setDtOpen}
         selectedTz={selectedTz}
         onTzChange={setSelectedTz}
+        offsetMs={timeOffsetMs}
+        onOffsetChange={handleOffsetChange}
       />
     </div>
   );

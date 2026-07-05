@@ -9,6 +9,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -18,11 +28,14 @@ import {
 import {
   ArrowLeft,
   ArrowUpDown,
+  Copy,
   Download,
   FileText,
   Folder,
   FolderPlus,
+  FolderInput,
   Search,
+  Trash2,
   Upload,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -32,10 +45,12 @@ import {
   type DocSortDir,
   type DocSortField,
   type StoredDocument,
+  copyDocuments,
   createFolder,
+  deleteDocuments,
+  deleteFolder,
   downloadAndView,
   formatFileSize,
-  getRecentDocuments,
   moveDocuments,
   searchDocuments,
   sortDocuments,
@@ -54,6 +69,11 @@ type Props = {
 };
 
 type ManagerView = "home" | "folder";
+
+type DeleteTarget =
+  | { type: "docs" }
+  | { type: "folder"; folder: DocFolder }
+  | null;
 
 function DocumentTile({
   doc,
@@ -97,18 +117,34 @@ function FolderTile({
   folder,
   docCount,
   onOpen,
+  onDelete,
 }: {
   folder: DocFolder;
   docCount: number;
   onOpen: () => void;
+  onDelete: () => void;
 }) {
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onOpen}
-      className="panel p-3 flex flex-col gap-2 min-h-[100px] text-left hover:border-primary/40 transition-colors"
+      onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && onOpen()}
+      className="panel p-3 flex flex-col gap-2 min-h-[100px] text-left hover:border-primary/40 transition-colors cursor-pointer relative group"
     >
-      <div className="flex items-start gap-2">
+      <button
+        type="button"
+        title="Delete folder and its contents"
+        onClick={(e) => {
+          e.stopPropagation();
+          onDelete();
+        }}
+        className="absolute top-2 right-2 h-6 w-6 grid place-items-center rounded-sm border border-border
+                   bg-card hover:bg-destructive/10 transition-colors text-muted-foreground hover:text-destructive"
+      >
+        <Trash2 className="h-3 w-3" />
+      </button>
+      <div className="flex items-start gap-2 pr-7">
         <Folder className="h-4 w-4 text-primary shrink-0 mt-0.5" />
         <div className="min-w-0 flex-1">
           <div className="mono text-[11px] font-medium truncate">{folder.name}</div>
@@ -117,7 +153,7 @@ function FolderTile({
           </div>
         </div>
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -126,21 +162,14 @@ export function DocumentModuleModal({ module, open, onClose, title, accept }: Pr
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [search, setSearch] = useState("");
-  const [managerOpen, setManagerOpen] = useState(false);
   const [managerView, setManagerView] = useState<ManagerView>("home");
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
   const [sortField, setSortField] = useState<DocSortField>("date");
   const [sortDir, setSortDir] = useState<DocSortDir>("desc");
   const [newFolderName, setNewFolderName] = useState("");
   const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
-  const [moveTargetFolderId, setMoveTargetFolderId] = useState<string>("__home__");
-
-  const recent = useMemo(() => getRecentDocuments(module, 5), [store.documents, module]);
-
-  const searchResults = useMemo(() => {
-    if (!search.trim()) return null;
-    return searchDocuments(module, search);
-  }, [search, store.documents, module]);
+  const [targetFolderId, setTargetFolderId] = useState<string>("__home__");
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>(null);
 
   const activeFolder = store.folders.find((f) => f.id === activeFolderId) ?? null;
 
@@ -155,26 +184,27 @@ export function DocumentModuleModal({ module, open, onClose, title, accept }: Pr
   }, [store.documents, activeFolderId]);
 
   const managerContent = useMemo(() => {
-    if (search.trim() && managerOpen) {
+    if (search.trim()) {
       return sortDocuments(searchDocuments(module, search), sortField, sortDir);
     }
     if (managerView === "folder" && activeFolderId) {
       return sortDocuments(folderDocs, sortField, sortDir);
     }
     return sortDocuments(homeDocs, sortField, sortDir);
-  }, [search, managerOpen, managerView, activeFolderId, folderDocs, homeDocs, sortField, sortDir, module]);
+  }, [search, managerView, activeFolderId, folderDocs, homeDocs, sortField, sortDir, module]);
 
-  function resetManagerHome() {
+  function resetState() {
     setManagerView("home");
     setActiveFolderId(null);
     setSelectedDocIds(new Set());
-    setMoveTargetFolderId("__home__");
+    setTargetFolderId("__home__");
     setSearch("");
+    setDeleteTarget(null);
   }
 
-  function openManagerHome() {
-    resetManagerHome();
-    setManagerOpen(true);
+  function handleClose() {
+    resetState();
+    onClose();
   }
 
   function enterFolder(folderId: string) {
@@ -189,15 +219,16 @@ export function DocumentModuleModal({ module, open, onClose, title, accept }: Pr
     setSelectedDocIds(new Set());
   }
 
-  async function handleUpload(files: FileList | null, folderId: string | null = activeFolderId) {
+  async function handleUpload(files: FileList | null) {
     if (!files?.length) return;
+    const targetId = managerView === "folder" ? activeFolderId : null;
     for (const file of Array.from(files)) {
       const validation = validateDocumentUpload(module, file);
       if (!validation.ok) {
         toast.error(validation.error);
         continue;
       }
-      const result = await uploadDocument(module, file, managerView === "folder" ? folderId : null);
+      const result = await uploadDocument(module, file, targetId);
       if ("error" in result) toast.error(result.error);
       else toast.success(`Uploaded ${file.name}`);
     }
@@ -222,155 +253,91 @@ export function DocumentModuleModal({ module, open, onClose, title, accept }: Pr
     toast.success("Folder created");
   }
 
+  function resolveTargetFolderId(): string | null {
+    return targetFolderId === "__home__" ? null : targetFolderId;
+  }
+
   function handleMoveSelected() {
     if (selectedDocIds.size === 0) {
       toast.error("Select at least one document to move.");
       return;
     }
-    const targetId = moveTargetFolderId === "__home__" ? null : moveTargetFolderId;
-    moveDocuments(module, Array.from(selectedDocIds), targetId);
+    moveDocuments(module, Array.from(selectedDocIds), resolveTargetFolderId());
     toast.success(`${selectedDocIds.size} document${selectedDocIds.size !== 1 ? "s" : ""} moved.`);
     setSelectedDocIds(new Set());
+  }
+
+  function handleCopySelected() {
+    if (selectedDocIds.size === 0) {
+      toast.error("Select at least one document to copy.");
+      return;
+    }
+    copyDocuments(module, Array.from(selectedDocIds), resolveTargetFolderId());
+    toast.success(`${selectedDocIds.size} document${selectedDocIds.size !== 1 ? "s" : ""} copied.`);
+    setSelectedDocIds(new Set());
+  }
+
+  function confirmDelete() {
+    if (!deleteTarget) return;
+
+    if (deleteTarget.type === "docs") {
+      const count = selectedDocIds.size;
+      deleteDocuments(module, Array.from(selectedDocIds));
+      setSelectedDocIds(new Set());
+      toast.success(`${count} document${count !== 1 ? "s" : ""} deleted.`);
+    } else {
+      const { folder } = deleteTarget;
+      deleteFolder(module, folder.id);
+      if (activeFolderId === folder.id) goBackToHome();
+      toast.success(`Folder "${folder.name}" deleted.`);
+    }
+    setDeleteTarget(null);
   }
 
   function folderDocCount(folderId: string) {
     return store.documents.filter((d) => d.folderId === folderId).length;
   }
 
+  const deleteDescription =
+    deleteTarget?.type === "folder"
+      ? `Delete folder "${deleteTarget.folder.name}" and ${folderDocCount(deleteTarget.folder.id)} document(s) inside? This cannot be undone.`
+      : `Delete ${selectedDocIds.size} document${selectedDocIds.size !== 1 ? "s" : ""}? This cannot be undone.`;
+
   return (
     <>
-      <Dialog open={open && !managerOpen} onOpenChange={(o) => !o && onClose()}>
-        <DialogContent className="max-w-xl max-h-[90vh] flex flex-col">
-          <DialogHeader>
-            <DialogTitle className="mono uppercase tracking-wider">{title}</DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            <div className="relative">
-              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-              <Input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search by filename…"
-                className="pl-8 mono text-[11px]"
-              />
-            </div>
-
-            {search.trim() && (
-              <div>
-                {searchResults && searchResults.length === 0 ? (
-                  <p className="text-[11px] text-muted-foreground mono">No result found</p>
-                ) : (
-                  <ul className="space-y-1">
-                    {searchResults?.map((d) => (
-                      <li key={d.id} className="flex items-center justify-between gap-2">
-                        <button
-                          type="button"
-                          className="mono text-[11px] hover:text-primary text-left truncate flex-1"
-                          onClick={() => downloadAndView(d)}
-                        >
-                          {d.filename}
-                        </button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-6 text-[9px] mono shrink-0"
-                          onClick={() => downloadAndView(d)}
-                        >
-                          Download &amp; View
-                        </Button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
-
-            <div>
-              <div className="label-eyebrow mb-2">Last 5 uploads</div>
-              {recent.length === 0 ? (
-                <p className="text-[11px] text-muted-foreground mono">No documents uploaded yet.</p>
-              ) : (
-                <ul className="space-y-1">
-                  {recent.map((d) => (
-                    <li key={d.id} className="flex items-center justify-between gap-2">
-                      <span className="mono text-[11px] truncate flex-1">{d.filename}</span>
-                      <span className="text-[9px] text-muted-foreground shrink-0 hidden sm:inline">
-                        {new Date(d.uploadedAt).toLocaleDateString()}
-                      </span>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 text-[9px] mono shrink-0"
-                        onClick={() => downloadAndView(d)}
-                      >
-                        Download &amp; View
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="mono text-[10px] uppercase flex-1"
-                onClick={openManagerHome}
-              >
-                View All
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                className="mono text-[10px] uppercase flex-1"
-                onClick={() => fileRef.current?.click()}
-              >
-                <Upload className="h-3 w-3 mr-1" /> Upload
-              </Button>
-              <input
-                ref={fileRef}
-                type="file"
-                accept={accept}
-                multiple
-                className="hidden"
-                onChange={(e) => void handleUpload(e.target.files, null)}
-              />
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Full-screen document manager */}
-      <Dialog
-        open={managerOpen}
-        onOpenChange={(o) => {
-          setManagerOpen(o);
-          if (!o) resetManagerHome();
-        }}
-      >
+      <Dialog open={open} onOpenChange={(o) => !o && handleClose()}>
         <DialogContent className="max-w-[95vw] w-full h-[95vh] max-h-[95vh] flex flex-col p-0 gap-0">
           <DialogHeader className="px-4 pt-4 pb-2 pr-12 border-b shrink-0">
             <div className="flex items-center justify-between gap-2">
               <DialogTitle className="mono uppercase tracking-wider">
-                {title} — Document Manager
+                {title}
                 {managerView === "folder" && activeFolder ? ` / ${activeFolder.name}` : " / Home"}
               </DialogTitle>
-              <Button type="button" variant="outline" size="sm" className="h-7 mono text-[10px] shrink-0 mr-2" onClick={() => fileRef.current?.click()}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 mono text-[10px] shrink-0 mr-2"
+                onClick={() => fileRef.current?.click()}
+              >
                 <Upload className="h-3 w-3 mr-1" /> Upload
               </Button>
             </div>
           </DialogHeader>
+
+          <input
+            ref={fileRef}
+            type="file"
+            accept={accept}
+            multiple
+            className="hidden"
+            onChange={(e) => void handleUpload(e.target.files)}
+          />
 
           <div className="flex flex-1 min-h-0">
             <aside className="w-52 border-r border-border p-2 shrink-0 overflow-auto flex flex-col gap-2">
               <div className="panel p-2 space-y-2 border border-border/80">
                 <p className="text-[9px] mono uppercase tracking-wider text-muted-foreground">Create Folder</p>
-                <p className="text-[10px] mono">1. Enter Folder Name</p>
                 <Input
                   value={newFolderName}
                   onChange={(e) => setNewFolderName(e.target.value)}
@@ -378,7 +345,6 @@ export function DocumentModuleModal({ module, open, onClose, title, accept }: Pr
                   placeholder="Folder name"
                   onKeyDown={(e) => e.key === "Enter" && handleCreateFolder()}
                 />
-                <p className="text-[10px] mono">2. Press Create Folder</p>
                 <Button type="button" size="sm" variant="outline" className="w-full h-7 text-[9px] mono" onClick={handleCreateFolder}>
                   <FolderPlus className="h-3 w-3 mr-1" /> Create Folder
                 </Button>
@@ -415,9 +381,9 @@ export function DocumentModuleModal({ module, open, onClose, title, accept }: Pr
               {selectedDocIds.size > 0 && (
                 <div className="px-4 py-2 border-b bg-secondary/20 flex flex-wrap items-center gap-2 shrink-0">
                   <span className="mono text-[10px]">{selectedDocIds.size} selected</span>
-                  <Select value={moveTargetFolderId} onValueChange={setMoveTargetFolderId}>
+                  <Select value={targetFolderId} onValueChange={setTargetFolderId}>
                     <SelectTrigger className="h-8 text-[10px] mono w-[160px]">
-                      <SelectValue placeholder="Move to Folder" />
+                      <SelectValue placeholder="Target folder" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="__home__">Home (no folder)</SelectItem>
@@ -426,15 +392,27 @@ export function DocumentModuleModal({ module, open, onClose, title, accept }: Pr
                       ))}
                     </SelectContent>
                   </Select>
-                  <Button type="button" size="sm" className="h-8 mono text-[10px]" onClick={handleMoveSelected}>
-                    Move to Folder
+                  <Button type="button" size="sm" variant="outline" className="h-8 mono text-[10px]" onClick={handleMoveSelected}>
+                    <FolderInput className="h-3 w-3 mr-1" /> Move
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" className="h-8 mono text-[10px]" onClick={handleCopySelected}>
+                    <Copy className="h-3 w-3 mr-1" /> Copy
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="destructive"
+                    className="h-8 mono text-[10px]"
+                    onClick={() => setDeleteTarget({ type: "docs" })}
+                  >
+                    <Trash2 className="h-3 w-3 mr-1" /> Delete
                   </Button>
                 </div>
               )}
 
               <div className="flex-1 overflow-auto p-4">
                 {managerView === "home" && !search.trim() && store.folders.length === 0 && managerContent.length === 0 ? (
-                  <p className="text-[11px] text-muted-foreground mono">No folders or documents yet.</p>
+                  <p className="text-[11px] text-muted-foreground mono">No folders or documents yet. Use "Upload" to add files.</p>
                 ) : managerView === "folder" && !search.trim() && managerContent.length === 0 ? (
                   <p className="text-[11px] text-muted-foreground mono">No documents in this folder.</p>
                 ) : (
@@ -446,6 +424,7 @@ export function DocumentModuleModal({ module, open, onClose, title, accept }: Pr
                           folder={folder}
                           docCount={folderDocCount(folder.id)}
                           onOpen={() => enterFolder(folder.id)}
+                          onDelete={() => setDeleteTarget({ type: "folder", folder })}
                         />
                       ))}
                     {managerContent.map((doc) => (
@@ -464,6 +443,31 @@ export function DocumentModuleModal({ module, open, onClose, title, accept }: Pr
           </div>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
+        <AlertDialogContent className="max-w-sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="mono text-sm uppercase tracking-wide">
+              {deleteTarget?.type === "folder" ? "Delete Folder" : "Delete Documents"}
+            </AlertDialogTitle>
+            <AlertDialogDescription className="mono text-[11px] text-foreground">
+              {deleteDescription}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="mono text-[11px] uppercase tracking-wider">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="mono text-[11px] uppercase tracking-wider bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={(e) => {
+                e.preventDefault();
+                confirmDelete();
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

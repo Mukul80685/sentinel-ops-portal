@@ -293,6 +293,7 @@ export function ImportantFrequenciesView() {
   const [filterOpen,      setFilterOpen]      = useState(false);
   const [freqFilter,      setFreqFilter]      = useState<FreqFilter>(EMPTY_FREQ_FILTER);
   const [selectedIds,     setSelectedIds]     = useState<Set<string>>(new Set());
+  const [bulkDeleteOpen,  setBulkDeleteOpen]  = useState(false);
   const [hiddenRowIds,    setHiddenRowIds]    = useState<Set<string>>(new Set());
   const [unitsDialog,     setUnitsDialog]     = useState<{ freqLabel: string; units: string[] } | null>(null);
   const [refSync, setRefSync] = useState(0);
@@ -661,6 +662,14 @@ export function ImportantFrequenciesView() {
               className="hover:text-destructive transition-colors">
               Clear
             </button>
+            <span className="text-muted-foreground/40">·</span>
+            <button
+              type="button"
+              onClick={() => setBulkDeleteOpen(true)}
+              className="inline-flex items-center gap-1 text-destructive hover:text-destructive/80 transition-colors"
+            >
+              Delete Selected
+            </button>
           </>
         )}
       </div>
@@ -833,6 +842,36 @@ export function ImportantFrequenciesView() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* ── Bulk Delete confirmation ─────────────────────────────────────────── */}
+      <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <AlertDialogContent className="max-w-sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="mono text-sm uppercase tracking-wide">
+              Delete Selected Entries
+            </AlertDialogTitle>
+            <AlertDialogDescription className="mono text-[11px] text-foreground">
+              Delete {selectedIds.size} selected frequency entr{selectedIds.size !== 1 ? "ies" : "y"}? This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="mono text-[11px] uppercase tracking-wider">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="mono text-[11px] uppercase tracking-wider bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={(e) => {
+                e.preventDefault();
+                sorted.filter((r) => selectedIds.has(r.id)).forEach((r) => removeRow(r));
+                clearSelection();
+                setBulkDeleteOpen(false);
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* ── Clear All confirmation ───────────────────────────────────────────── */}
       <AlertDialog open={clearConfirm} onOpenChange={setClearConfirm}>

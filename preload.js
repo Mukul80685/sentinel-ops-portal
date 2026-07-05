@@ -1,0 +1,1 @@
+// Empty preload for now — security layer for Electron

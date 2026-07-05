@@ -147,6 +147,36 @@ export function moveDocuments(
   saveStore(module, store);
 }
 
+/** Duplicate documents into a target folder (null = home). Copies get new ids. */
+export function copyDocuments(
+  module: DocumentModule,
+  docIds: string[],
+  folderId: string | null,
+): void {
+  const ids = new Set(docIds);
+  const store = loadStore(module);
+  const copies = store.documents
+    .filter((d) => ids.has(d.id))
+    .map((d) => ({ ...d, id: crypto.randomUUID(), folderId }));
+  store.documents.unshift(...copies);
+  saveStore(module, store);
+}
+
+export function deleteDocuments(module: DocumentModule, docIds: string[]): void {
+  const ids = new Set(docIds);
+  const store = loadStore(module);
+  store.documents = store.documents.filter((d) => !ids.has(d.id));
+  saveStore(module, store);
+}
+
+/** Delete a folder and every document inside it. */
+export function deleteFolder(module: DocumentModule, folderId: string): void {
+  const store = loadStore(module);
+  store.folders = store.folders.filter((f) => f.id !== folderId);
+  store.documents = store.documents.filter((d) => d.folderId !== folderId);
+  saveStore(module, store);
+}
+
 export function getDocuments(module: DocumentModule): StoredDocument[] {
   return loadStore(module).documents;
 }

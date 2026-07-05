@@ -3,17 +3,28 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
 import { Empty } from "@/components/Empty";
 import { useCanEdit } from "@/lib/auth";
-import { updateOperationalEquipment } from "@/lib/operationalStore";
+import { removeOperationalEquipment, updateOperationalEquipment } from "@/lib/operationalStore";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useState } from "react";
 import { toast } from "sonner";
-import { ClipboardList, ImageOff } from "lucide-react";
+import { ClipboardList, ImageOff, Trash2 } from "lucide-react";
 import { fileUrl, uploadFile } from "@/lib/storage";
 import { getUnitById, listCategories, listEquipmentForUnit, statusClass } from "@/lib/queries";
+import { toggleSelection, allSelected } from "@/lib/dataTableUtils";
 
 export const Route = createFileRoute("/_authenticated/inventory/$unitId/$categoryId/")({
   component: EquipmentList,
@@ -30,6 +41,9 @@ function EquipmentList() {
   const { unitId, categoryId } = Route.useParams();
   const canEdit = useCanEdit();
   const qc = useQueryClient();
+
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
   const { data: meta } = useQuery({
     queryKey: ["meta", unitId, categoryId],
@@ -53,7 +67,24 @@ function EquipmentList() {
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["eq", unitId, categoryId] });
 
-  // Derive clean "Unit A" from code
+  const visibleIds = items.map((e: any) => e.id);
+  const selectAll = allSelected(visibleIds, selectedIds);
+
+  function handleSelectAll() {
+    setSelectedIds(selectAll ? new Set() : new Set(visibleIds));
+  }
+
+  function confirmBulkDelete() {
+    const count = selectedIds.size;
+    for (const id of selectedIds) {
+      removeOperationalEquipment(id);
+    }
+    setSelectedIds(new Set());
+    setBulkDeleteOpen(false);
+    qc.invalidateQueries({ queryKey: ["eq", unitId, categoryId] });
+    toast.success(`${count} item(s) deleted.`);
+  }
+
   const unitLetter = meta?.unit?.code?.split("-").pop() ?? "";
   const headerTitle = meta
     ? `Unit ${unitLetter} \u2014 ${meta.cat?.name ?? "Equipment"}`
@@ -66,14 +97,39 @@ function EquipmentList() {
       horizontalNav={null}
       actions={
         canEdit ? (
-          <AddDetailsDialog
-            items={items}
-            unitId={unitId}
-            onSaved={refresh}
-          />
+          <div className="flex items-center gap-2">
+            {items.length > 0 && (
+              <label className="flex items-center gap-1.5 cursor-pointer mono text-[11px] text-muted-foreground select-none">
+                <input
+                  type="checkbox"
+                  checked={selectAll}
+                  onChange={handleSelectAll}
+                  className="cursor-pointer accent-primary"
+                />
+                All
+              </label>
+            )}
+            <AddDetailsDialog items={items} unitId={unitId} onSaved={refresh} />
+          </div>
         ) : null
       }
     >
+      {selectedIds.size > 0 && (
+        <div className="mb-3 px-3 py-2 rounded-md border border-border bg-primary/5 flex items-center gap-3 mono text-[11px]">
+          <span className="text-primary font-bold">
+            {selectedIds.size} item{selectedIds.size !== 1 ? "s" : ""} selected
+          </span>
+          <Button
+            variant="destructive"
+            size="sm"
+            className="mono text-[11px] uppercase tracking-wider h-7"
+            onClick={() => setBulkDeleteOpen(true)}
+          >
+            <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete Selected
+          </Button>
+        </div>
+      )}
+
       {items.length === 0 ? (
         <Empty
           title="No equipment registered"
@@ -82,31 +138,85 @@ function EquipmentList() {
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
           {items.map((eq: any) => (
-            <Link
-              key={eq.id}
-              to="/inventory/$unitId/$categoryId/$equipmentId"
-              params={{ unitId, categoryId, equipmentId: eq.id }}
-              className="panel overflow-hidden group hover:border-primary transition"
-            >
-              <div className="aspect-video bg-secondary grid place-items-center overflow-hidden">
-                {eq.photo_url ? (
-                  <img src={fileUrl(eq.photo_url)} alt={eq.name} className="w-full h-full object-cover" />
-                ) : (
-                  <ImageOff className="h-8 w-8 text-muted-foreground" />
-                )}
-              </div>
-              <div className="p-3">
-                <div className="flex items-center gap-2">
-                  <span className={`status-dot ${statusClass(eq.serviceability)}`} />
-                  <span className="label-eyebrow truncate">{eq.serviceability}</span>
+            <div key={eq.id} className="relative group">
+              {canEdit && (
+                <div
+                  className={`absolute top-2 right-2 z-10 transition-opacity ${
+                    selectedIds.has(eq.id) || selectedIds.size > 0
+                      ? "opacity-100"
+                      : "opacity-0 group-hover:opacity-100"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(eq.id)}
+                    onChange={(e) => {
+                      e.stopPropagation();
+                      setSelectedIds((prev) => toggleSelection(prev, eq.id));
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    className="cursor-pointer accent-primary h-4 w-4 rounded shadow"
+                  />
                 </div>
-                <div className="mono text-sm font-bold uppercase mt-1 truncate">{eq.name}</div>
-                <div className="text-[11px] text-muted-foreground mono truncate">{eq.make} {eq.model}</div>
-              </div>
-            </Link>
+              )}
+              <Link
+                to="/inventory/$unitId/$categoryId/$equipmentId"
+                params={{ unitId, categoryId, equipmentId: eq.id }}
+                className={`panel overflow-hidden block hover:border-primary transition ${
+                  selectedIds.has(eq.id) ? "border-primary bg-primary/5" : ""
+                }`}
+                onClick={(e) => {
+                  if (selectedIds.size > 0) e.preventDefault();
+                }}
+              >
+                <div className="aspect-video bg-secondary grid place-items-center overflow-hidden">
+                  {eq.photo_url ? (
+                    <img src={fileUrl(eq.photo_url)} alt={eq.name} className="w-full h-full object-cover" />
+                  ) : (
+                    <ImageOff className="h-8 w-8 text-muted-foreground" />
+                  )}
+                </div>
+                <div className="p-3">
+                  <div className="flex items-center gap-2">
+                    <span className={`status-dot ${statusClass(eq.serviceability)}`} />
+                    <span className="label-eyebrow truncate">{eq.serviceability}</span>
+                  </div>
+                  <div className="mono text-sm font-bold uppercase mt-1 truncate">{eq.name}</div>
+                  <div className="text-[11px] text-muted-foreground mono truncate">{eq.make} {eq.model}</div>
+                </div>
+              </Link>
+            </div>
           ))}
         </div>
       )}
+
+      <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <AlertDialogContent className="max-w-sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="mono text-sm uppercase tracking-wide">
+              Delete Equipment
+            </AlertDialogTitle>
+            <AlertDialogDescription className="mono text-[11px] text-foreground">
+              Delete {selectedIds.size} equipment item{selectedIds.size !== 1 ? "s" : ""} and all
+              their related data? This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="mono text-[11px] uppercase tracking-wider">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="mono text-[11px] uppercase tracking-wider bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={(e) => {
+                e.preventDefault();
+                confirmBulkDelete();
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AppShell>
   );
 }
@@ -208,7 +318,6 @@ function AddDetailsDialog({
         </DialogHeader>
 
         <form onSubmit={submit} className="space-y-4">
-          {/* Step 1 — always visible: choose existing resource */}
           <Field label="Choose Resource">
             <Select value={selectedId} onValueChange={handleSelectItem}>
               <SelectTrigger>
@@ -226,14 +335,12 @@ function AddDetailsDialog({
             </Select>
           </Field>
 
-          {/* Step 2 — detail form, revealed after selection */}
           {selectedId && (
             <>
               <div className="border-t border-border pt-3">
                 <div className="label-eyebrow mb-3">Equipment Details</div>
               </div>
 
-              {/* Required fields */}
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Make *">
                   <Input
@@ -289,7 +396,6 @@ function AddDetailsDialog({
                 )}
               </Field>
 
-              {/* Optional fields */}
               <Field label="Name">
                 <Input
                   value={form.name}
