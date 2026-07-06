@@ -797,3 +797,70 @@ export function summarizeIntelSatelliteRows(rows: IntelSatelliteReportRow[]): Un
     lastReportIso,
   };
 }
+
+/**
+ * Build a minimal IntelDrillDownReport for a satellite that was imported
+ * via the scan-report import (i.e. not in the original unit roster).
+ * When linkageCtx is provided, beam data is fetched from the Satellite
+ * Visibility Matrix.  If the satellite is absent from the matrix, the
+ * report is flagged with visibilityBlocked = true and a descriptive
+ * visibilityConstraint message so the analysis page can surface it.
+ */
+export function buildSyntheticDrillDownReport(
+  satelliteName: string,
+  unitId: string,
+  ctx?: IntelLinkageContext,
+): IntelDrillDownReport {
+  const reportId = `${unitId}__${satelliteName.replace(/\s+/g, "-")}`;
+  const emptyProfile: VisibilitySatelliteProfile = {
+    name: satelliteName,
+    originCountry: "—",
+    launchDate: "—",
+    orbitalPosition: "—",
+    totalTransponders: "—",
+    beamDistributionSummary: "—",
+    defaultPolarization: "—",
+  };
+
+  let totalBeamsAvailable: string[] = [];
+  let totalBeamCount = 0;
+  let beamsVisibleToUnit: string[] = [];
+  let visibilityBlocked = false;
+  let visibilityConstraint = "—";
+
+  if (ctx) {
+    const { beams, snapshot } = resolveBeamVisibilityFromMatrix(satelliteName, unitId, ctx);
+    totalBeamsAvailable = snapshot?.beamInventory ?? [];
+    totalBeamCount      = snapshot?.totalBeamCount ?? totalBeamsAvailable.length;
+    beamsVisibleToUnit  = snapshot?.beamsVisibleToUnit ?? beams;
+
+    if (totalBeamsAvailable.length === 0) {
+      visibilityBlocked  = true;
+      visibilityConstraint =
+        `"${satelliteName}" not found in Satellite Visibility Matrix — beam data unavailable.`;
+    }
+  }
+
+  return {
+    reportId,
+    satelliteName,
+    unitId,
+    baseProfile: emptyProfile,
+    totalBeamsAvailable,
+    totalBeamCount,
+    beamsVisibleToUnit,
+    scanBand: "—",
+    visibilityBlocked,
+    visibilityConstraint,
+    scanSummary: {
+      polarization: "—",
+      totalScanned: 0,
+      analyzed: 0,
+      pending: 0,
+      scanStartDate: "—",
+    },
+    productive: [],
+    nonProductive: [],
+    novelProtocols: [],
+  };
+}

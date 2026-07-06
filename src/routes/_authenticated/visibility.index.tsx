@@ -92,8 +92,9 @@ import {
 } from "@/lib/visibilityMatrix";
 import {
   getVisibilityOverlay,
-  patchVisibilityOverlay,
-  removeSatelliteFromOverlay,
+  addSatelliteToUnitRegion,
+  editSatelliteInUnitOverlay,
+  removeSatelliteFromUnitOverlay,
   VISIBILITY_OVERLAY_EVENT,
 } from "@/lib/visibilityOverlay";
 import { mergeRegionsWithOverlay, useVisibleSatelliteCounts } from "@/lib/satelliteCatalog";
@@ -305,31 +306,26 @@ function VisibilityPage() {
   }, []);
 
   function handleAddSat(regionId: string, sat: GeoSatellite) {
-    const overlay = getVisibilityOverlay();
-    patchVisibilityOverlay({
-      addedSats: {
-        ...overlay.addedSats,
-        [regionId]: [...(overlay.addedSats[regionId] ?? []), sat],
-      },
-    });
+    if (!selectedUnitId) return;
+    addSatelliteToUnitRegion(selectedUnitId, regionId, sat);
   }
 
   function handleEditSat(updated: GeoSatellite) {
-    const overlay = getVisibilityOverlay();
-    patchVisibilityOverlay({
-      editedSats: { ...overlay.editedSats, [updated.id]: updated },
-    });
+    if (!selectedUnitId) return;
+    editSatelliteInUnitOverlay(selectedUnitId, updated);
   }
 
   function handleDeleteSat(regionId: string, satId: string) {
-    removeSatelliteFromOverlay(regionId, satId);
+    if (!selectedUnitId) return;
+    removeSatelliteFromUnitOverlay(selectedUnitId, regionId, satId);
     if (focusSatelliteId === satId) setFocusSatelliteId(null);
     if (activeSat?.id === satId) setActiveSat(null);
   }
 
   const mergedRegions = useMemo(
-    () => mergeRegionsWithOverlay(),
-    [overlayVersion],
+    () => mergeRegionsWithOverlay(getVisibilityOverlay(), selectedUnitId ?? undefined),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [overlayVersion, selectedUnitId],
   );
 
   const activeRegion = useMemo(
@@ -434,7 +430,7 @@ function VisibilityPage() {
 
   return (
     <AppShell
-      title="Satellite Visibility Matrices"
+      title="Satellite Visibility Matrix"
       subtitle="Target Country Satellites"
       headerIcon={<SatIcon className="h-4 w-4 shrink-0" />}
       horizontalNav={null}

@@ -429,7 +429,7 @@ function SatelliteIntelRepository() {
                   <input type="checkbox" checked={selectAll} onChange={handleSelectAll} className="accent-primary cursor-pointer" />
                 </th>
                 {[
-                  "#", "Date", "Satellite", "Polarization", "Frequency",
+                  "#", "Date of Collection", "Satellite", "Polarization", "Frequency",
                   "Symbol Rate", "Modulation", "Signal Type", "Status",
                   "Analysis Summary", "Unit", "Operator", "Remarks", "Productivity",
                 ].map((col) => (

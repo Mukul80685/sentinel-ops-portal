@@ -8,7 +8,7 @@ import {
   type GeoSatellite,
   countVisibleSatellitesForUnit,
 } from "@/lib/visibilityMatrix";
-import { getVisibilityOverlay, VISIBILITY_OVERLAY_EVENT } from "@/lib/visibilityOverlay";
+import { getVisibilityOverlay, unitScopeKey, VISIBILITY_OVERLAY_EVENT } from "@/lib/visibilityOverlay";
 import { useEffect, useState } from "react";
 import { INT_UNITS } from "@/lib/intelUnits";
 
@@ -21,16 +21,40 @@ export type FlatSatelliteRow = {
   satellite: GeoSatellite;
 };
 
+/**
+ * Merge the base GEO_REGIONS catalog with the user overlay.
+ *
+ * When `unitId` is provided the merge includes:
+ *   • globally-added satellites (`addedSats[regionId]`)
+ *   • unit-specific satellites (`addedSats[unitId::regionId]`)
+ *   • unit-specific edits (`editedSats[unitId::satId]`) falling back to global edits
+ *
+ * Without `unitId` only the globally-keyed buckets are used (sidebar, fleet state, etc.).
+ */
 export function mergeRegionsWithOverlay(
   overlay = getVisibilityOverlay(),
+  unitId?: string,
 ): GeoRegion[] {
   const deleted = new Set(overlay.deletedSatIds ?? []);
-  return GEO_REGIONS.map((r) => ({
-    ...r,
-    satellites: [...r.satellites, ...(overlay.addedSats[r.id] ?? [])]
-      .map((s) => overlay.editedSats[s.id] ?? s)
-      .filter((s) => !deleted.has(s.id)),
-  }));
+  return GEO_REGIONS.map((r) => {
+    const globalAdded = overlay.addedSats[r.id] ?? [];
+    const unitAdded = unitId ? (overlay.addedSats[unitScopeKey(unitId, r.id)] ?? []) : [];
+    return {
+      ...r,
+      satellites: [...r.satellites, ...globalAdded, ...unitAdded]
+        .map((s) => {
+          if (unitId) {
+            return (
+              overlay.editedSats[unitScopeKey(unitId, s.id)] ??
+              overlay.editedSats[s.id] ??
+              s
+            );
+          }
+          return overlay.editedSats[s.id] ?? s;
+        })
+        .filter((s) => !deleted.has(s.id)),
+    };
+  });
 }
 
 /** Flatten unit-based/hierarchical structure into a single unified dataset. */
@@ -107,9 +131,10 @@ export function useVisibleSatelliteCounts(): Record<string, number> {
 
   useEffect(() => {
     const refresh = () => {
-      const regions = mergeRegionsWithOverlay();
+      const overlay = getVisibilityOverlay();
       const next: Record<string, number> = {};
       for (const unit of INT_UNITS) {
+        const regions = mergeRegionsWithOverlay(overlay, unit.id);
         next[unit.id] = countVisibleSatellitesForUnit(unit.id, regions);
       }
       setCounts(next);

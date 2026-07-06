@@ -89,6 +89,8 @@ export type PriorityAllocationRow = {
   status: AllocationStatus;
   assignedBy: string;
   lastUpdated: string;
+  /** True for rows added via "Add Satellite" — seed rows cannot be deleted. */
+  isUserAdded?: boolean;
 };
 
 export type SortDir = "asc" | "desc";
@@ -337,6 +339,9 @@ function buildSeedRowsFixed(slot: UnitSlot): PriorityAllocationRow[] {
 }
 
 type UserStore = Record<string, PriorityAllocationRow[]>;
+type SuppressedStore = Record<string, string[]>; // slot → suppressed satelliteIds
+
+const SUPPRESSED_KEY = "ssacc_priority_suppressed_sats";
 
 function loadUserRows(slot: UnitSlot): PriorityAllocationRow[] {
   try {
@@ -361,18 +366,80 @@ function saveUserRows(slot: UnitSlot, rows: PriorityAllocationRow[]): void {
   }
 }
 
+function loadSuppressed(slot: UnitSlot): Set<string> {
+  try {
+    const raw = localStorage.getItem(SUPPRESSED_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw) as SuppressedStore;
+    return new Set(parsed[slot] ?? []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveSuppressed(slot: UnitSlot, ids: Set<string>): void {
+  try {
+    const raw = localStorage.getItem(SUPPRESSED_KEY);
+    const parsed: SuppressedStore = raw ? JSON.parse(raw) : {};
+    parsed[slot] = [...ids];
+    localStorage.setItem(SUPPRESSED_KEY, JSON.stringify(parsed));
+    notifyAllocationChange();
+  } catch {
+    /* ignore */
+  }
+}
+
 export function getAllocationsForUnit(slot: UnitSlot): PriorityAllocationRow[] {
-  const seed = buildSeedRowsFixed(slot);
+  const suppressed = loadSuppressed(slot);
+  const seed = buildSeedRowsFixed(slot).filter((r) => !suppressed.has(r.satelliteId));
   const seedIds = new Set(seed.map((r) => r.satelliteId));
-  const userExtra = loadUserRows(slot).filter((r) => !seedIds.has(r.satelliteId));
-  const merged = [...seed, ...userExtra].sort((a, b) => a.priority - b.priority || a.satelliteName.localeCompare(b.satelliteName));
+  const userExtra = loadUserRows(slot)
+    .filter((r) => !seedIds.has(r.satelliteId) && !suppressed.has(r.satelliteId))
+    .map((r) => ({ ...r, isUserAdded: true as const }));
+  const merged = [...seed, ...userExtra].sort(
+    (a, b) => a.priority - b.priority || a.satelliteName.localeCompare(b.satelliteName),
+  );
   return merged;
 }
 
 export function clearUserAllocationsForUnit(slot: UnitSlot): number {
-  const removed = loadUserRows(slot).length;
+  const userRows = loadUserRows(slot);
+  const suppressedCount = loadSuppressed(slot).size;
+  // Clear user-added rows AND restore all suppressed seed rows
   saveUserRows(slot, []);
-  return removed;
+  saveSuppressed(slot, new Set());
+  return userRows.length + suppressedCount;
+}
+
+/** Remove satellites from the allocation list by row id.
+ *  Works for both seed rows (added to suppressed list) and user-added rows (deleted from store). */
+export function removeAllocationsByIds(slot: UnitSlot, ids: string[]): void {
+  const idSet = new Set(ids);
+
+  // Split: which are user-added rows vs seed rows
+  const seed = buildSeedRowsFixed(slot);
+  const seedRowMap = new Map(seed.map((r) => [r.id, r.satelliteId]));
+
+  const suppressed = loadSuppressed(slot);
+  const userRows = loadUserRows(slot);
+
+  const newUserRows: PriorityAllocationRow[] = [];
+  for (const r of userRows) {
+    if (!idSet.has(r.id)) newUserRows.push(r);
+  }
+
+  for (const id of idSet) {
+    const satId = seedRowMap.get(id);
+    if (satId) suppressed.add(satId);
+  }
+
+  saveUserRows(slot, newUserRows);
+  saveSuppressed(slot, suppressed);
+}
+
+/** @deprecated use removeAllocationsByIds */
+export function removeUserAllocationsByIds(slot: UnitSlot, ids: string[]): void {
+  removeAllocationsByIds(slot, ids);
 }
 
 export function getUserAllocationCount(slot: UnitSlot): number {
@@ -409,6 +476,7 @@ export function addAllocationForUnit(
     status: "Standby",
     assignedBy: ASSIGNED_BY[0],
     lastUpdated: new Date().toISOString().slice(0, 10),
+    isUserAdded: true,
   };
 
   const userRows = loadUserRows(slot);

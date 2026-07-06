@@ -21,7 +21,18 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Plus, Download, ArrowUpDown, Settings2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Plus, Download, ArrowUpDown, Settings2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   addAllocationForUnit,
@@ -29,6 +40,7 @@ import {
   clearUserAllocationsForUnit,
   getAllocationsForUnit,
   getUserAllocationCount,
+  removeAllocationsByIds,
   sortAllocationRows,
   unitCodeToSlot,
   unitShortLabel,
@@ -155,6 +167,9 @@ function PriorityUnit() {
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [refreshKey, setRefreshKey] = useState(0);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deleteConfirm, setDeleteConfirm] = useState<"single" | "bulk" | null>(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
   const { data: unit } = useQuery({
     queryKey: ["unit", unitId],
@@ -214,6 +229,53 @@ function PriorityUnit() {
     setAdvancedOpen(false);
   }
 
+  const allRowIds = sortedRows.map((r) => r.id);
+  const allUserSelected =
+    allRowIds.length > 0 && allRowIds.every((id) => selectedIds.has(id));
+  const someUserSelected = allRowIds.some((id) => selectedIds.has(id));
+
+  function toggleRow(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (allUserSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(allRowIds));
+    }
+  }
+
+  function confirmDeleteSingle(id: string) {
+    setPendingDeleteId(id);
+    setDeleteConfirm("single");
+  }
+
+  function confirmDeleteBulk() {
+    setDeleteConfirm("bulk");
+  }
+
+  function executeDelete() {
+    if (!slot) return;
+    if (deleteConfirm === "single" && pendingDeleteId) {
+      removeAllocationsByIds(slot, [pendingDeleteId]);
+      setSelectedIds((prev) => { const n = new Set(prev); n.delete(pendingDeleteId); return n; });
+      toast.success("Satellite removed from allocation list.");
+    } else if (deleteConfirm === "bulk") {
+      const ids = [...selectedIds];
+      removeAllocationsByIds(slot, ids);
+      setSelectedIds(new Set());
+      toast.success(`${ids.length} satellite${ids.length !== 1 ? "s" : ""} removed from allocation list.`);
+    }
+    setDeleteConfirm(null);
+    setPendingDeleteId(null);
+    setRefreshKey((k) => k + 1);
+  }
+
   return (
     <AppShell
       title={`Satellite Priority & Allocation – ${shortLabel}`}
@@ -238,6 +300,28 @@ function PriorityUnit() {
           )}
         </div>
 
+        {canEdit && selectedIds.size > 0 && (
+          <div className="mb-2 px-3 py-2 rounded-md border border-border bg-primary/5 flex items-center gap-3 mono text-[11px] shrink-0">
+            <span className="text-primary font-bold">
+              {selectedIds.size} satellite{selectedIds.size !== 1 ? "s" : ""} selected
+            </span>
+            <button
+              type="button"
+              onClick={confirmDeleteBulk}
+              className="inline-flex items-center gap-1 text-destructive hover:text-destructive/80 transition-colors"
+            >
+              <Trash2 className="h-3.5 w-3.5" /> Delete Selected
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedIds(new Set())}
+              className="text-muted-foreground hover:text-foreground transition-colors ml-auto"
+            >
+              Clear selection
+            </button>
+          </div>
+        )}
+
         <div className="panel overflow-hidden flex flex-col flex-1 min-h-0">
           <div className="px-4 py-1.5 border-b border-border bg-secondary/20 flex items-center justify-between gap-2 shrink-0">
             <span className="mono text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -252,6 +336,17 @@ function PriorityUnit() {
             <table className="min-w-full text-sm mono">
               <thead className="bg-secondary sticky top-0 z-10">
                 <tr>
+                  {canEdit && (
+                    <th className="w-8 px-2 py-2 border-r border-border">
+                      <Checkbox
+                        checked={allUserSelected}
+                        onCheckedChange={toggleSelectAll}
+                        aria-label="Select all satellites"
+                        disabled={allRowIds.length === 0}
+                        className={someUserSelected && !allUserSelected ? "opacity-50" : ""}
+                      />
+                    </th>
+                  )}
                   {SORTABLE_COLUMNS.slice(0, 2).map((col) => (
                     <SortTh
                       key={col.key}
@@ -277,11 +372,26 @@ function PriorityUnit() {
                   {STATIC_COLUMNS.slice(2).map((col) => (
                     <StaticTh key={col.label} label={col.label} cls={col.cls} />
                   ))}
+                  {canEdit && <th className="w-10 border-l border-border" />}
                 </tr>
               </thead>
               <tbody>
                 {sortedRows.map((r) => (
-                  <tr key={r.id} className="border-t border-border hover:bg-secondary/40 align-top">
+                  <tr
+                    key={r.id}
+                    className={`border-t border-border hover:bg-secondary/40 align-top ${
+                      selectedIds.has(r.id) ? "bg-primary/5" : ""
+                    }`}
+                  >
+                    {canEdit && (
+                      <td className="w-8 px-2 py-2 border-r border-border/40">
+                        <Checkbox
+                          checked={selectedIds.has(r.id)}
+                          onCheckedChange={() => toggleRow(r.id)}
+                          aria-label={`Select ${r.satelliteName}`}
+                        />
+                      </td>
+                    )}
                     <td className="px-3 py-2 font-bold text-primary">{r.priority}</td>
                     <td className="px-3 py-2 font-bold">{r.satelliteName}</td>
                     <td className="px-3 py-2">{r.country}</td>
@@ -289,6 +399,18 @@ function PriorityUnit() {
                     <td className="px-3 py-2">{r.launchDate}</td>
                     <td className="px-3 py-2">{r.transponders}</td>
                     <td className="px-3 py-2 text-[11px]">{r.beamDetails}</td>
+                    {canEdit && (
+                      <td className="w-10 px-1 py-2 border-l border-border/40 text-center">
+                        <button
+                          type="button"
+                          onClick={() => confirmDeleteSingle(r.id)}
+                          className="text-muted-foreground hover:text-destructive transition-colors"
+                          aria-label={`Delete ${r.satelliteName}`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -309,6 +431,29 @@ function PriorityUnit() {
           </Button>
         </div>
       </div>
+
+      <AlertDialog open={!!deleteConfirm} onOpenChange={(o) => { if (!o) { setDeleteConfirm(null); setPendingDeleteId(null); } }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {deleteConfirm === "bulk"
+                ? `Remove ${selectedIds.size} satellite${selectedIds.size !== 1 ? "s" : ""}?`
+                : "Remove satellite?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteConfirm === "bulk"
+                ? `The selected ${selectedIds.size} user-added satellite${selectedIds.size !== 1 ? "s" : ""} will be removed from this unit's allocation list. Seed satellites cannot be removed.`
+                : "This user-added satellite will be removed from this unit's allocation list."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={executeDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog open={advancedOpen} onOpenChange={setAdvancedOpen}>
         <DialogContent>

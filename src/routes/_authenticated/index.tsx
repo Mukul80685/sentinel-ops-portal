@@ -22,7 +22,7 @@ const CC_TAB_THEMES: Record<string, HomeIconTheme> = {
 const SUPPORT_MODULES = [
   {
     to: "/visibility",
-    title: "Satellite Visibility Matrices",
+    title: "Satellite Visibility Matrix",
     icon: Radar,
     theme: "visibility" as const,
   },

@@ -13,6 +13,7 @@ import {
   Trash2,
   Star,
   Megaphone,
+  Info,
 } from "lucide-react";
 import { performSignOut, useAuth, useIsAdmin } from "@/lib/auth";
 import { ccHubSearch } from "@/lib/controlCenter";
@@ -24,7 +25,7 @@ import {
 import { useSidebarModules } from "@/components/sidebar/SidebarModulesProvider";
 import { SidebarProfileButton } from "@/components/sidebar/SidebarProfileButton";
 import { TIMEZONES, type IanaTimezone } from "@/lib/appTimezones";
-import { PasswordResetNotice } from "@/components/auth/PasswordResetNotice";
+import { getActiveResetNotification } from "@/lib/passwordRecovery";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -478,6 +479,30 @@ function DateTimeModal({
  * MAIN: four primary application functions
  */
 /**
+ * Compact password-reset notice for the sidebar bottom area.
+ * Reads the current user from auth context directly so it can be used in any sidebar variant.
+ */
+function SidebarResetNotice() {
+  const { user } = useAuth();
+  if (!user?.email) return null;
+  const record = getActiveResetNotification(user.email);
+  if (!record) return null;
+  return (
+    <div className="rounded-sm border border-primary/25 bg-primary/5 px-2 py-1.5 flex items-start gap-1.5 mb-0.5">
+      <Info className="h-3 w-3 text-primary shrink-0 mt-0.5" />
+      <div className="min-w-0">
+        <p className="mono text-[8px] font-bold uppercase tracking-wider text-primary leading-none">
+          Password Reset
+        </p>
+        <p className="mono text-[9px] text-foreground/80 leading-snug mt-0.5 break-words">
+          Reset on {record.displayLine}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Primary sidebar — support / utility navigation only.
  * Operational modules (Control Center, Visibility, Inventory, Serviceability) are on the homepage.
  */
@@ -558,6 +583,7 @@ function PrimaryNavSidebar({
 
       {/* BOTTOM — Settings, Sign Out */}
       <div className="border-t border-border px-2 py-1.5 flex flex-col gap-1 shrink-0">
+        <SidebarResetNotice />
         <button
           type="button"
           onClick={() => openModule("settings")}
@@ -679,6 +705,7 @@ function SecondarySidebar({
       </nav>
 
       <div className="border-t border-border px-2 py-1.5 flex flex-col gap-1 shrink-0">
+        <SidebarResetNotice />
         <button
           type="button"
           onClick={() => openModule("settings")}
@@ -867,7 +894,6 @@ export function AppShell({
         {horizontalNav}
 
         <main className={`flex-1 min-h-0 overflow-hidden ${isHome ? "p-3 sm:p-4 lg:p-5 xl:p-6" : "overflow-y-auto overflow-x-hidden p-4 sm:p-6"}`}>
-          <PasswordResetNotice email={user?.email} />
           {children}
         </main>
       </div>
