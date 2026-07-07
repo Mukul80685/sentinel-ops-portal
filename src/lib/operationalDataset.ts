@@ -84,6 +84,8 @@ export type OperationalDataset = {
   satellites: OpSatellite[];
   engagements: OpEngagement[];
   intelRows: OpIntelRow[];
+  /** Set once the user mutates the dataset — prevents auto-regeneration from resurrecting deleted data. */
+  userManaged?: boolean;
 };
 
 const CATEGORY_DEFS: OpCategory[] = [

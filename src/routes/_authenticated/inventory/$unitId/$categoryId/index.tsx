@@ -21,7 +21,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useState } from "react";
 import { toast } from "sonner";
-import { ClipboardList, ImageOff, Trash2 } from "lucide-react";
+import { Boxes, ClipboardList, ImageOff, Trash2 } from "lucide-react";
+import { HomeNavIconBadge } from "@/components/home/HomeNavIcons";
 import { fileUrl, uploadFile } from "@/lib/storage";
 import { getUnitById, listCategories, listEquipmentForUnit, statusClass } from "@/lib/queries";
 import { toggleSelection, allSelected } from "@/lib/dataTableUtils";
@@ -86,13 +87,18 @@ function EquipmentList() {
   }
 
   const unitLetter = meta?.unit?.code?.split("-").pop() ?? "";
-  const headerTitle = meta
-    ? `Unit ${unitLetter} \u2014 ${meta.cat?.name ?? "Equipment"}`
+  const unitLabel = meta?.unit
+    ? (unitLetter.length === 1 ? `Unit ${unitLetter}` : meta.unit.name)
+    : "";
+  const headerPageTitle = meta
+    ? `${unitLabel} \u2014 ${meta.cat?.name ?? "Equipment"}`
     : "Equipment";
 
   return (
     <AppShell
-      title={headerTitle}
+      title="Resource Inventory"
+      pageTitle={headerPageTitle}
+      headerIcon={<HomeNavIconBadge icon={Boxes} theme="inventory" size="md" />}
       showBack
       horizontalNav={null}
       actions={

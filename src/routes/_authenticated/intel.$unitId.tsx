@@ -2,10 +2,11 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMemo, useRef, useState, useEffect, useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
+import { HomeNavIconBadge } from "@/components/home/HomeNavIcons";
 import { Empty } from "@/components/Empty";
 import { IntelSatelliteDrillDown } from "@/components/intel/IntelSatelliteDrillDown";
 import { listUnits, listIntelRecordsForUnit, listEquipmentForUnit } from "@/lib/queries";
-import { ArrowLeft, Database, Satellite, Trash2, FileInput, Check, SkipForward, ExternalLink } from "lucide-react";
+import { Archive, ArrowLeft, Satellite, Trash2, FileInput, FileSpreadsheet, Check, SkipForward, ExternalLink } from "lucide-react";
 import { ccModuleBackLink } from "@/lib/controlCenter";
 import {
   buildIntelDrillDownReport,
@@ -677,7 +678,7 @@ function IntelUnitView() {
   const unit = useMemo(() => {
     const local = INT_UNITS.find((u) => u.id === unitId);
     if (local) return local;
-    const db = dbUnits.find((u) => u.id === unitId);
+    const db = dbUnits.find((u) => u.id === unitId || u.id === `op-unit-${unitId}`);
     if (db) return { id: db.id, code: db.code, name: db.name, location: db.description ?? "—" };
     return null;
   }, [unitId, dbUnits]);
@@ -901,18 +902,27 @@ function IntelUnitView() {
 
   if (!unit) {
     return (
-      <AppShell title="INT Repository" showBack backLink={ccModuleBackLink("intel")} horizontalNav={null}>
+      <AppShell
+        title="Intelligence Repository"
+        showBack
+        backLink={ccModuleBackLink("intel")}
+        headerIcon={<HomeNavIconBadge icon={Archive} theme="intel" size="md" />}
+        horizontalNav={null}
+      >
         <Empty title="Unit not found" hint="Return to the repository home and select a valid unit." />
       </AppShell>
     );
   }
 
+  const unitLabel = INT_UNITS.some((u) => u.id === unitId) ? `Unit ${unit.code}` : unit.name;
+
   return (
     <AppShell
-      title={`Satellite Scan Reports — Unit ${unit.code}`}
+      title="Intelligence Repository"
+      pageTitle={`Satellite Scan Reports — ${unitLabel}`}
       showBack
       backLink={ccModuleBackLink("intel")}
-      headerIcon={<Satellite className="h-4 w-4 shrink-0" />}
+      headerIcon={<HomeNavIconBadge icon={Archive} theme="intel" size="md" />}
       horizontalNav={null}
     >
       <div className="flex flex-col h-[calc(100vh-6.5rem)] min-h-0 gap-1">
@@ -926,7 +936,7 @@ function IntelUnitView() {
           >
             <ArrowLeft className="h-3 w-3" /> All Units
           </button>
-          {dataAvailable && (
+          {(dataAvailable || scanOverrides.length > 0) && (
             <span className="mono text-[10px] text-foreground/80">
               {mergedTableRows.length} satellite report{mergedTableRows.length !== 1 ? "s" : ""}
             </span>
@@ -955,17 +965,53 @@ function IntelUnitView() {
           </div>
         )}
 
+        {/* Single shared import input — used by both the onboarding screen and the table toolbar */}
+        <input
+          ref={importFileRef}
+          type="file"
+          accept={ACCEPTED_SPREADSHEET_ACCEPT}
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) { void handleImportFile(f); e.target.value = ""; }
+          }}
+        />
+
         {!dataAvailable && scanOverrides.length === 0 ? (
-          <div className="panel p-4 flex flex-col items-center justify-center text-center gap-2 flex-1">
-            <Database className="h-7 w-7 text-foreground/30" />
+          /* ── Onboarding — first Scan Report upload for a new unit ── */
+          <div className="panel p-8 flex flex-col items-center justify-center text-center gap-4 flex-1">
+            <div className="h-14 w-14 grid place-items-center rounded-md border border-primary/30 bg-primary/10">
+              <FileSpreadsheet className="h-7 w-7 text-primary" />
+            </div>
             <div>
-              <p className="mono text-[12px] font-bold uppercase tracking-wider text-foreground">
-                No data uploaded
+              <p className="mono text-[14px] font-bold uppercase tracking-wider text-foreground">
+                No Scan Report Available
               </p>
-              <p className="mono text-[10px] text-foreground/75 mt-1 max-w-sm">
-                Unit {unit.code} has no intelligence records in the repository yet.
+              <p className="mono text-[11px] text-foreground/75 mt-1.5 max-w-md">
+                Click below to upload the first Satellite Scan Report for {unitLabel}.
+                Once imported, this unit operates exactly like every other unit.
               </p>
             </div>
+            <div className="flex flex-col sm:flex-row items-center gap-2 mt-1">
+              <Button
+                type="button"
+                onClick={() => importFileRef.current?.click()}
+                className="mono uppercase tracking-wider gap-1.5"
+              >
+                <FileInput className="h-4 w-4" /> Upload Scan Report
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={downloadImportTemplate}
+                className="mono uppercase tracking-wider text-[11px]"
+              >
+                Download Template
+              </Button>
+            </div>
+            <p className="mono text-[9px] text-foreground/55 uppercase tracking-wider">
+              Accepted formats: CSV / Excel — columns must match the template
+            </p>
           </div>
         ) : isLoading ? (
           <TableSkeleton />
@@ -1005,16 +1051,6 @@ function IntelUnitView() {
                 >
                   <FileInput className="h-2.5 w-2.5" /> Import
                 </button>
-                <input
-                  ref={importFileRef}
-                  type="file"
-                  accept={ACCEPTED_SPREADSHEET_ACCEPT}
-                  className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) { void handleImportFile(f); e.target.value = ""; }
-                  }}
-                />
               </div>
             </div>
 

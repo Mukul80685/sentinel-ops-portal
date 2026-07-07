@@ -6,14 +6,7 @@ import { exportCsv, getUnitById } from "@/lib/queries";
 import { useCanEdit } from "@/lib/auth";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 import {
   Dialog,
   DialogContent,
@@ -32,7 +25,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Download, ArrowUpDown, Settings2, Trash2 } from "lucide-react";
+import { Plus, Download, ArrowUpDown, ListOrdered, Settings2, Trash2 } from "lucide-react";
+import { HomeNavIconBadge } from "@/components/home/HomeNavIcons";
 import { toast } from "sonner";
 import {
   addAllocationForUnit,
@@ -42,12 +36,18 @@ import {
   getUserAllocationCount,
   removeAllocationsByIds,
   sortAllocationRows,
+  updateAllocationPriority,
+  allocationSlotForUnit,
   unitCodeToSlot,
   unitShortLabel,
+  SAT_PRIORITIES,
+  SAT_PRIORITY_LABEL,
   type AllocationSortKey,
+  type SatPriority,
   type SortDir,
 } from "@/lib/priorityAllocation";
-import { flattenSatelliteCatalog } from "@/lib/satelliteCatalog";
+import { flattenGlobalSatelliteCatalog } from "@/lib/satelliteCatalog";
+import { VISIBILITY_OVERLAY_EVENT } from "@/lib/visibilityOverlay";
 
 export const Route = createFileRoute("/_authenticated/priority/$unitId")({
   component: PriorityUnit,
@@ -176,8 +176,9 @@ function PriorityUnit() {
     queryFn: () => getUnitById(unitId),
   });
 
-  const slot = unit?.code ? unitCodeToSlot(unit.code) : null;
-  const shortLabel = unit?.code ? unitShortLabel(unit.code) : "Unit";
+  const slot = unit ? allocationSlotForUnit(unit) : null;
+  const seedLabel = unit?.code ? unitShortLabel(unit.code) : "Unit";
+  const shortLabel = seedLabel !== "Unit" ? seedLabel : (unit?.name ?? "Unit");
 
   const rows = useMemo(() => {
     if (!slot) return [];
@@ -278,9 +279,9 @@ function PriorityUnit() {
 
   return (
     <AppShell
-      title={`Satellite Priority & Allocation – ${shortLabel}`}
-      subtitle={`Priority of Satellites Allocated to ${shortLabel}`}
-      headerTitleClassName="mono text-[0.8rem] sm:text-[0.95rem] font-bold tracking-tight uppercase whitespace-normal leading-snug"
+      title="Satellite Priority & Allocation"
+      pageTitle={`Priority of Satellites Allocated to ${shortLabel}`}
+      headerIcon={<HomeNavIconBadge icon={ListOrdered} theme="priority" size="md" />}
       showBack
       backLink={ccModuleBackLink("priority")}
       horizontalNav={null}
@@ -291,6 +292,7 @@ function PriorityUnit() {
             variant="outline"
             size="sm"
             onClick={exportData}
+            disabled={sortedRows.length === 0}
             className="mono text-[11px] uppercase tracking-wider h-8"
           >
             <Download className="h-3.5 w-3.5 mr-1" /> Download CSV
@@ -392,7 +394,23 @@ function PriorityUnit() {
                         />
                       </td>
                     )}
-                    <td className="px-3 py-2 font-bold text-primary">{r.priority}</td>
+                    <td className="px-2 py-1.5">
+                      <select
+                        value={Math.min(Math.max(Math.round(r.priority), 1), 3)}
+                        onChange={(e) => {
+                          if (!slot) return;
+                          updateAllocationPriority(slot, r.satelliteId, Number(e.target.value) as SatPriority);
+                          setRefreshKey((k) => k + 1);
+                        }}
+                        disabled={!canEdit}
+                        className="mono text-[11px] font-bold text-primary bg-primary/10 border border-primary/30 rounded px-1.5 py-0.5 cursor-pointer hover:bg-primary/15 focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:opacity-60 disabled:cursor-default"
+                        aria-label={`Priority for ${r.satelliteName}`}
+                      >
+                        {SAT_PRIORITIES.map((p) => (
+                          <option key={p} value={p}>{SAT_PRIORITY_LABEL[p]}</option>
+                        ))}
+                      </select>
+                    </td>
                     <td className="px-3 py-2 font-bold">{r.satelliteName}</td>
                     <td className="px-3 py-2">{r.country}</td>
                     <td className="px-3 py-2 text-muted-foreground">{r.orbitalPosition}</td>
@@ -487,62 +505,215 @@ function AddAllocation({
   existingIds,
   onAdded,
 }: {
-  slot: NonNullable<ReturnType<typeof unitCodeToSlot>>;
+  slot: string;
   existingIds: string[];
   onAdded: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [satelliteId, setSatelliteId] = useState("");
-  const catalog = useMemo(() => flattenSatelliteCatalog(), []);
-  const available = catalog.filter((s) => !existingIds.includes(s.id));
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Per-satellite priority: defaults to P1 when a satellite is first checked
+  const [priorities, setPriorities] = useState<Record<string, SatPriority>>({});
 
-  function submit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!satelliteId) return;
-    const row = catalog.find((s) => s.id === satelliteId);
-    if (!row) return;
-    const added = addAllocationForUnit(slot, row);
-    if (!added) {
-      toast.error("Satellite already allocated.");
-      return;
-    }
-    toast.success(`Allocated ${row.name}`);
-    setOpen(false);
-    setSatelliteId("");
-    onAdded();
+  const [catalog, setCatalog] = useState(() => flattenGlobalSatelliteCatalog());
+  useEffect(() => {
+    const refresh = () => setCatalog(flattenGlobalSatelliteCatalog());
+    window.addEventListener(VISIBILITY_OVERLAY_EVENT, refresh);
+    return () => window.removeEventListener(VISIBILITY_OVERLAY_EVENT, refresh);
+  }, []);
+
+  const available = useMemo(
+    () => catalog.filter((s) => !existingIds.includes(s.id)),
+    [catalog, existingIds],
+  );
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return available;
+    return available.filter(
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        s.countryOfOrigin.toLowerCase().includes(q),
+    );
+  }, [available, search]);
+
+  function toggleOne(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+        // Default priority to P1 when first selected
+        setPriorities((p) => (id in p ? p : { ...p, [id]: 1 }));
+      }
+      return next;
+    });
   }
 
+  function toggleAll() {
+    if (selected.size === filtered.length && filtered.length > 0) {
+      setSelected(new Set());
+    } else {
+      const newIds = filtered.map((s) => s.id);
+      setSelected(new Set(newIds));
+      setPriorities((prev) => {
+        const next = { ...prev };
+        for (const id of newIds) if (!(id in next)) next[id] = 1;
+        return next;
+      });
+    }
+  }
+
+  function setPriority(id: string, p: SatPriority) {
+    setPriorities((prev) => ({ ...prev, [id]: p }));
+  }
+
+  function handleOpen(v: boolean) {
+    setOpen(v);
+    if (!v) {
+      setSearch("");
+      setSelected(new Set());
+      setPriorities({});
+    }
+  }
+
+  function submit() {
+    if (selected.size === 0) return;
+    let added = 0;
+    for (const id of selected) {
+      const row = catalog.find((s) => s.id === id);
+      if (row && addAllocationForUnit(slot, row, priorities[id] ?? 1)) added++;
+    }
+    if (added > 0) {
+      toast.success(`${added} satellite${added !== 1 ? "s" : ""} allocated.`);
+      onAdded();
+    } else {
+      toast.error("No new satellites were added (already allocated).");
+    }
+    handleOpen(false);
+  }
+
+  const allFiltered = filtered.length > 0 && selected.size === filtered.length;
+
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={handleOpen}>
       <DialogTrigger asChild>
         <Button size="sm" className="mono text-[11px] uppercase tracking-wider h-8">
           <Plus className="h-3.5 w-3.5 mr-1" /> Add Satellite
         </Button>
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle className="mono uppercase tracking-wider">Allocate Satellite</DialogTitle>
+          <DialogTitle className="mono uppercase tracking-wider">Allocate Satellites</DialogTitle>
         </DialogHeader>
-        <form onSubmit={submit} className="space-y-3">
-          <div>
-            <Label className="label-eyebrow">Satellite</Label>
-            <Select value={satelliteId} onValueChange={setSatelliteId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select satellite" />
-              </SelectTrigger>
-              <SelectContent>
-                {available.map((s) => (
-                  <SelectItem key={s.id} value={s.id}>
-                    {s.name} — {s.countryOfOrigin} ({s.satellite.position})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+
+        <div className="space-y-3">
+          {/* Search */}
+          <Input
+            placeholder="Search by name or country…"
+            value={search}
+            onChange={(e) => { setSearch(e.target.value); setSelected(new Set()); setPriorities({}); }}
+            className="mono text-xs h-8"
+            autoFocus
+          />
+
+          {/* Column header */}
+          {filtered.length > 0 && (
+            <div className="flex items-center gap-2 pb-1 border-b border-border">
+              <Checkbox
+                id="alloc-select-all"
+                checked={allFiltered}
+                onCheckedChange={toggleAll}
+                className="shrink-0"
+              />
+              <label
+                htmlFor="alloc-select-all"
+                className="mono text-[10px] uppercase tracking-wider cursor-pointer text-muted-foreground select-none flex-1"
+              >
+                {allFiltered ? "Deselect all" : `Select all (${filtered.length})`}
+              </label>
+              <span className="mono text-[10px] uppercase tracking-wider text-muted-foreground w-16 text-center shrink-0">
+                Priority
+              </span>
+              {selected.size > 0 && (
+                <span className="mono text-[11px] text-primary font-bold ml-1">
+                  {selected.size} selected
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Satellite list */}
+          <div className="overflow-y-auto max-h-60 space-y-0.5 pr-1">
+            {filtered.length === 0 ? (
+              <p className="mono text-[11px] text-muted-foreground text-center py-6">
+                {available.length === 0
+                  ? "All satellites are already allocated."
+                  : "No satellites match your search."}
+              </p>
+            ) : (
+              filtered.map((s) => (
+                <div
+                  key={s.id}
+                  className={`flex items-center gap-2.5 rounded px-2 py-1.5 transition-colors ${
+                    selected.has(s.id)
+                      ? "bg-primary/10 hover:bg-primary/15"
+                      : "hover:bg-secondary"
+                  }`}
+                >
+                  <Checkbox
+                    checked={selected.has(s.id)}
+                    onCheckedChange={() => toggleOne(s.id)}
+                    className="shrink-0"
+                  />
+                  {/* Name + country — clicking the text area toggles the checkbox */}
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 text-left"
+                    onClick={() => toggleOne(s.id)}
+                  >
+                    <div className="mono text-[12px] font-bold leading-tight truncate">{s.name}</div>
+                    <div className="mono text-[10px] text-muted-foreground truncate">
+                      {s.countryOfOrigin}
+                      {s.satellite.position ? ` · ${s.satellite.position}` : ""}
+                    </div>
+                  </button>
+                  {/* Priority dropdown — always visible; applies only if row is selected */}
+                  <select
+                    value={priorities[s.id] ?? 1}
+                    onChange={(e) => {
+                      const p = Number(e.target.value) as SatPriority;
+                      setPriority(s.id, p);
+                      // Auto-select the row when a priority is explicitly chosen
+                      if (!selected.has(s.id)) {
+                        setSelected((prev) => new Set([...prev, s.id]));
+                      }
+                    }}
+                    className={`mono text-[11px] font-bold border rounded px-1.5 py-0.5 w-16 shrink-0 focus:outline-none focus:ring-1 focus:ring-primary/50 cursor-pointer ${
+                      selected.has(s.id)
+                        ? "text-primary bg-primary/10 border-primary/30 hover:bg-primary/15"
+                        : "text-muted-foreground bg-secondary border-border hover:bg-secondary/80"
+                    }`}
+                    aria-label={`Priority for ${s.name}`}
+                  >
+                    {SAT_PRIORITIES.map((p) => (
+                      <option key={p} value={p}>{SAT_PRIORITY_LABEL[p]}</option>
+                    ))}
+                  </select>
+                </div>
+              ))
+            )}
           </div>
-          <Button type="submit" className="w-full mono uppercase tracking-wider" disabled={!satelliteId}>
-            Allocate
+
+          <Button
+            className="w-full mono uppercase tracking-wider"
+            disabled={selected.size === 0}
+            onClick={submit}
+          >
+            Allocate {selected.size > 0 ? `${selected.size} Satellite${selected.size !== 1 ? "s" : ""}` : ""}
           </Button>
-        </form>
+        </div>
       </DialogContent>
     </Dialog>
   );

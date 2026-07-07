@@ -8,7 +8,12 @@ import {
   type GeoSatellite,
   countVisibleSatellitesForUnit,
 } from "@/lib/visibilityMatrix";
-import { getVisibilityOverlay, unitScopeKey, VISIBILITY_OVERLAY_EVENT } from "@/lib/visibilityOverlay";
+import {
+  getVisibilityOverlay,
+  unitScopeKey,
+  VISIBILITY_OVERLAY_EVENT,
+  getUnitImportedSatCount,
+} from "@/lib/visibilityOverlay";
 import { useEffect, useState } from "react";
 import { INT_UNITS } from "@/lib/intelUnits";
 
@@ -73,6 +78,54 @@ export function flattenSatelliteCatalog(
   );
 }
 
+/**
+ * Global satellite catalog for the "Add Satellite" picker.
+ *
+ * Aggregates the base GEO_REGIONS catalog plus every satellite ever added
+ * through the Satellite Visibility Matrix — whether added globally or scoped
+ * to a specific unit — so that the allocation picker stays in sync with the
+ * visibility matrix regardless of which unit performed the addition.
+ *
+ * Satellites in `deletedSatIds` are excluded. Results are sorted
+ * alphabetically by name.
+ */
+export function flattenGlobalSatelliteCatalog(): FlatSatelliteRow[] {
+  const overlay = getVisibilityOverlay();
+  const deleted = new Set(overlay.deletedSatIds ?? []);
+  const regionById = new Map(GEO_REGIONS.map((r) => [r.id, r]));
+
+  const seen = new Set<string>();
+  const rows: FlatSatelliteRow[] = [];
+
+  function addRow(sat: GeoSatellite, regionId: string) {
+    if (deleted.has(sat.id) || seen.has(sat.id)) return;
+    seen.add(sat.id);
+    const region = regionById.get(regionId);
+    const resolved = overlay.editedSats[sat.id] ?? sat;
+    rows.push({
+      id: resolved.id,
+      name: resolved.name,
+      countryOfOrigin: region?.label ?? regionId,
+      launchDate: resolved.launchDate,
+      regionId,
+      satellite: resolved,
+    });
+  }
+
+  // 1. Base catalog
+  for (const region of GEO_REGIONS) {
+    for (const sat of region.satellites) addRow(sat, region.id);
+  }
+
+  // 2. All overlay additions — global (key = regionId) and unit-scoped (key = unitId::regionId)
+  for (const [key, sats] of Object.entries(overlay.addedSats)) {
+    const regionId = key.includes("::") ? key.split("::").slice(1).join("::") : key;
+    for (const sat of sats) addRow(sat, regionId);
+  }
+
+  return rows.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 /** Parse launch date for sorting — NOT string comparison. */
 export function parseLaunchDate(value: string): number | null {
   const trimmed = value.trim();
@@ -125,24 +178,70 @@ export function useSatelliteCatalog(): FlatSatelliteRow[] {
   return rows;
 }
 
-/** Live visible-satellite counts per INT unit id (alpha … hotel). */
-export function useVisibleSatelliteCounts(): Record<string, number> {
-  const [counts, setCounts] = useState<Record<string, number>>({});
+/**
+ * Returns a region list containing ONLY satellites explicitly imported for a
+ * specific unit. Unlike mergeRegionsWithOverlay, this never includes
+ * base-catalog satellites — preventing newly created units from inheriting the
+ * global satellite inventory.
+ */
+export function mergeUnitOnlyRegions(unitId: string): GeoRegion[] {
+  const overlay = getVisibilityOverlay();
+  return GEO_REGIONS.map((r) => ({
+    ...r,
+    satellites: (overlay.addedSats[unitScopeKey(unitId, r.id)] ?? []).map(
+      (s) => overlay.editedSats[unitScopeKey(unitId, s.id)] ?? s,
+    ),
+  }));
+}
+
+/**
+ * React hook — returns per-unit imported satellite counts for a list of unit
+ * ids, updating whenever the visibility overlay changes.
+ */
+export function useUnitImportedCounts(unitIds: string[]): Record<string, number> {
+  const idsKey = unitIds.join(",");
+  const [counts, setCounts] = useState<Record<string, number>>(() => {
+    const result: Record<string, number> = {};
+    for (const id of unitIds) result[id] = getUnitImportedSatCount(id);
+    return result;
+  });
 
   useEffect(() => {
     const refresh = () => {
+      const result: Record<string, number> = {};
+      for (const id of idsKey.split(",").filter(Boolean)) {
+        result[id] = getUnitImportedSatCount(id);
+      }
+      setCounts(result);
+    };
+    refresh();
+    window.addEventListener(VISIBILITY_OVERLAY_EVENT, refresh);
+    return () => window.removeEventListener(VISIBILITY_OVERLAY_EVENT, refresh);
+  }, [idsKey]);
+
+  return counts;
+}
+
+/** Live visible-satellite counts per INT unit id (alpha … hotel). */
+export function useVisibleSatelliteCounts(unitIds?: string[]): Record<string, number> {
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const idsKey = (unitIds ?? INT_UNITS.map((u) => u.id)).join(",");
+
+  useEffect(() => {
+    const ids = idsKey ? idsKey.split(",") : [];
+    const refresh = () => {
       const overlay = getVisibilityOverlay();
       const next: Record<string, number> = {};
-      for (const unit of INT_UNITS) {
-        const regions = mergeRegionsWithOverlay(overlay, unit.id);
-        next[unit.id] = countVisibleSatellitesForUnit(unit.id, regions);
+      for (const id of ids) {
+        const regions = mergeRegionsWithOverlay(overlay, id);
+        next[id] = countVisibleSatellitesForUnit(id, regions);
       }
       setCounts(next);
     };
     refresh();
     window.addEventListener(VISIBILITY_OVERLAY_EVENT, refresh);
     return () => window.removeEventListener(VISIBILITY_OVERLAY_EVENT, refresh);
-  }, []);
+  }, [idsKey]);
 
   return counts;
 }

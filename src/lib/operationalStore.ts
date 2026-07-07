@@ -19,11 +19,11 @@ const MIN_FLEET_EQUIPMENT = 300;
 let _cache: OperationalDataset | null = null;
 
 function isValidCachedDataset(parsed: OperationalDataset): boolean {
-  return (
-    parsed.version === OPERATIONAL_DATASET_VERSION &&
-    parsed.units.length > 0 &&
-    (parsed.equipment?.length ?? 0) >= MIN_FLEET_EQUIPMENT
-  );
+  if (parsed.version !== OPERATIONAL_DATASET_VERSION) return false;
+  // User-managed datasets are never auto-regenerated — regeneration would
+  // resurrect units/equipment the user deliberately deleted.
+  if (parsed.userManaged) return true;
+  return parsed.units.length > 0 && (parsed.equipment?.length ?? 0) >= MIN_FLEET_EQUIPMENT;
 }
 
 export function getOperationalDataset(): OperationalDataset {
@@ -50,6 +50,12 @@ export function persistOperationalDataset(dataset: OperationalDataset): void {
   if (typeof window === "undefined") return;
   localStorage.setItem(OPERATIONAL_STORE_KEY, JSON.stringify(dataset));
   window.dispatchEvent(new Event(OPERATIONAL_STORE_EVENT));
+}
+
+/** Persist after a user-driven mutation — flags the dataset so it is never auto-regenerated. */
+function persistUserMutation(dataset: OperationalDataset): void {
+  dataset.userManaged = true;
+  persistOperationalDataset(dataset);
 }
 
 export function resetOperationalDataset(): OperationalDataset {
@@ -118,7 +124,7 @@ export function insertOperationalEquipment(input: NewOperationalEquipment): OpEq
   };
 
   ds.equipment.push(eq);
-  persistOperationalDataset(ds);
+  persistUserMutation(ds);
   return eq;
 }
 
@@ -134,7 +140,7 @@ export function updateOperationalEquipment(
   const eq = ds.equipment.find((e) => e.id === equipmentId);
   if (!eq) return false;
   Object.assign(eq, patch);
-  persistOperationalDataset(ds);
+  persistUserMutation(ds);
   return true;
 }
 
@@ -143,33 +149,44 @@ export function removeOperationalEquipment(equipmentId: string): boolean {
   const before = ds.equipment.length;
   ds.equipment = ds.equipment.filter((e) => e.id !== equipmentId);
   if (ds.equipment.length === before) return false;
-  persistOperationalDataset(ds);
+  persistUserMutation(ds);
   clearEquipmentAttachments(equipmentId);
   clearFaultDetailsForEquipment(equipmentId);
   return true;
 }
 
+/**
+ * Always generate a fresh unique slot for user-created units. Seed slots
+ * (alpha…hotel) are NEVER reused: a new unit landing on a freed seed slot
+ * would inherit the deleted seed unit's identity and seeded allocations.
+ */
 function nextAvailableUnitSlot(units: OpUnit[]): UnitSlot {
-  const used = new Set(units.map((u) => u.slot));
-  return UNIT_SLOTS.find((slot) => !used.has(slot)) ?? "hotel";
+  const used = new Set<string>([...units.map((u) => u.slot), ...UNIT_SLOTS]);
+  let slot: string;
+  do {
+    slot = `u${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  } while (used.has(slot));
+  return slot;
 }
 
 export function addOperationalUnit(input: {
-  code: string;
+  code?: string;
   name: string;
   description: string;
 }): OpUnit {
   const ds = getOperationalDataset();
   const slot = nextAvailableUnitSlot(ds.units);
+  const autoCode = `UNIT-${String(ds.units.length + 1).padStart(2, "0")}`;
   const unit: OpUnit = {
-    id: `op-unit-${Date.now()}`,
-    code: input.code.trim(),
+    // id embeds the slot so cross-module slug resolution (op-unit-<slot>) works.
+    id: `op-unit-${slot}`,
+    code: input.code?.trim() || autoCode,
     name: input.name.trim(),
     description: input.description.trim() || null,
     slot,
   };
   ds.units.push(unit);
-  persistOperationalDataset(ds);
+  persistUserMutation(ds);
   return unit;
 }
 
@@ -182,11 +199,125 @@ export function removeOperationalUnit(unitId: string): boolean {
   ds.engagements = ds.engagements.filter((e) => e.unit_id !== unitId);
   ds.intelRows = (ds.intelRows ?? []).filter((r) => r.unit_id !== unitId);
   if (ds.units.length === before) return false;
-  persistOperationalDataset(ds);
+  persistUserMutation(ds);
   for (const eqId of removedEqIds) {
     clearEquipmentAttachments(eqId);
     clearFaultDetailsForEquipment(eqId);
   }
+  return true;
+}
+
+/**
+ * True cascading delete — removes the unit AND every per-unit record stored
+ * anywhere in localStorage: equipment, engagements, intel rows, visibility
+ * overlay entries, priority allocations, intel imports/setup/overrides, and
+ * frequency-action entries. After this, the unit no longer exists anywhere.
+ */
+export function purgeUnitCompletely(unitId: string): boolean {
+  const ds = getOperationalDataset();
+  const unit = ds.units.find((u) => u.id === unitId);
+  if (!unit) return false;
+  const slot = unit.slot;
+
+  // 1. Operational store: unit + equipment + engagements + intel rows + attachments/faults
+  removeOperationalUnit(unitId);
+
+  if (typeof window === "undefined") return true;
+
+  // 2. Priority allocations + suppressed seed rows (keyed by slot)
+  try {
+    for (const key of ["ssacc_priority_user_allocations", "ssacc_priority_suppressed_sats", "ssacc_priority_p_overrides"]) {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      if (slot in parsed) {
+        delete parsed[slot];
+        localStorage.setItem(key, JSON.stringify(parsed));
+      }
+    }
+    window.dispatchEvent(new Event("ssacc_priority_allocation_change"));
+  } catch { /* ignore */ }
+
+  // 3. Visibility overlay — unit-scoped keys `${slot}::…` inside the overlay object
+  try {
+    const raw = localStorage.getItem("ssacc_visibility_overlay");
+    if (raw) {
+      const overlay = JSON.parse(raw) as {
+        addedSats?: Record<string, unknown>;
+        editedSats?: Record<string, unknown>;
+      };
+      let changed = false;
+      for (const bucket of [overlay.addedSats, overlay.editedSats]) {
+        if (!bucket) continue;
+        for (const k of Object.keys(bucket)) {
+          if (k.startsWith(`${slot}::`) || k.startsWith(`${unitId}::`)) {
+            delete bucket[k];
+            changed = true;
+          }
+        }
+      }
+      if (changed) {
+        localStorage.setItem("ssacc_visibility_overlay", JSON.stringify(overlay));
+        window.dispatchEvent(new Event("ssacc-visibility-overlay"));
+      }
+    }
+  } catch { /* ignore */ }
+
+  // 4. Intel module keys — prefixed by the unit slug (= slot)
+  try {
+    const prefixes = [
+      `intel-repo-imports-${slot}`,
+      `intel-sat-meta-${slot}-`,
+      `intel-scan-overrides-${slot}`,
+      `intel-setup-${slot}-`,
+    ];
+    const toRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && prefixes.some((p) => k === p || k.startsWith(p))) toRemove.push(k);
+    }
+    toRemove.forEach((k) => localStorage.removeItem(k));
+  } catch { /* ignore */ }
+
+  // 5. Intel cell edits — report ids embed the unit slug
+  try {
+    const raw = localStorage.getItem("ssacc_intel_cell_edits");
+    if (raw) {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      let changed = false;
+      for (const k of Object.keys(parsed)) {
+        if (k.includes(slot)) {
+          delete parsed[k];
+          changed = true;
+        }
+      }
+      if (changed) localStorage.setItem("ssacc_intel_cell_edits", JSON.stringify(parsed));
+    }
+  } catch { /* ignore */ }
+
+  // 6. Intel frequency-action stores — arrays of entries referencing unitId/slug
+  try {
+    const freqKeys = [
+      "ssacc_intel_freq_actions",
+      "ssacc_intel_important_refs",
+      "ssacc_intel_discarded_refs",
+      "ssacc_intel_analysis_queue",
+      "ssacc_intel_allocations",
+      "ssacc_intel_integrity_overrides",
+    ];
+    for (const key of freqKeys) {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const next = parsed.filter(
+          (e: any) => e?.unitId !== slot && e?.unitId !== unitId && e?.unit_id !== unitId,
+        );
+        if (next.length !== parsed.length) localStorage.setItem(key, JSON.stringify(next));
+      }
+    }
+  } catch { /* ignore */ }
+
   return true;
 }
 
@@ -351,7 +482,7 @@ export function updateOperationalEngagement(
   if (patch.remarks !== undefined) eng.remarks = patch.remarks ?? "";
   eng.updated_at = new Date().toISOString();
 
-  persistOperationalDataset(ds);
+  persistUserMutation(ds);
   return true;
 }
 
@@ -360,7 +491,7 @@ export function removeOperationalEngagement(engagementId: string): boolean {
   const before = ds.engagements.length;
   ds.engagements = ds.engagements.filter((e) => e.id !== engagementId);
   if (ds.engagements.length === before) return false;
-  persistOperationalDataset(ds);
+  persistUserMutation(ds);
   return true;
 }
 
@@ -383,7 +514,7 @@ export function insertOperationalEngagement(input: NewOperationalEngagement): Op
     satellites: { name: sat.name },
   };
   ds.engagements.push(eng);
-  persistOperationalDataset(ds);
+  persistUserMutation(ds);
   return eng;
 }
 
@@ -398,7 +529,7 @@ export function removeOperationalIntelRows(ids: string[]): number {
   const before = (ds.intelRows ?? []).length;
   ds.intelRows = (ds.intelRows ?? []).filter((r) => !idSet.has(r.id));
   const removed = before - ds.intelRows.length;
-  if (removed > 0) persistOperationalDataset(ds);
+  if (removed > 0) persistUserMutation(ds);
   return removed;
 }
 

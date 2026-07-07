@@ -62,28 +62,28 @@
 }
 
 :root {
-  /* SSACC — cream operational dashboard */
-  --radius: 0.25rem;
-  --background: oklch(0.97 0.012 95);           /* cream / off-white */
-  --foreground: oklch(0.22 0.01 260);           /* black / dark grey */
+  /* SSACC — military command-centre dashboard */
+  --radius: 0.5rem;
+  --background: oklch(0.900 0.025 145);          /* military sage green */
+  --foreground: oklch(0.22 0.01 260);             /* near-black */
   --card: oklch(0.99 0.008 95);
   --card-foreground: oklch(0.22 0.01 260);
   --popover: oklch(0.99 0.008 95);
   --popover-foreground: oklch(0.22 0.01 260);
-  --primary: oklch(0.45 0.1 145);               /* muted green accent */
-  --primary-foreground: oklch(0.99 0.005 95);
-  --secondary: oklch(0.91 0.04 145);            /* light green selection */
-  --secondary-foreground: oklch(0.22 0.01 260);
-  --muted: oklch(0.94 0.01 95);
-  --muted-foreground: oklch(0.22 0.01 260);
-  --accent: oklch(0.91 0.04 145);
-  --accent-foreground: oklch(0.22 0.01 260);
+  --primary: oklch(0.38 0.1 145);                 /* deep military green #264A34 */
+  --primary-foreground: oklch(0.97 0.008 95);
+  --secondary: oklch(0.38 0.085 145);             /* deep military green hover */
+  --secondary-foreground: oklch(0.97 0.008 95);
+  --muted: oklch(0.885 0.018 145);
+  --muted-foreground: oklch(0.48 0.015 260);
+  --accent: oklch(0.38 0.085 145);                /* deep military green hover */
+  --accent-foreground: oklch(0.97 0.008 95);
   --destructive: oklch(0.55 0.2 25);
   --destructive-foreground: oklch(0.99 0 0);
-  --border: oklch(0.88 0.015 95);
-  --input: oklch(0.94 0.01 95);
-  --ring: oklch(0.55 0.1 145);
-  --chart-1: oklch(0.55 0.1 145);
+  --border: oklch(0.84 0.022 145);
+  --input: oklch(0.885 0.018 145);
+  --ring: oklch(0.48 0.1 145);
+  --chart-1: oklch(0.48 0.1 145);
   --chart-2: oklch(0.65 0.12 75);
   --chart-3: oklch(0.5 0.1 145);
   --chart-4: oklch(0.55 0.15 25);
@@ -94,16 +94,17 @@
   --status-bad: oklch(0.55 0.18 25);
   --status-repair: oklch(0.55 0.02 260);
 
-  --sidebar: oklch(0.96 0.012 95);
-  --sidebar-foreground: oklch(0.22 0.01 260);
-  --sidebar-primary: oklch(0.45 0.1 145);
-  --sidebar-primary-foreground: oklch(0.99 0.005 95);
-  --sidebar-accent: oklch(0.91 0.04 145);
-  --sidebar-accent-foreground: oklch(0.22 0.01 260);
-  --sidebar-border: oklch(0.88 0.015 95);
-  --sidebar-ring: oklch(0.55 0.1 145);
+  /* Sidebar — dark military green */
+  --sidebar: oklch(0.265 0.063 145);             /* #24402F — dark military green */
+  --sidebar-foreground: oklch(0.94 0.012 95);
+  --sidebar-primary: oklch(0.72 0.14 145);
+  --sidebar-primary-foreground: oklch(0.97 0.008 95);
+  --sidebar-accent: oklch(0.305 0.068 145);
+  --sidebar-accent-foreground: oklch(0.94 0.012 95);
+  --sidebar-border: oklch(0.38 0.04 145 / 0.45);
+  --sidebar-ring: oklch(0.72 0.14 145);
 
-  --font-mono: ui-monospace, "SFMono-Regular", "Menlo", "Consolas", monospace;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", "Menlo", "Consolas", monospace;
 }
 
 .dark {
@@ -149,11 +150,11 @@
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
-    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-family: "IBM Plex Mono", ui-monospace, "SFMono-Regular", "Menlo", "Consolas", monospace;
     background-image:
-      linear-gradient(oklch(0.88 0.015 95 / 0.35) 1px, transparent 1px),
-      linear-gradient(90deg, oklch(0.88 0.015 95 / 0.35) 1px, transparent 1px);
-    background-size: 32px 32px;
+      linear-gradient(oklch(0.72 0.030 145 / 0.12) 1px, transparent 1px),
+      linear-gradient(90deg, oklch(0.72 0.030 145 / 0.12) 1px, transparent 1px);
+    background-size: 40px 40px;
     background-attachment: fixed;
   }
 
@@ -296,62 +297,62 @@
   }
 
   .home-dashboard .home-icon-badge--engagement {
-    border-color: oklch(0.72 0.12 155 / 0.55);
+    border-color: oklch(0.65 0.16 155 / 0.60);
     background: linear-gradient(
-      180deg,
-      oklch(0.9 0.06 155) 0%,
-      oklch(0.78 0.1 155) 52%,
-      oklch(0.68 0.11 155) 100%
+      160deg,
+      oklch(0.85 0.10 155) 0%,
+      oklch(0.70 0.15 155) 50%,
+      oklch(0.58 0.16 155) 100%
     );
   }
 
   .home-dashboard .home-icon-badge--intel {
-    border-color: oklch(0.68 0.14 275 / 0.55);
+    border-color: oklch(0.62 0.18 265 / 0.60);
     background: linear-gradient(
-      180deg,
-      oklch(0.88 0.06 275) 0%,
-      oklch(0.74 0.12 275) 52%,
-      oklch(0.64 0.14 275) 100%
+      160deg,
+      oklch(0.82 0.09 265) 0%,
+      oklch(0.66 0.17 265) 50%,
+      oklch(0.55 0.19 265) 100%
     );
   }
 
   .home-dashboard .home-icon-badge--priority {
-    border-color: oklch(0.68 0.16 25 / 0.5);
+    border-color: oklch(0.62 0.20 25 / 0.55);
     background: linear-gradient(
-      180deg,
-      oklch(0.9 0.05 25) 0%,
-      oklch(0.78 0.1 25) 45%,
-      oklch(0.72 0.08 250) 100%
+      160deg,
+      oklch(0.85 0.10 18) 0%,
+      oklch(0.70 0.18 22) 50%,
+      oklch(0.58 0.20 28) 100%
     );
   }
 
   .home-dashboard .home-icon-badge--visibility {
-    border-color: oklch(0.72 0.12 230 / 0.55);
+    border-color: oklch(0.66 0.16 225 / 0.60);
     background: linear-gradient(
-      180deg,
-      oklch(0.9 0.05 230) 0%,
-      oklch(0.76 0.1 230) 52%,
-      oklch(0.66 0.11 230) 100%
+      160deg,
+      oklch(0.84 0.09 225) 0%,
+      oklch(0.68 0.15 228) 50%,
+      oklch(0.56 0.16 232) 100%
     );
   }
 
   .home-dashboard .home-icon-badge--inventory {
-    border-color: oklch(0.72 0.14 65 / 0.55);
+    border-color: oklch(0.68 0.17 60 / 0.60);
     background: linear-gradient(
-      180deg,
-      oklch(0.9 0.06 65) 0%,
-      oklch(0.78 0.12 60) 52%,
-      oklch(0.68 0.13 55) 100%
+      160deg,
+      oklch(0.86 0.10 65) 0%,
+      oklch(0.72 0.16 60) 50%,
+      oklch(0.60 0.18 55) 100%
     );
   }
 
   .home-dashboard .home-icon-badge--serviceability {
-    border-color: oklch(0.72 0.02 250 / 0.55);
+    border-color: oklch(0.60 0.04 250 / 0.55);
     background: linear-gradient(
-      180deg,
-      oklch(0.94 0.01 250) 0%,
-      oklch(0.82 0.015 250) 48%,
-      oklch(0.72 0.02 250) 100%
+      160deg,
+      oklch(0.82 0.03 250) 0%,
+      oklch(0.66 0.04 250) 50%,
+      oklch(0.54 0.04 250) 100%
     );
   }
 
@@ -366,57 +367,98 @@
     overflow: visible;
   }
 
-  /* Home sidebar */
+  /* Home sidebar — dark military green */
   .home-sidebar {
-    background: linear-gradient(180deg, var(--sidebar) 0%, oklch(from var(--sidebar) calc(l - 0.015) c h) 100%);
-    box-shadow: inset -1px 0 0 oklch(0 0 0 / 0.04);
-  }
-  .home-sidebar-nav {
-    gap: 0.375rem;
+    background: linear-gradient(
+      180deg,
+      oklch(0.275 0.065 145) 0%,
+      oklch(0.250 0.058 145) 100%
+    );
+    box-shadow: inset -2px 0 6px oklch(0 0 0 / 0.18), inset -1px 0 0 oklch(0.42 0.06 145 / 0.35);
   }
 
+  /* Thin separator lines inside sidebar */
+  .home-sidebar-sep {
+    height: 1px;
+    margin: 0 0.5rem;
+    background: linear-gradient(90deg, transparent 0%, oklch(0.55 0.04 145 / 0.5) 30%, oklch(0.55 0.04 145 / 0.5) 70%, transparent 100%);
+  }
+
+  .home-sidebar-nav {
+    gap: 0.35rem;
+  }
+
+  /* Sidebar buttons — solid dark green fill, off-white text */
   .home-sidebar-btn {
-    color: var(--foreground);
-    border: 1px solid var(--border);
-    border-radius: 0.5rem;
-    background: linear-gradient(180deg, var(--card) 0%, var(--secondary) 100%);
-    box-shadow:
-      inset 0 1px 0 oklch(1 0 0 / 0.08),
-      0 2px 0 oklch(0 0 0 / 0.06),
-      0 4px 10px oklch(0 0 0 / 0.07);
-    transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+    color: oklch(0.90 0.014 95);
+    border: 1px solid oklch(0.38 0.05 145 / 0.60);
+    border-radius: 0.45rem;
+    background: oklch(0.305 0.068 145);
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
   }
   .home-sidebar-btn:hover {
-    transform: translateY(-1px);
-    border-color: oklch(0.82 0.03 145);
-    box-shadow:
-      inset 0 1px 0 oklch(1 0 0 / 0.1),
-      0 3px 0 oklch(0 0 0 / 0.05),
-      0 6px 14px oklch(0 0 0 / 0.1);
+    background: oklch(1 0 0);
+    color: oklch(0.20 0.02 260);
+    border-color: oklch(0.72 0.06 145 / 0.50);
   }
   .home-sidebar-btn:active {
-    transform: translateY(1px);
-    box-shadow:
-      inset 0 2px 5px oklch(0 0 0 / 0.1),
-      0 1px 0 oklch(0 0 0 / 0.05);
+    background: oklch(0.96 0.01 95);
+    color: oklch(0.20 0.02 260);
   }
   .home-sidebar-btn-active {
-    border-color: oklch(0.72 0.06 145);
-    background: linear-gradient(180deg, oklch(0.94 0.03 145) 0%, oklch(0.9 0.025 145) 100%);
-    box-shadow:
-      inset 0 1px 0 oklch(1 0 0 / 0.12),
-      inset 0 -1px 0 oklch(0 0 0 / 0.05),
-      0 2px 0 oklch(0 0 0 / 0.06),
-      0 4px 10px oklch(0 0 0 / 0.08);
+    background: oklch(1 0 0);
+    color: oklch(0.20 0.02 260);
+    border-color: oklch(0.72 0.06 145 / 0.55);
+    position: relative;
+  }
+  .home-sidebar-btn-active::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 20%;
+    bottom: 20%;
+    width: 3px;
+    border-radius: 0 2px 2px 0;
+    background: oklch(0.38 0.12 145);
+  }
+  /* Remove icon glow from sidebar buttons */
+  .home-sidebar .home-sidebar-btn > span:first-child {
+    box-shadow: none;
+  }
+
+  /* Date/clock button inside sidebar */
+  .home-sidebar-clock {
+    background: oklch(0.305 0.068 145) !important;
+    border: 1px solid oklch(0.38 0.05 145 / 0.60) !important;
+    border-radius: 0.45rem;
+    color: oklch(0.90 0.014 95) !important;
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+  .home-sidebar-clock:hover {
+    background: oklch(0.345 0.075 145) !important;
   }
 
   /* Control Center panel + tabs */
   .home-cc-panel {
     box-shadow:
-      inset 0 1px 0 oklch(1 0 0 / 0.06),
-      0 4px 0 oklch(0 0 0 / 0.05),
-      0 12px 40px oklch(0 0 0 / 0.1);
+      inset 0 1px 0 oklch(1 0 0 / 0.08),
+      0 4px 0 oklch(0 0 0 / 0.06),
+      0 14px 40px oklch(0 0 0 / 0.12);
   }
+
+  /* Use background-image so the bg-card base colour shows through beneath the overlay */
+  .home-cc-heading {
+    background-color: var(--card);
+    background-image: linear-gradient(
+      180deg,
+      oklch(0.98 0.012 145 / 0.60) 0%,
+      oklch(0.96 0.018 145 / 0.30) 100%
+    );
+  }
+
   .home-cc-tab {
     background: linear-gradient(180deg, transparent 0%, oklch(from var(--card) calc(l - 0.01) c h) 100%);
     transition: transform 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
@@ -427,6 +469,48 @@
   }
   .home-cc-tab:active {
     box-shadow: inset 0 3px 8px oklch(0 0 0 / 0.06);
+  }
+
+  /* Decorative elements */
+  .home-title-divider {
+    display: block;
+    text-align: center;
+    font-size: 0.65rem;
+    letter-spacing: 0.18em;
+    color: oklch(0.48 0.08 145 / 0.60);
+    user-select: none;
+    pointer-events: none;
+  }
+
+  .home-cc-title-line {
+    display: block;
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(90deg, transparent 0%, oklch(0.48 0.08 145 / 0.40) 100%);
+  }
+  .home-cc-title-line.right {
+    background: linear-gradient(90deg, oklch(0.48 0.08 145 / 0.40) 0%, transparent 100%);
+  }
+
+  .home-card-accent {
+    display: block;
+    width: 60%;
+    height: 1.5px;
+    border-radius: 1px;
+    opacity: 0.55;
+  }
+
+  /* Faint world-map meridian grid on lower module tiles */
+  .home-module-tile::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    background-image:
+      repeating-linear-gradient(0deg, transparent, transparent 18px, oklch(0.50 0.04 145 / 0.06) 19px),
+      repeating-linear-gradient(90deg, transparent, transparent 24px, oklch(0.50 0.04 145 / 0.06) 25px);
+    z-index: 0;
   }
 
   .home-dashboard {

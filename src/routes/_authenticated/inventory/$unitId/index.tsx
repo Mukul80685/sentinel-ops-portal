@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
+import { HomeNavIconBadge } from "@/components/home/HomeNavIcons";
 import { listCategories, getUnitById, listEquipmentForUnit } from "@/lib/queries";
 import {
   Activity,
@@ -45,15 +46,17 @@ function InventoryCategories() {
     },
   });
 
-  // Derive clean "Unit A — Resource Inventory" title from code
+  // Derive clean unit label from code (falls back to full unit name for dynamic units)
   const unitLetter = unit?.code?.split("-").pop() ?? "";
-  const headerTitle = unit
-    ? `Unit ${unitLetter} \u2014 Resource Inventory`
-    : "Resource Inventory";
+  const unitLabel = unit
+    ? (unitLetter.length === 1 ? `Unit ${unitLetter}` : unit.name)
+    : "";
 
   return (
     <AppShell
-      title={headerTitle}
+      title="Resource Inventory"
+      pageTitle={unitLabel ? `${unitLabel} — Equipment Categories` : undefined}
+      headerIcon={<HomeNavIconBadge icon={Boxes} theme="inventory" size="md" />}
       showBack
       horizontalNav={null}
     >

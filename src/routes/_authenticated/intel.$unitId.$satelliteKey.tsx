@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMemo, useRef, useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
+import { HomeNavIconBadge } from "@/components/home/HomeNavIcons";
 import { Empty } from "@/components/Empty";
 import { listUnits, listIntelRecordsForUnit } from "@/lib/queries";
 import { removeOperationalIntelRows } from "@/lib/operationalStore";
@@ -233,7 +234,7 @@ function SatelliteIntelRepository() {
 
   if (!unit) {
     return (
-      <AppShell title="INT Repository" showBack backLink={ccModuleBackLink("intel")} horizontalNav={null}>
+      <AppShell title="Intelligence Repository" showBack backLink={ccModuleBackLink("intel")} horizontalNav={null}>
         <Empty title="Unit not found" />
       </AppShell>
     );
@@ -241,11 +242,11 @@ function SatelliteIntelRepository() {
 
   return (
     <AppShell
-      title={`${satelliteName}`}
-      subtitle={`${unit.name} · ${polarization} — Intelligence Repository`}
+      title="Intelligence Repository"
+      pageTitle={`${satelliteName} · ${unit.name} · ${polarization}`}
       showBack
       backLink={ccModuleBackLink("intel")}
-      headerIcon={<Archive className="h-4 w-4 shrink-0" />}
+      headerIcon={<HomeNavIconBadge icon={Archive} theme="intel" size="md" />}
       horizontalNav={null}
     >
       {/* Breadcrumb */}

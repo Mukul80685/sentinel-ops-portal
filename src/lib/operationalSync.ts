@@ -31,7 +31,7 @@ export function resolveIntUnitSlug(
   dbUnitId: string,
   dbUnitCode?: string,
 ): string | null {
-  const opSlot = dbUnitId.match(/^op-unit-([a-z]+)$/i);
+  const opSlot = dbUnitId.match(/^op-unit-(.+)$/i);
   if (opSlot) return opSlot[1].toLowerCase();
 
   const normalizedCode = dbUnitCode?.replace(/^GATE[-\s]?/i, "").trim();

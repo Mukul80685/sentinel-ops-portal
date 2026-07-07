@@ -12,8 +12,9 @@ import {
   hasIntelData,
   summarizeIntelSatelliteRows,
 } from "@/lib/intelAnalysisData";
-import { resolveOperationalUnitId } from "@/lib/operationalSync";
+import { resolveIntUnitSlug, resolveOperationalUnitId } from "@/lib/operationalSync";
 import { ENGAGEMENTS_ALL_KEY, fetchAllEngagements } from "@/lib/engagementEngine";
+import { UnitAdvancedFeatures } from "@/components/UnitAdvancedFeatures";
 
 export const Route = createFileRoute("/_authenticated/intel/")({
   beforeLoad: () => {
@@ -21,6 +22,41 @@ export const Route = createFileRoute("/_authenticated/intel/")({
   },
   component: () => null,
 });
+
+/** Summary for units whose only data comes from imported scan reports (new units). */
+function summarizeScanOverrides(
+  unitSlug: string,
+): ReturnType<typeof summarizeIntelSatelliteRows> | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(`intel-scan-overrides-${unitSlug}`);
+    if (!raw) return null;
+    const overrides = JSON.parse(raw) as {
+      totalScanned: number;
+      analyzed: number;
+      productivityScore: number | null;
+      updatedOn: string;
+    }[];
+    if (!Array.isArray(overrides) || overrides.length === 0) return null;
+    const totalScanned = overrides.reduce((s, o) => s + (o.totalScanned || 0), 0);
+    const productive = overrides.reduce(
+      (s, o) => s + Math.floor((o.analyzed || 0) * ((o.productivityScore ?? 0) / 100)),
+      0,
+    );
+    let lastReportIso: string | null = null;
+    let maxTs = -Infinity;
+    for (const o of overrides) {
+      const t = new Date(o.updatedOn).getTime();
+      if (!isNaN(t) && t > maxTs) {
+        maxTs = t;
+        lastReportIso = o.updatedOn;
+      }
+    }
+    return { hasData: true, satellites: overrides.length, totalScanned, productive, lastReportIso };
+  } catch {
+    return null;
+  }
+}
 
 export function IntelRepositoryView() {
   const { data: engagements = [] } = useQuery({
@@ -43,12 +79,30 @@ export function IntelRepositoryView() {
     staleTime: 30_000,
   });
 
+  // Dynamic unit roster from the operational store — seed units keep their
+  // INT display (Unit A…H); newly created units use their own name/location.
+  const intelUnits = useMemo(
+    () =>
+      dbUnits.map((u: any) => {
+        const slug = resolveIntUnitSlug(u.id, u.code) ?? u.id;
+        const seed = INT_UNITS.find((s) => s.id === slug);
+        return {
+          id: slug,
+          code: seed?.code ?? u.code,
+          name: seed ? `Unit ${seed.code}` : u.name,
+          location: seed?.location ?? u.description ?? "—",
+        };
+      }),
+    [dbUnits],
+  );
+
   const unitStatsMap = useMemo(() => {
     const map = new Map<string, ReturnType<typeof summarizeIntelSatelliteRows>>();
 
-    for (const unit of INT_UNITS) {
+    for (const unit of intelUnits) {
       if (!hasIntelData(unit.id)) {
-        map.set(unit.id, summarizeIntelSatelliteRows([]));
+        // Units without mock rosters may still have imported scan reports.
+        map.set(unit.id, summarizeScanOverrides(unit.id) ?? summarizeIntelSatelliteRows([]));
         continue;
       }
 
@@ -63,11 +117,12 @@ export function IntelRepositoryView() {
     }
 
     return map;
-  }, [engagements, dbUnits, allEquipment, allIntelRows]);
+  }, [intelUnits, engagements, dbUnits, allEquipment, allIntelRows]);
 
   return (
+    <>
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
-      {INT_UNITS.map((unit) => {
+      {intelUnits.map((unit) => {
         const stats = unitStatsMap.get(unit.id);
         const hasData = stats?.hasData ?? false;
         const pct =
@@ -89,7 +144,7 @@ export function IntelRepositoryView() {
             <div className="flex items-start justify-between mb-1">
               <div className="min-w-0">
                 <div className="mono text-[11px] font-bold uppercase tracking-tight text-foreground leading-tight">
-                  Unit {unit.code}
+                  {unit.name}
                 </div>
                 <div className="mono text-[8px] text-foreground mt-0.5 truncate">{unit.location}</div>
               </div>
@@ -119,7 +174,7 @@ export function IntelRepositoryView() {
             ) : (
               <div className="border-t border-border/60 pt-1 flex-1 flex flex-col justify-center">
                 <p className="mono text-[8px] uppercase tracking-wider text-foreground/70 text-center py-2">
-                  No data uploaded
+                  No scan report — open to upload
                 </p>
               </div>
             )}
@@ -137,6 +192,10 @@ export function IntelRepositoryView() {
         );
       })}
     </div>
+
+    {/* ── Advanced Features — shared across all modules ── */}
+    <UnitAdvancedFeatures />
+    </>
   );
 }
 

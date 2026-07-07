@@ -1,4 +1,5 @@
 import { Link, useRouter, useRouterState } from "@tanstack/react-router";
+import earthBg from "@/assets/earth-bg.png";
 import {
   Home,
   Power,
@@ -127,12 +128,12 @@ function SidebarClock({
       type="button"
       onClick={onClockClick}
       title="Open Date / Time Control Panel"
-      className={`${HOME_SIDEBAR_BTN} mono text-[10px] uppercase tracking-wide whitespace-nowrap`}
+      className="home-sidebar-clock w-full flex items-center gap-2 px-2.5 py-2 mono text-[10px] uppercase tracking-wide whitespace-nowrap"
     >
-      <Clock className="h-3.5 w-3.5 shrink-0 text-foreground" />
+      <Clock className="h-3.5 w-3.5 shrink-0" />
       <span className="flex flex-col gap-0.5 min-w-0 leading-tight text-left">
-        <span className="text-foreground">{stamp.date || "\u00A0"}</span>
-        <span className="text-foreground">{stamp.time || "\u00A0"}</span>
+        <span>{stamp.date || "\u00A0"}</span>
+        <span>{stamp.time || "\u00A0"}</span>
       </span>
     </button>
   );
@@ -488,13 +489,13 @@ function SidebarResetNotice() {
   const record = getActiveResetNotification(user.email);
   if (!record) return null;
   return (
-    <div className="rounded-sm border border-primary/25 bg-primary/5 px-2 py-1.5 flex items-start gap-1.5 mb-0.5">
-      <Info className="h-3 w-3 text-primary shrink-0 mt-0.5" />
+    <div className="rounded-md border border-amber-400/70 bg-amber-500/25 px-2.5 py-2 flex items-start gap-2 mb-0.5">
+      <Info className="h-3.5 w-3.5 text-amber-300 shrink-0 mt-0.5" />
       <div className="min-w-0">
-        <p className="mono text-[8px] font-bold uppercase tracking-wider text-primary leading-none">
+        <p className="mono text-[9px] font-bold uppercase tracking-wider text-amber-200 leading-none">
           Password Reset
         </p>
-        <p className="mono text-[9px] text-foreground/80 leading-snug mt-0.5 break-words">
+        <p className="mono text-[9px] text-amber-100/85 leading-snug mt-1 break-words">
           Reset on {record.displayLine}
         </p>
       </div>
@@ -530,19 +531,21 @@ function PrimaryNavSidebar({
   return (
     <div className="flex flex-col h-full">
       {/* TOP — profile name, then Clock */}
-      <div className="px-2 pt-1.5 pb-1 flex flex-col gap-0.5 shrink-0">
+      <div className="px-2 pt-2 pb-1.5 flex flex-col gap-1 shrink-0">
         <SidebarProfileButton
           active={activeModule === "profile"}
           onClick={() => openModule("profile")}
           className={profileBtnCls(activeModule === "profile")}
         />
+      </div>
+      <div className="home-sidebar-sep shrink-0" />
+      <div className="px-2 py-1.5 shrink-0">
         <SidebarClock stamp={stamp} onClockClick={onClockClick} />
       </div>
-
-      <div className="border-t border-border mx-1.5 shrink-0" />
+      <div className="home-sidebar-sep shrink-0" />
 
       {/* MAIN — utility navigation */}
-      <nav className="flex-1 py-1 px-1.5 flex flex-col gap-0.5 min-h-0 home-sidebar-nav">
+      <nav className="flex-1 py-2 px-1.5 flex flex-col gap-1 min-h-0 home-sidebar-nav">
         <SidebarModalButton
           label="Satellites"
           icon={Orbit}
@@ -581,8 +584,9 @@ function PrimaryNavSidebar({
         />
       </nav>
 
+      <div className="home-sidebar-sep shrink-0" />
       {/* BOTTOM — Settings, Sign Out */}
-      <div className="border-t border-border px-2 py-1.5 flex flex-col gap-1 shrink-0">
+      <div className="px-2 pt-1.5 pb-2.5 flex flex-col gap-1.5 shrink-0">
         <SidebarResetNotice />
         <button
           type="button"
@@ -640,18 +644,20 @@ function SecondarySidebar({
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-2 pt-1.5 pb-1 flex flex-col gap-0.5 shrink-0">
+      <div className="px-2 pt-2 pb-1.5 flex flex-col gap-1 shrink-0">
         <SidebarProfileButton
           active={activeModule === "profile"}
           onClick={() => openModule("profile")}
           className={profileBtnCls(activeModule === "profile")}
         />
+      </div>
+      <div className="home-sidebar-sep shrink-0" />
+      <div className="px-2 py-1.5 shrink-0">
         <SidebarClock stamp={stamp} onClockClick={onClockClick} />
       </div>
+      <div className="home-sidebar-sep shrink-0" />
 
-      <div className="border-t border-border mx-1.5 shrink-0" />
-
-      <nav className="flex-1 py-1 px-1.5 flex flex-col gap-0.5 min-h-0 home-sidebar-nav">
+      <nav className="flex-1 py-2 px-1.5 flex flex-col gap-1 min-h-0 home-sidebar-nav">
         {standardNavItems.map((item) => {
           const iconTheme = secondaryIconTheme[item.key];
           if (item.key === "satellites") {
@@ -704,7 +710,8 @@ function SecondarySidebar({
         })}
       </nav>
 
-      <div className="border-t border-border px-2 py-1.5 flex flex-col gap-1 shrink-0">
+      <div className="home-sidebar-sep shrink-0" />
+      <div className="px-2 pt-1.5 pb-2.5 flex flex-col gap-1.5 shrink-0">
         <SidebarResetNotice />
         <button
           type="button"
@@ -733,6 +740,7 @@ function SecondarySidebar({
 export function AppShell({
   title,
   subtitle,
+  pageTitle,
   headerIcon,
   headerTitleClassName,
   showBack = false,
@@ -746,6 +754,8 @@ export function AppShell({
 }: {
   title?: string;
   subtitle?: string;
+  /** Page-level title shown under the constant module identity in the header. */
+  pageTitle?: string;
   headerIcon?: ReactNode;
   /** Override default module title styling (e.g. smaller, no truncate). */
   headerTitleClassName?: string;
@@ -811,14 +821,32 @@ export function AppShell({
 
       <div className="flex-1 flex flex-col min-w-0">
         {isHome ? (
-          <header className="border-b border-border bg-card/80 backdrop-blur sticky top-0 z-20 shrink-0">
-            <div className="relative flex items-center justify-center w-full min-h-[4.5rem] sm:min-h-[5rem] px-4 sm:px-8 lg:px-10 py-3 sm:py-4">
-              <h1
-                className="mono font-bold uppercase text-[#000000] tracking-tight leading-none whitespace-nowrap
-                           text-[clamp(0.78rem,1.55vw+0.35rem,1.9rem)] max-w-full text-center"
-              >
-                Satellite Signal Analysis and Coordination Center
-              </h1>
+          <header
+            className="border-b border-border sticky top-0 z-20 shrink-0 relative overflow-hidden"
+            style={{
+              backgroundImage: `url(${earthBg})`,
+              backgroundSize: "cover",
+              backgroundPosition: "center 35%",
+            }}
+          >
+            {/* Warm cream overlay */}
+            <div
+              className="absolute inset-0 pointer-events-none"
+              style={{
+                background: "linear-gradient(160deg, rgba(242,239,229,0.62) 0%, rgba(234,239,230,0.65) 100%)",
+              }}
+            />
+            <div className="relative z-10 flex items-center justify-center w-full min-h-[4.5rem] sm:min-h-[5rem] px-4 sm:px-8 lg:px-10 py-3 sm:py-4">
+              <div className="flex flex-col items-center gap-1">
+                <h1
+                  className="mono font-bold uppercase text-foreground tracking-[0.13em] leading-none whitespace-nowrap
+                             text-[clamp(0.78rem,1.55vw+0.35rem,1.9rem)] max-w-full text-center"
+                  style={{ textShadow: "0 1px 6px rgba(255,255,255,0.8)" }}
+                >
+                  Satellite Signal Analysis and Coordination Center
+                </h1>
+                <span className="home-title-divider">────────◆──◆──◆────────</span>
+              </div>
               {actions && (
                 <div className="absolute right-4 sm:right-6 lg:right-8 top-1/2 -translate-y-1/2 shrink-0">
                   {actions}
@@ -827,9 +855,25 @@ export function AppShell({
             </div>
           </header>
         ) : (
-          /* ── MODULE HEADER: back | title | home ── */
-          <header className="border-b border-border bg-card/60 backdrop-blur sticky top-0 z-20">
-            <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3 px-4 sm:px-6 py-3">
+          /* ── MODULE HEADER: [back?] | icon + title | home ── */
+          <header
+            className="border-b border-border sticky top-0 z-20 relative overflow-hidden"
+            style={{
+              backgroundImage: `url(${earthBg})`,
+              backgroundSize: "cover",
+              backgroundPosition: "center 28%",
+            }}
+          >
+            {/* Slightly more opaque overlay for functional module pages */}
+            <div
+              className="absolute inset-0 pointer-events-none"
+              style={{
+                background:
+                  "linear-gradient(160deg, rgba(242,239,229,0.60) 0%, rgba(234,239,230,0.62) 100%)",
+              }}
+            />
+
+            <div className="relative z-10 grid grid-cols-[auto_1fr_auto] items-center gap-3 px-4 sm:px-6 py-2 sm:py-2.5">
               <div className="flex items-center">
                 {showBack && (
                   backLink ? (
@@ -837,7 +881,7 @@ export function AppShell({
                       to={backLink.to}
                       search={backLink.search}
                       params={backLink.params}
-                      className="mono text-[11px] h-8 px-3 inline-flex items-center uppercase tracking-wider border border-border rounded-sm hover:bg-secondary/50 hover:text-foreground"
+                      className="mono text-[11px] h-8 px-3 inline-flex items-center uppercase tracking-wider border border-border rounded-sm hover:bg-secondary/50 hover:text-foreground bg-card/70"
                     >
                       <ArrowLeft className="h-3.5 w-3.5 mr-1" /> Back
                     </Link>
@@ -846,7 +890,7 @@ export function AppShell({
                       variant="outline"
                       size="sm"
                       onClick={() => router.history.back()}
-                      className="mono text-[11px] h-8 uppercase tracking-wider"
+                      className="mono text-[11px] h-8 uppercase tracking-wider bg-card/70"
                     >
                       <ArrowLeft className="h-3.5 w-3.5 mr-1" /> Back
                     </Button>
@@ -855,25 +899,27 @@ export function AppShell({
               </div>
 
               <div className="min-w-0 text-center px-2">
-                <div className="label-eyebrow">SSACC</div>
                 {headerIcon && (
-                  <div className="flex justify-center mt-1.5 mb-1">
-                    <div className="h-9 w-9 grid place-items-center rounded-lg border border-primary/30 bg-primary/10
-                                    shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_2px_6px_rgba(0,0,0,0.1)]">
-                      {headerIcon}
-                    </div>
+                  <div className="flex justify-center mb-1.5">
+                    {headerIcon}
                   </div>
                 )}
                 <h1
                   className={
                     headerTitleClassName ??
-                    "mono text-base sm:text-lg font-bold tracking-tight uppercase truncate"
+                    "mono text-base sm:text-xl font-bold tracking-[0.10em] uppercase truncate"
                   }
+                  style={{ textShadow: "0 1px 4px rgba(255,255,255,0.65)" }}
                 >
                   {title ?? "Module"}
                 </h1>
-                {subtitle && (
-                  <div className="text-[11px] text-foreground/80 mt-0.5">{subtitle}</div>
+                {pageTitle && (
+                  <p
+                    className="mono text-[10px] sm:text-[11px] font-semibold tracking-[0.14em] uppercase text-foreground/75 truncate mt-0.5"
+                    style={{ textShadow: "0 1px 4px rgba(255,255,255,0.65)" }}
+                  >
+                    {pageTitle}
+                  </p>
                 )}
               </div>
 
@@ -881,7 +927,7 @@ export function AppShell({
                 {actions}
                 <Link
                   to="/"
-                  className="mono text-[11px] h-8 px-3 inline-flex items-center uppercase tracking-wider border border-border rounded-sm hover:bg-secondary/50 hover:text-foreground"
+                  className="mono text-[11px] h-8 px-3 inline-flex items-center uppercase tracking-wider border border-border rounded-sm hover:bg-secondary/50 hover:text-foreground bg-card/70"
                 >
                   <Home className="h-3.5 w-3.5 mr-1" /> Home
                 </Link>

@@ -1,6 +1,7 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useMemo, useState, type ComponentType } from "react";
 import { AppShell } from "@/components/AppShell";
+import { HomeNavIconBadge, type HomeIconTheme } from "@/components/home/HomeNavIcons";
 import { useOperationalState } from "@/hooks/useOperationalState";
 import { buildUnitActivityFromState } from "@/lib/operationalState";
 import {
@@ -2227,20 +2228,22 @@ function ControlCenterPage() {
   const View = module ? MODULE_VIEWS[module] : undefined;
   if (!module || !meta || !View) {
     return (
-      <AppShell title="Control Center" showBack backLink={{ to: "/" }} horizontalNav={null}>
+      <AppShell title="Control Center" horizontalNav={null}>
         <p className="mono text-sm text-muted-foreground">Unknown module.</p>
       </AppShell>
     );
   }
   const Icon = meta.icon;
-  const isEngagement = module === "engagement";
+  const CC_ICON_THEME: Record<string, HomeIconTheme> = {
+    engagement: "engagement",
+    intel: "intel",
+    important: "important",
+    priority: "priority",
+  };
   return (
     <AppShell
       title={meta.title}
-      subtitle={isEngagement || !meta.subtitle ? undefined : meta.subtitle}
-      headerIcon={<Icon className="h-5 w-5 text-primary" />}
-      showBack
-      backLink={{ to: "/" }}
+      headerIcon={<HomeNavIconBadge icon={Icon} theme={CC_ICON_THEME[module] ?? "engagement"} size="md" />}
       horizontalNav={null}
     >
       <View />

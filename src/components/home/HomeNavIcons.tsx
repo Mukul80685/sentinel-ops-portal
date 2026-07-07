@@ -17,41 +17,41 @@ export type HomeIconTheme =
 
 const THEME_BOX: Record<HomeIconTheme, string> = {
   satellite:
-    "border-violet-400/50 bg-gradient-to-br from-violet-500/25 via-indigo-500/20 to-sky-500/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.25),0_3px_0_rgba(99,102,241,0.2),0_6px_14px_rgba(99,102,241,0.35)]",
+    "border-violet-500 bg-gradient-to-br from-violet-500 to-indigo-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.30),0_3px_8px_rgba(99,102,241,0.45)]",
   discussions:
-    "border-orange-400/45 bg-gradient-to-br from-orange-500/20 to-amber-500/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.2),0_3px_0_rgba(249,115,22,0.15),0_6px_12px_rgba(249,115,22,0.3)]",
+    "border-orange-500 bg-gradient-to-br from-orange-400 to-amber-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.28),0_3px_8px_rgba(249,115,22,0.40)]",
   reports:
-    "border-slate-400/40 bg-gradient-to-br from-slate-200/80 to-slate-400/30 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_3px_0_rgba(100,116,139,0.12),0_5px_10px_rgba(100,116,139,0.25)]",
+    "border-slate-500 bg-gradient-to-br from-slate-400 to-slate-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.25),0_3px_8px_rgba(100,116,139,0.35)]",
   important:
-    "border-amber-400/55 bg-gradient-to-br from-yellow-400/30 to-amber-500/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.3),0_3px_0_rgba(234,179,8,0.15),0_6px_14px_rgba(234,179,8,0.35)]",
+    "border-amber-500 bg-gradient-to-br from-amber-400 to-amber-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.30),0_3px_8px_rgba(234,179,8,0.45)]",
   discarded:
-    "border-red-400/50 bg-gradient-to-br from-red-500/20 to-rose-600/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.15),0_3px_0_rgba(239,68,68,0.15),0_6px_12px_rgba(239,68,68,0.35)]",
+    "border-red-600 bg-gradient-to-br from-red-500 to-rose-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.22),0_3px_8px_rgba(239,68,68,0.45)]",
   engagement:
-    "border-emerald-400/50 bg-gradient-to-br from-emerald-500/25 to-teal-500/20 shadow-[inset_0_1px_0_rgba(255,255,255,0.2),0_3px_0_rgba(16,185,129,0.15),0_6px_14px_rgba(16,185,129,0.3)]",
+    "border-emerald-600 bg-gradient-to-br from-emerald-500 to-teal-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.25),0_3px_8px_rgba(16,185,129,0.40)]",
   intel:
-    "border-indigo-400/45 bg-gradient-to-br from-indigo-500/25 to-violet-600/20 shadow-[inset_0_1px_0_rgba(255,255,255,0.2),0_3px_0_rgba(99,102,241,0.15),0_6px_14px_rgba(99,102,241,0.3)]",
+    "border-indigo-600 bg-gradient-to-br from-indigo-500 to-violet-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.25),0_3px_8px_rgba(99,102,241,0.45)]",
   priority:
-    "border-transparent bg-gradient-to-br from-red-500/15 via-white/5 to-blue-500/20 shadow-[inset_0_0_0_1px_rgba(239,68,68,0.35),inset_0_0_0_2px_rgba(59,130,246,0.2),0_3px_0_rgba(59,130,246,0.12),0_6px_14px_rgba(59,130,246,0.2)]",
+    "border-red-600 bg-gradient-to-br from-red-500 to-rose-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.22),0_3px_8px_rgba(239,68,68,0.40)]",
   visibility:
-    "border-sky-400/50 bg-gradient-to-br from-sky-500/25 to-cyan-500/20 shadow-[inset_0_1px_0_rgba(255,255,255,0.22),0_3px_0_rgba(14,165,233,0.15),0_6px_14px_rgba(14,165,233,0.35)]",
+    "border-sky-500 bg-gradient-to-br from-sky-400 to-cyan-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.28),0_3px_8px_rgba(14,165,233,0.45)]",
   inventory:
-    "border-amber-600/40 bg-gradient-to-br from-amber-500/20 to-orange-600/15 shadow-[inset_0_1px_0_rgba(255,255,255,0.18),0_3px_0_rgba(217,119,6,0.12),0_6px_12px_rgba(217,119,6,0.28)]",
+    "border-amber-600 bg-gradient-to-br from-amber-500 to-orange-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.25),0_3px_8px_rgba(217,119,6,0.40)]",
   serviceability:
-    "border-slate-400/60 bg-gradient-to-br from-slate-200/80 to-slate-400/30 shadow-[inset_0_1px_0_rgba(255,255,255,0.65),inset_0_-1px_0_rgba(0,0,0,0.08),0_3px_0_rgba(100,116,139,0.12),0_6px_12px_rgba(100,116,139,0.35)]",
+    "border-slate-500 bg-gradient-to-br from-slate-400 to-slate-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.25),0_3px_8px_rgba(100,116,139,0.35)]",
 };
 
 const THEME_ICON: Record<HomeIconTheme, string> = {
-  satellite: "text-violet-600 drop-shadow-[0_0_6px_rgba(139,92,246,0.5)]",
-  discussions: "text-orange-600",
-  reports: "text-slate-600",
-  important: "text-amber-500 drop-shadow-[0_0_4px_rgba(234,179,8,0.45)]",
-  discarded: "text-red-600",
-  engagement: "text-emerald-700",
-  intel: "text-indigo-700",
-  priority: "text-red-600",
-  visibility: "text-sky-700",
-  inventory: "text-amber-800",
-  serviceability: "text-slate-600",
+  satellite: "text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.4)]",
+  discussions: "text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.4)]",
+  reports: "text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.35)]",
+  important: "text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.35)]",
+  discarded: "text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.4)]",
+  engagement: "text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.35)]",
+  intel: "text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.35)]",
+  priority: "text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.4)]",
+  visibility: "text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.35)]",
+  inventory: "text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.35)]",
+  serviceability: "text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.30)]",
 };
 
 const SIZE_CLASSES = {
@@ -93,6 +93,21 @@ export function HomeNavIconBadge({
   );
 }
 
+/** Solid opaque colours for sidebar context (dark green background). */
+const SIDEBAR_SOLID_BG: Record<HomeIconTheme, string> = {
+  satellite:      "bg-violet-600",
+  discussions:    "bg-orange-500",
+  reports:        "bg-slate-500",
+  important:      "bg-amber-500",
+  discarded:      "bg-red-600",
+  engagement:     "bg-emerald-600",
+  intel:          "bg-indigo-600",
+  priority:       "bg-rose-600",
+  visibility:     "bg-sky-500",
+  inventory:      "bg-amber-600",
+  serviceability: "bg-slate-400",
+};
+
 export function HomeSidebarIcon({
   icon: Icon,
   theme,
@@ -100,7 +115,13 @@ export function HomeSidebarIcon({
   icon: LucideIcon;
   theme: HomeIconTheme;
 }) {
-  return <HomeNavIconBadge icon={Icon} theme={theme} size="sm" />;
+  return (
+    <span
+      className={`h-6 w-6 rounded-md grid place-items-center shrink-0 ${SIDEBAR_SOLID_BG[theme]}`}
+    >
+      <Icon className="h-3.5 w-3.5 text-white" strokeWidth={2.25} />
+    </span>
+  );
 }
 
 export function renderSidebarIcon(

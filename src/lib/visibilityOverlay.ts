@@ -141,3 +141,33 @@ export function removeSatelliteFromUnitOverlay(
 
   patchVisibilityOverlay({ addedSats, editedSats, deletedSatIds: [...deleted] });
 }
+
+// ─── Unit import-count utilities ───────────────────────────────────────────────
+
+/** Count satellites explicitly imported for a unit (all regions combined). */
+export function getUnitImportedSatCount(unitId: string): number {
+  const overlay = loadJson();
+  const prefix = `${unitId}::`;
+  return Object.entries(overlay.addedSats)
+    .filter(([key]) => key.startsWith(prefix))
+    .reduce((sum, [, sats]) => sum + sats.length, 0);
+}
+
+/** True when the unit has no imported satellite data at all. */
+export function isUnitVisibilityEmpty(unitId: string): boolean {
+  return getUnitImportedSatCount(unitId) === 0;
+}
+
+/** Number of imported satellites per region for a specific unit. */
+export function getUnitRegionImportedCounts(unitId: string): Record<string, number> {
+  const overlay = loadJson();
+  const prefix = `${unitId}::`;
+  const counts: Record<string, number> = {};
+  for (const [key, sats] of Object.entries(overlay.addedSats)) {
+    if (key.startsWith(prefix)) {
+      const regionId = key.slice(prefix.length);
+      counts[regionId] = (counts[regionId] ?? 0) + sats.length;
+    }
+  }
+  return counts;
+}

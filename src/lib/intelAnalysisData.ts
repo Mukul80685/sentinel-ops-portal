@@ -248,12 +248,34 @@ export function intelReportIdForSatellite(unitId: string, satelliteName: string)
   return `${unitId}__${satelliteName.replace(/\s+/g, "-")}`;
 }
 
+/** Look up a dynamically created unit in the operational store (avoids import cycle). */
+function findDynamicUnit(slug: string): { name: string; code: string } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem("ssacc_operational_store_v2");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { units?: { id: string; name: string; code: string }[] };
+    const unit = parsed.units?.find((u) => u.id === `op-unit-${slug}`);
+    return unit ? { name: unit.name, code: unit.code } : null;
+  } catch {
+    return null;
+  }
+}
+
 export function getUnitIntelName(unitId: string): string {
-  return INT_UNITS.find((u) => u.id === unitId)?.name ?? "Current Unit";
+  return (
+    INT_UNITS.find((u) => u.id === unitId)?.name ??
+    findDynamicUnit(unitId)?.name ??
+    "Current Unit"
+  );
 }
 
 export function getUnitIntelCode(unitId: string): string {
-  return INT_UNITS.find((u) => u.id === unitId)?.code ?? "A";
+  return (
+    INT_UNITS.find((u) => u.id === unitId)?.code ??
+    findDynamicUnit(unitId)?.code ??
+    "A"
+  );
 }
 
 /** Beam inventory from Visibility Matrix SSOT (inventory is unit-independent). */

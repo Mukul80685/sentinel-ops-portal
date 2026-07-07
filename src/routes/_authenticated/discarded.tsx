@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/AppShell";
+import { HomeNavIconBadge } from "@/components/home/HomeNavIcons";
 import {
   getDiscardedFrequencyRefs,
   getFrequencyState,
@@ -49,7 +50,7 @@ function DiscardedFrequenciesPage() {
     <AppShell
       title="Discarded Frequencies"
       subtitle="90-Day Retention Archive"
-      headerIcon={<Trash2 className="h-4 w-4 shrink-0" />}
+      headerIcon={<HomeNavIconBadge icon={Trash2} theme="discarded" size="md" />}
     >
       <DiscardedFrequenciesView />
     </AppShell>

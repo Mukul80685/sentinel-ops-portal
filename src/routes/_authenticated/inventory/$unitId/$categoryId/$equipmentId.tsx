@@ -19,7 +19,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { FileText, Paperclip, Trash2, ImageOff, Save, Download } from "lucide-react";
+import { Boxes, FileText, Paperclip, Trash2, ImageOff, Save, Download } from "lucide-react";
+import { HomeNavIconBadge } from "@/components/home/HomeNavIcons";
 
 export const Route = createFileRoute("/_authenticated/inventory/$unitId/$categoryId/$equipmentId")({
   component: EquipmentDetail,
@@ -117,12 +118,24 @@ function EquipmentDetail() {
     window.open(url, "_blank");
   }
 
-  if (!form) return <AppShell title="Equipment" subtitle="Loading" showBack horizontalNav={null}><div className="text-muted-foreground">Loading…</div></AppShell>;
+  if (!form)
+    return (
+      <AppShell
+        title="Resource Inventory"
+        pageTitle="Loading"
+        headerIcon={<HomeNavIconBadge icon={Boxes} theme="inventory" size="md" />}
+        showBack
+        horizontalNav={null}
+      >
+        <div className="text-muted-foreground">Loading…</div>
+      </AppShell>
+    );
 
   return (
     <AppShell
-      title={form.name}
-      subtitle="Equipment Record"
+      title="Resource Inventory"
+      pageTitle={`${form.name} — Equipment Record`}
+      headerIcon={<HomeNavIconBadge icon={Boxes} theme="inventory" size="md" />}
       showBack
       horizontalNav={null}
       actions={

@@ -23,7 +23,8 @@ export const UNIT_SLOTS = [
   "hotel",
 ] as const;
 
-export type UnitSlot = (typeof UNIT_SLOTS)[number];
+/** Seed slots are alpha…hotel; dynamically created units get generated slot strings. */
+export type UnitSlot = string;
 
 export const UNIT_SLOT_DISPLAY: Record<UnitSlot, string> = {
   alpha: "Alpha",
@@ -61,6 +62,55 @@ export const UNIT_LOCATIONS: Record<UnitSlot, string> = {
 };
 
 export const PRIORITY_ALLOCATION_EVENT = "ssacc_priority_allocation_change";
+
+/** P1 = highest importance, P3 = lowest. */
+export type SatPriority = 1 | 2 | 3;
+export const SAT_PRIORITIES: SatPriority[] = [1, 2, 3];
+export const SAT_PRIORITY_LABEL: Record<SatPriority, string> = { 1: "P1", 2: "P2", 3: "P3" };
+
+const P_OVERRIDES_KEY = "ssacc_priority_p_overrides";
+type POverrideStore = Record<string, Record<string, SatPriority>>;
+
+function loadPOverrides(slot: UnitSlot): Record<string, SatPriority> {
+  try {
+    const raw = localStorage.getItem(P_OVERRIDES_KEY);
+    if (!raw) return {};
+    return (JSON.parse(raw) as POverrideStore)[slot] ?? {};
+  } catch { return {}; }
+}
+
+function savePOverride(slot: UnitSlot, satelliteId: string, p: SatPriority): void {
+  try {
+    const raw = localStorage.getItem(P_OVERRIDES_KEY);
+    const parsed: POverrideStore = raw ? JSON.parse(raw) : {};
+    parsed[slot] = { ...(parsed[slot] ?? {}), [satelliteId]: p };
+    localStorage.setItem(P_OVERRIDES_KEY, JSON.stringify(parsed));
+    notifyAllocationChange();
+  } catch { /* ignore */ }
+}
+
+export function clearPOverridesForSlot(slot: UnitSlot): void {
+  try {
+    const raw = localStorage.getItem(P_OVERRIDES_KEY);
+    if (!raw) return;
+    const parsed: POverrideStore = JSON.parse(raw);
+    delete parsed[slot];
+    localStorage.setItem(P_OVERRIDES_KEY, JSON.stringify(parsed));
+  } catch { /* ignore */ }
+}
+
+/** Set explicit P1/P2/P3 priority for a satellite in a unit's allocation list. */
+export function updateAllocationPriority(slot: UnitSlot, satelliteId: string, p: SatPriority): void {
+  savePOverride(slot, satelliteId, p);
+}
+
+/** Effective priority for display: P-override if set, else the row's auto-assigned number clamped to P1–P3. */
+export function effectivePriority(row: Pick<PriorityAllocationRow, "priority" | "satelliteId">, overrides: Record<string, SatPriority>): SatPriority {
+  if (overrides[row.satelliteId] !== undefined) return overrides[row.satelliteId];
+  // Clamp auto-assigned numbers to P1–P3 (1=highest, cap at 3)
+  const p = Math.min(Math.max(Math.round(row.priority), 1), 3) as SatPriority;
+  return p;
+}
 
 const ASSIGNED_BY = [
   "Col. Rajesh Mehta",
@@ -115,12 +165,32 @@ export function unitCodeToSlot(code: string): UnitSlot | null {
 
 export function unitShortLabel(code: string): string {
   const slot = unitCodeToSlot(code);
-  if (slot) return UNIT_SHORT_LABEL[slot];
+  if (slot && UNIT_SHORT_LABEL[slot]) return UNIT_SHORT_LABEL[slot];
   return "Unit";
 }
 
 export function unitTileTitle(slot: UnitSlot): string {
-  return `Unit ${UNIT_SLOT_DISPLAY[slot]}`;
+  return `Unit ${UNIT_SLOT_DISPLAY[slot] ?? slot}`;
+}
+
+/** Derive the storage slot from an operational unit id (`op-unit-<slot>`). */
+export function slotFromUnitId(unitId: string): UnitSlot | null {
+  const m = unitId.match(/^op-unit-(.+)$/);
+  return m ? m[1] : null;
+}
+
+/**
+ * Resolve the allocation storage slot for a unit. Seed slots (alpha…hotel)
+ * carry pre-seeded allocation data, so only genuine seed units (GATE-* codes)
+ * may map onto them — a user-created unit that happens to sit on a seed slot
+ * (possible with data created before slot reuse was disabled) is quarantined
+ * onto its own unit id so it never inherits the seed unit's satellites.
+ */
+export function allocationSlotForUnit(unit: { id: string; code: string }): UnitSlot {
+  const raw = slotFromUnitId(unit.id) ?? unitCodeToSlot(unit.code) ?? unit.id;
+  const isSeedSlot = (UNIT_SLOTS as readonly string[]).includes(raw);
+  if (isSeedSlot && !/^GATE-/i.test(unit.code)) return unit.id;
+  return raw;
 }
 
 /** @deprecated Use unitShortLabel for headers */
@@ -289,8 +359,10 @@ const UNIT_SAT_CAP: Partial<Record<UnitSlot, number>> = {
 };
 
 function buildSeedRowsFixed(slot: UnitSlot): PriorityAllocationRow[] {
-  const catalog = flattenSatelliteCatalog();
   const tiers = REGION_TIERS[slot];
+  // Dynamically created units have no seed data — they start empty.
+  if (!tiers) return [];
+  const catalog = flattenSatelliteCatalog();
   const cap = UNIT_SAT_CAP[slot] ?? 36;
 
   const ranked = catalog
@@ -391,14 +463,19 @@ function saveSuppressed(slot: UnitSlot, ids: Set<string>): void {
 
 export function getAllocationsForUnit(slot: UnitSlot): PriorityAllocationRow[] {
   const suppressed = loadSuppressed(slot);
+  const overrides = loadPOverrides(slot);
   const seed = buildSeedRowsFixed(slot).filter((r) => !suppressed.has(r.satelliteId));
   const seedIds = new Set(seed.map((r) => r.satelliteId));
   const userExtra = loadUserRows(slot)
     .filter((r) => !seedIds.has(r.satelliteId) && !suppressed.has(r.satelliteId))
     .map((r) => ({ ...r, isUserAdded: true as const }));
-  const merged = [...seed, ...userExtra].sort(
-    (a, b) => a.priority - b.priority || a.satelliteName.localeCompare(b.satelliteName),
-  );
+  const merged = [...seed, ...userExtra]
+    .map((r) =>
+      overrides[r.satelliteId] !== undefined
+        ? { ...r, priority: overrides[r.satelliteId] }
+        : r,
+    )
+    .sort((a, b) => a.priority - b.priority || a.satelliteName.localeCompare(b.satelliteName));
   return merged;
 }
 
@@ -449,6 +526,7 @@ export function getUserAllocationCount(slot: UnitSlot): number {
 export function addAllocationForUnit(
   slot: UnitSlot,
   catalogRow: FlatSatelliteRow,
+  priority?: SatPriority,
 ): PriorityAllocationRow | null {
   const existing = getAllocationsForUnit(slot);
   if (existing.some((r) => r.satelliteId === catalogRow.id)) return null;
@@ -461,10 +539,12 @@ export function addAllocationForUnit(
       ? `${beams.length} beams — ${beams.slice(0, 2).join(", ")}${beams.length > 2 ? "…" : ""}`
       : sat.beamCoverage;
 
+  const assignedPriority: SatPriority = priority ?? (Math.min(maxPriority + 1, 3) as SatPriority);
+
   const row: PriorityAllocationRow = {
     id: `${slot}-user-${catalogRow.id}-${Date.now()}`,
     satelliteId: catalogRow.id,
-    priority: maxPriority + 1,
+    priority: assignedPriority,
     satelliteName: catalogRow.name,
     country: catalogRow.countryOfOrigin,
     orbitalPosition: sat.position,
@@ -482,6 +562,8 @@ export function addAllocationForUnit(
   const userRows = loadUserRows(slot);
   userRows.push(row);
   saveUserRows(slot, userRows);
+  // Store the explicit priority override so it persists even for seed-slot merges
+  if (priority !== undefined) savePOverride(slot, catalogRow.id, priority);
   return row;
 }
 
@@ -511,7 +593,7 @@ export function sortAllocationRows(
 
 export function allocationRowsToCsv(rows: PriorityAllocationRow[]): Record<string, string | number>[] {
   return rows.map((r) => ({
-    Priority: r.priority,
+    Priority: `P${r.priority}`,
     "Satellite Name": r.satelliteName,
     Country: r.country,
     "Orbital Position": r.orbitalPosition,
@@ -521,11 +603,18 @@ export function allocationRowsToCsv(rows: PriorityAllocationRow[]): Record<strin
   }));
 }
 
-export function useAllocationCounts(): Record<UnitSlot, number> {
+export function useAllocationCounts(extraSlots?: string[]): Record<UnitSlot, number> {
+  const extraKey = (extraSlots ?? []).join(",");
   const [counts, setCounts] = useState<Record<UnitSlot, number>>(() => getAllocationCountsBySlot());
 
   useEffect(() => {
-    const refresh = () => setCounts(getAllocationCountsBySlot());
+    const refresh = () => {
+      const base = getAllocationCountsBySlot();
+      for (const slot of extraKey ? extraKey.split(",") : []) {
+        if (!(slot in base)) base[slot] = getAllocationCountForUnit(slot);
+      }
+      setCounts(base);
+    };
     refresh();
     window.addEventListener(PRIORITY_ALLOCATION_EVENT, refresh);
     const onStorage = (e: StorageEvent) => {
@@ -536,7 +625,7 @@ export function useAllocationCounts(): Record<UnitSlot, number> {
       window.removeEventListener(PRIORITY_ALLOCATION_EVENT, refresh);
       window.removeEventListener("storage", onStorage);
     };
-  }, []);
+  }, [extraKey]);
 
   return counts;
 }

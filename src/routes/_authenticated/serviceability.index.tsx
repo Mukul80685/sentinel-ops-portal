@@ -2,15 +2,15 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/AppShell";
+import { HomeNavIconBadge } from "@/components/home/HomeNavIcons";
 import { Empty } from "@/components/Empty";
-import { listUnits, listCategories, listAllEquipmentDetailed, type Unit } from "@/lib/queries";
+import { listUnits, listCategories, listAllEquipmentDetailed } from "@/lib/queries";
 import type { OpServiceability } from "@/lib/operationalDataset";
 import {
-  addOperationalUnit,
   insertFaultDetail,
-  removeOperationalUnit,
   updateOperationalEquipment,
 } from "@/lib/operationalStore";
+import { UnitAdvancedFeatures } from "@/components/UnitAdvancedFeatures";
 import { useCanEdit } from "@/lib/auth";
 import {
   Dialog,
@@ -19,22 +19,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import {
   ArrowLeft,
+  Shield,
   Satellite as SatelliteIcon,
   Zap,
   Radio,
@@ -46,9 +37,6 @@ import {
   XCircle,
   Wrench,
   RefreshCw,
-  Settings2,
-  Plus,
-  X,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -97,11 +85,13 @@ const NATO_TO_LETTER: Record<string, string> = {
   india: "I", juliet: "J", kilo: "K", lima:  "L",
 };
 function unitDisplayName(u: { code: string; name: string }, idx: number): string {
+  void idx;
   const hay = `${u.code} ${u.name}`.toLowerCase();
   for (const [key, letter] of Object.entries(NATO_TO_LETTER)) {
     if (hay.includes(key)) return `Unit ${letter}`;
   }
-  return `Unit ${String.fromCharCode(65 + idx)}`;
+  // Dynamically created units keep their given name.
+  return u.name;
 }
 
 // ─── Category icon map ─────────────────────────────────────────────────────────
@@ -184,61 +174,6 @@ function ServiceabilityPage() {
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
   const [activeCatStat, setActiveCatStat]   = useState<CatStatEntry | null>(null);
 
-  // ── Advanced Features state (mirrors Resource Inventory pattern) ──────────────
-  const [advancedOpen,  setAdvancedOpen]  = useState(false);
-  const [addUnitOpen,   setAddUnitOpen]   = useState(false);
-  const [deleteMode,    setDeleteMode]    = useState(false);
-  const [pendingDelete, setPendingDelete] = useState<{ unit: Unit; label: string } | null>(null);
-  const [unitName,      setUnitName]      = useState("");
-  const [unitLocation,  setUnitLocation]  = useState("");
-  const [submitting,    setSubmitting]    = useState(false);
-
-  function openAddUnit() { setAdvancedOpen(false); setUnitName(""); setUnitLocation(""); setAddUnitOpen(true); }
-  function enableDeleteMode() { setAdvancedOpen(false); setDeleteMode(true); }
-
-  async function handleAddUnit() {
-    if (!unitName.trim() || !unitLocation.trim()) {
-      toast.error("Unit Name and Location are required.");
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const nextCode = `UNIT-${String.fromCharCode(65 + (units as Unit[]).length)}`;
-      addOperationalUnit({
-        code: nextCode,
-        name: unitName.trim(),
-        description: unitLocation.trim(),
-      });
-      await qc.invalidateQueries({ queryKey: ["units"] });
-      await qc.invalidateQueries({ queryKey: ["equipment-all"] });
-      toast.success(`${unitName.trim()} registered.`);
-      setAddUnitOpen(false);
-    } catch (err: any) {
-      toast.error(err.message ?? "Failed to add unit.");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function confirmDeleteUnit() {
-    if (!pendingDelete) return;
-    setSubmitting(true);
-    try {
-      if (!removeOperationalUnit(pendingDelete.unit.id)) {
-        throw new Error("Unit not found.");
-      }
-      await qc.invalidateQueries({ queryKey: ["units"] });
-      await qc.invalidateQueries({ queryKey: ["equipment-all"] });
-      toast.success(`${pendingDelete.label} removed.`);
-      setPendingDelete(null);
-      if ((units as Unit[]).length <= 1) setDeleteMode(false);
-    } catch (err: any) {
-      toast.error(err.message ?? "Failed to delete unit.");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
   const { data: units = [] }      = useQuery({ queryKey: ["units"],      queryFn: listUnits });
   const { data: categories = [] } = useQuery({ queryKey: ["categories"], queryFn: listCategories });
 
@@ -290,7 +225,10 @@ function ServiceabilityPage() {
   const unitEquipment = equipment.filter((e: any) => e.unit_id === selectedUnitId);
 
   return (
-    <AppShell title="Serviceability State" subtitle="Operational Readiness">
+    <AppShell
+      title="Serviceability State"
+      headerIcon={<HomeNavIconBadge icon={Shield} theme="serviceability" size="md" />}
+    >
       {selectedUnitId ? (
         <UnitDetail
           unit={selectedUnit}
@@ -365,27 +303,12 @@ function ServiceabilityPage() {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 {unitStats.map(({ unit, ok, partial, bad, pct, displayName }) => (
                   <div key={unit.id} className="relative">
-                    {/* Delete X badge (delete mode only) */}
-                    {deleteMode && (
-                      <button
-                        type="button"
-                        aria-label={`Delete ${displayName}`}
-                        onClick={() => setPendingDelete({ unit: unit as Unit, label: displayName })}
-                        className="absolute -top-1.5 -right-1.5 z-10 h-5 w-5 rounded-full border border-border
-                                   bg-card text-muted-foreground hover:bg-destructive hover:text-destructive-foreground
-                                   flex items-center justify-center transition-colors"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    )}
                     <button
                       type="button"
-                      onClick={() => !deleteMode && setSelectedUnitId(unit.id)}
-                      className={`w-full panel text-left transition-all duration-150 focus:outline-none
+                      onClick={() => setSelectedUnitId(unit.id)}
+                      className="w-full panel text-left transition-all duration-150 focus:outline-none
                                   focus:ring-1 focus:ring-primary p-3 overflow-hidden
-                                  ${deleteMode
-                                    ? "cursor-default opacity-80"
-                                    : "hover:bg-secondary/60 hover:scale-[1.02] hover:shadow-md"}`}
+                                  hover:bg-secondary/60 hover:text-secondary-foreground hover:scale-[1.02] hover:shadow-md"
                     >
                       {/* Line 1: Unit Name – Percentage (% value coloured only) */}
                       <div className="mono text-sm font-bold uppercase tracking-tight leading-tight truncate">
@@ -413,30 +336,8 @@ function ServiceabilityPage() {
               </div>
             )}
 
-            {/* ── Advanced Features — bottom-right (mirrors Resource Inventory) ── */}
-            <div className="mt-4 flex items-center justify-end gap-2">
-              {deleteMode && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="text-muted-foreground"
-                  onClick={() => setDeleteMode(false)}
-                >
-                  Exit delete mode
-                </Button>
-              )}
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setAdvancedOpen(true)}
-                className="gap-1.5"
-              >
-                <Settings2 className="h-4 w-4" />
-                Advanced Features
-              </Button>
-            </div>
+            {/* ── Advanced Features — shared across all modules ── */}
+            <UnitAdvancedFeatures />
           </section>
         </div>
       )}
@@ -446,94 +347,6 @@ function ServiceabilityPage() {
         stat={activeCatStat}
         onClose={() => setActiveCatStat(null)}
       />
-
-      {/* ── Advanced Features dialog ────────────────────────────────────────── */}
-      <Dialog open={advancedOpen} onOpenChange={setAdvancedOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Advanced Features</DialogTitle>
-          </DialogHeader>
-          <div className="grid gap-2">
-            <Button type="button" variant="outline" className="justify-start" onClick={openAddUnit}>
-              <Plus className="h-4 w-4 mr-2" /> Add Unit
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              className="justify-start text-destructive hover:text-destructive"
-              onClick={enableDeleteMode}
-              disabled={(units as Unit[]).length === 0}
-            >
-              <X className="h-4 w-4 mr-2" /> Delete Unit
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* ── Add Unit dialog ─────────────────────────────────────────────────── */}
-      <Dialog open={addUnitOpen} onOpenChange={(o) => { setAddUnitOpen(o); if (!o) { setUnitName(""); setUnitLocation(""); } }}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Add Unit</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="svc-unit-name">Unit Name</Label>
-              <Input
-                id="svc-unit-name"
-                required
-                value={unitName}
-                onChange={(e) => setUnitName(e.target.value)}
-                placeholder="Enter unit name"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="svc-unit-location">Location</Label>
-              <Input
-                id="svc-unit-location"
-                required
-                value={unitLocation}
-                onChange={(e) => setUnitLocation(e.target.value)}
-                placeholder="Enter location"
-              />
-            </div>
-          </div>
-          <DialogFooter className="gap-2">
-            <Button type="button" variant="outline" onClick={() => setAddUnitOpen(false)} disabled={submitting}>
-              Cancel
-            </Button>
-            <Button type="button" onClick={handleAddUnit} disabled={submitting || !unitName.trim() || !unitLocation.trim()}>
-              {submitting ? "Saving…" : "OK"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* ── Delete confirmation ─────────────────────────────────────────────── */}
-      <AlertDialog open={Boolean(pendingDelete)} onOpenChange={(o) => !o && setPendingDelete(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Confirm Delete?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {pendingDelete
-                ? `Remove ${pendingDelete.label} (${pendingDelete.unit.name}) and all related data? This cannot be undone.`
-                : "This action cannot be undone."}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogAction
-              onClick={confirmDeleteUnit}
-              disabled={submitting}
-              className="bg-muted text-muted-foreground hover:bg-muted/80 border border-border shadow-none"
-            >
-              YES
-            </AlertDialogAction>
-            <AlertDialogCancel className="bg-primary text-primary-foreground hover:bg-primary/90 border-0">
-              NO
-            </AlertDialogCancel>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </AppShell>
   );
 }
