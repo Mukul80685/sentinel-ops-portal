@@ -45,6 +45,9 @@ function classificationLabel(c: DiscardedFreqRef["classification"]): string {
   return c === "productive" ? "Productive" : "Non-Productive";
 }
 
+const DISCARDED_GRID_COLS =
+  "[grid-template-columns:minmax(0,1.05fr)_minmax(0,0.95fr)_minmax(0,0.85fr)_5rem_minmax(0,0.8fr)_minmax(0,1fr)_4.5rem]";
+
 function DiscardedFrequenciesPage() {
   return (
     <AppShell
@@ -84,26 +87,28 @@ export function DiscardedFrequenciesView() {
   return (
     <>
       <div className="flex items-center justify-between gap-3 mb-2">
-        <p className="mono text-[10px] text-muted-foreground">
-          Retained for <span className="text-foreground font-bold">90 days</span> from discard date, then auto-expired.
+        <p className="mono text-[10px] text-foreground font-medium">
+          Retained for <span className="font-bold">90 days</span> from discard date, then auto-expired.
         </p>
-        <span className="mono text-[10px] text-muted-foreground shrink-0">
-          Total: <span className="text-foreground font-bold">{entries.length}</span>
+        <span className="mono text-[10px] text-foreground shrink-0">
+          Total: <span className="font-bold">{entries.length}</span>
         </span>
       </div>
 
       {entries.length === 0 ? (
-        <div className="rounded-md border border-border px-4 py-10 text-center mono text-[11px] text-muted-foreground">
+        <div className="rounded-md border border-border px-4 py-10 text-center mono text-[11px] text-foreground font-medium">
           No discarded frequencies in retention window.
         </div>
       ) : (
-        <div className="rounded-md border border-border overflow-x-hidden">
+        <div className="rounded-md border border-border overflow-x-hidden bg-white">
           <div
-            className="grid [grid-template-columns:minmax(0,1.1fr)_minmax(0,0.9fr)_minmax(0,0.8fr)_5.5rem_minmax(0,0.75fr)_minmax(0,1fr)_4.5rem]
-                        gap-x-2 items-center border-b border-border bg-secondary/50 px-2 py-1.5"
+            className={`grid ${DISCARDED_GRID_COLS} gap-x-1.5 items-center border-b border-border bg-muted/50 px-2 py-1.5`}
           >
             {["Frequency ID", "Satellite", "Beam / Band", "Discarded", "Classification", "Reason", "Restore"].map((h) => (
-              <div key={h || "actions"} className="mono text-[9px] uppercase tracking-wider text-muted-foreground font-bold">
+              <div
+                key={h || "actions"}
+                className={`mono text-[9px] uppercase tracking-wider text-foreground font-semibold ${h === "Restore" ? "text-right" : ""}`}
+              >
                 {h}
               </div>
             ))}
@@ -111,21 +116,20 @@ export function DiscardedFrequenciesView() {
           {entries.map((row) => (
             <div
               key={row.id}
-              className="grid [grid-template-columns:minmax(0,1.1fr)_minmax(0,0.9fr)_minmax(0,0.8fr)_5.5rem_minmax(0,0.75fr)_minmax(0,1fr)_4.5rem]
-                          gap-x-2 items-start border-b border-border px-2 py-1.5"
+              className={`grid ${DISCARDED_GRID_COLS} gap-x-1.5 items-start border-b border-border px-2 py-1.5 bg-white hover:bg-gray-50`}
             >
-              <div className="mono text-[11px] font-bold text-foreground break-words">{row.frequencyId}</div>
-              <div className="mono text-[11px] text-foreground break-words">{row.satelliteName}</div>
-              <div className="mono text-[10px] text-foreground/85 break-words">
+              <div className="mono text-[11px] font-bold text-foreground break-words bg-white">{row.frequencyId}</div>
+              <div className="mono text-[11px] font-semibold text-foreground break-words bg-white">{row.satelliteName}</div>
+              <div className="mono text-[10px] text-foreground font-medium break-words bg-white">
                 {row.beamName ?? getFrequencyState(row.refKey).beamName ?? "—"}
-                {row.band && <span className="text-muted-foreground"> · {row.band}</span>}
+                {row.band && <span className="text-foreground"> · {row.band}</span>}
               </div>
-              <div className="mono text-[10px] text-muted-foreground tabular-nums">{fmtDate(row.discardedAt)}</div>
-              <div className="mono text-[10px] text-foreground">{classificationLabel(row.classification)}</div>
-              <div className="mono text-[10px] text-foreground/80 break-words leading-snug">
+              <div className="mono text-[10px] text-foreground font-medium tabular-nums bg-white">{fmtDate(row.discardedAt)}</div>
+              <div className="mono text-[10px] text-foreground font-medium bg-white">{classificationLabel(row.classification)}</div>
+              <div className="mono text-[10px] text-foreground font-medium break-words leading-snug bg-white">
                 {row.reason ?? "—"}
                 {row.sourceUnitId && (
-                  <span className="block text-[9px] text-muted-foreground mt-0.5">
+                  <span className="block text-[9px] text-foreground font-medium mt-0.5">
                     Source: {getUnitIntelName(row.sourceUnitId)}
                   </span>
                 )}
@@ -154,16 +158,16 @@ export function DiscardedFrequenciesView() {
             <AlertDialogTitle className="mono text-sm uppercase tracking-wide">Confirm Restore</AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-1.5 pt-1">
-                <p className="mono text-[11px] text-foreground">
-                  <span className="text-muted-foreground">Action: </span>
+                <p className="mono text-[11px] text-foreground font-medium">
+                  <span className="font-semibold">Action: </span>
                   Restore to INT Repository
                 </p>
-                <p className="mono text-[11px] text-foreground">
-                  <span className="text-muted-foreground">Frequency ID: </span>
+                <p className="mono text-[11px] text-foreground font-medium">
+                  <span className="font-semibold">Frequency ID: </span>
                   {restoreTarget?.frequencyId}
                 </p>
-                <p className="mono text-[11px] text-foreground">
-                  <span className="text-muted-foreground">Satellite: </span>
+                <p className="mono text-[11px] text-foreground font-medium">
+                  <span className="font-semibold">Satellite: </span>
                   {restoreTarget?.satelliteName}
                 </p>
               </div>
@@ -184,8 +188,8 @@ export function DiscardedFrequenciesView() {
         </AlertDialogContent>
       </AlertDialog>
 
-      <div className="mt-3 flex items-center gap-1.5 mono text-[9px] text-muted-foreground">
-        <Trash2 className="h-3 w-3" />
+      <div className="mt-3 flex items-center gap-1.5 mono text-[9px] text-foreground font-medium">
+        <Trash2 className="h-3 w-3 text-destructive" />
         Discarded from INT frequency tables via row action · synced via event bus
       </div>
     </>

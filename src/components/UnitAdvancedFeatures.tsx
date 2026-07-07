@@ -33,9 +33,15 @@ import { addOperationalUnit, purgeUnitCompletely } from "@/lib/operationalStore"
 
 export function UnitAdvancedFeatures({
   onUnitsChanged,
+  align = "end",
+  noTopMargin = false,
 }: {
   /** Called after a unit is added or deleted so the host page can refresh local state. */
   onUnitsChanged?: () => void;
+  /** Horizontal alignment of the trigger button. */
+  align?: "start" | "center" | "end";
+  /** When true, omit default top margin (host provides spacing). */
+  noTopMargin?: boolean;
 }) {
   const queryClient = useQueryClient();
   const { data: units = [] } = useQuery({ queryKey: ["units"], queryFn: listUnits });
@@ -87,10 +93,13 @@ export function UnitAdvancedFeatures({
     refresh();
   }
 
+  const alignCls =
+    align === "center" ? "justify-center" : align === "start" ? "justify-start" : "justify-end";
+
   return (
     <>
-      {/* Trigger — bottom-right, consistent across modules */}
-      <div className="mt-4 flex items-center justify-end gap-2">
+      {/* Trigger — placement controlled by host via align prop */}
+      <div className={`${noTopMargin ? "" : "mt-4"} flex items-center ${alignCls} gap-2`}>
         <Button
           variant="outline"
           size="sm"

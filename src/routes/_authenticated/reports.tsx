@@ -17,7 +17,7 @@ function ReportsPage() {
 
   return (
     <AppShell title="Reports and Returns" subtitle="Operations">
-      <div className="panel p-6 text-muted-foreground mono text-[11px]">
+      <div className="panel p-6 text-foreground mono text-[11px] font-medium">
         Reports opens in the sidebar panel. Use the sidebar if the panel was closed.
       </div>
     </AppShell>

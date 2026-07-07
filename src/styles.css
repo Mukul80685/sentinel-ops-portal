@@ -175,6 +175,21 @@
     opacity: 0.85;
   }
 
+  /* Solid military-green surfaces — pair with light foreground for contrast */
+  .surface-primary {
+    background-color: var(--primary);
+    color: var(--primary-foreground);
+  }
+  .surface-secondary {
+    background-color: var(--secondary);
+    color: var(--secondary-foreground);
+  }
+  .surface-secondary th,
+  .surface-secondary td,
+  .surface-secondary .surface-secondary__inherit {
+    color: var(--secondary-foreground);
+  }
+
   .status-dot {
     display: inline-block;
     width: 0.55rem;

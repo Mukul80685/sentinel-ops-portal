@@ -1,14 +1,8 @@
 import { useEffect, useState } from "react";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Settings, Lock, Users } from "lucide-react";
+import { Fingerprint, Lock, Settings, ShieldCheck, Users } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
 import {
@@ -23,6 +17,13 @@ import {
   type AuthorizedUser,
 } from "@/lib/userAccountStore";
 import { useSidebarModules } from "./SidebarModulesProvider";
+import {
+  SidebarModalBody,
+  SidebarModalContent,
+  SidebarModalField,
+  SidebarModalHeader,
+  SidebarModalSection,
+} from "./SidebarModalLayout";
 
 export function SettingsModal() {
   const { activeModule, closeModule } = useSidebarModules();
@@ -126,200 +127,230 @@ export function SettingsModal() {
 
   return (
     <>
-    <Dialog open={open} onOpenChange={(o) => !o && handleClose()}>
-      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="mono uppercase tracking-wider flex items-center gap-2">
-            <Settings className="h-4 w-4 text-primary" />
-            Settings
-          </DialogTitle>
-        </DialogHeader>
+      <Dialog open={open} onOpenChange={(o) => !o && handleClose()}>
+        <SidebarModalContent className="max-w-lg">
+          <SidebarModalHeader
+            icon={Settings}
+            title="Settings"
+            subtitle="Account credentials and authorized access"
+          />
 
-        <div className="space-y-5">
-          <section className="space-y-2">
-            <Label className="mono text-[10px] uppercase tracking-wider">Login User ID</Label>
-            <div className="flex gap-2">
-              <Input
-                value={loginUserId}
-                onChange={(e) => setLoginUserId(e.target.value)}
-                className="mono text-[11px]"
-              />
-              <Button type="button" size="sm" className="mono text-[10px] shrink-0" onClick={saveUserId}>
-                Save
-              </Button>
-            </div>
-          </section>
+          <SidebarModalBody className="space-y-4">
+            <SidebarModalSection title="Login User ID" icon={Fingerprint}>
+              <SidebarModalField label="Portal login identifier">
+                <div className="flex gap-2">
+                  <Input
+                    value={loginUserId}
+                    onChange={(e) => setLoginUserId(e.target.value)}
+                    className="mono text-[11px] bg-background/80"
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="mono shrink-0 text-[10px] uppercase tracking-wider"
+                    onClick={saveUserId}
+                  >
+                    Save
+                  </Button>
+                </div>
+              </SidebarModalField>
+            </SidebarModalSection>
 
-          <section className="space-y-3 border-t border-border pt-4">
-            <div className="flex items-center gap-2 label-eyebrow">
-              <Lock className="h-3 w-3" /> Change Password
-            </div>
-            {account.lastPasswordChange && (
-              <p className="text-[10px] text-muted-foreground mono">
-                Last password change: {account.lastPasswordChange}
-              </p>
-            )}
-            <form onSubmit={(e) => void handlePasswordChange(e)} className="space-y-2">
-              <Input
-                type="password"
-                placeholder="Current password"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                className="mono text-[11px]"
-                required
-              />
-              <Input
-                placeholder="Army number"
-                value={armyNumber}
-                onChange={(e) => setArmyNumber(e.target.value)}
-                className="mono text-[11px]"
-                required
-              />
-              <Input
-                placeholder="Name (as in authorized list)"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="mono text-[11px]"
-                required
-              />
-              <Input
-                type="password"
-                placeholder="New password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                className="mono text-[11px]"
-                required
-              />
-              <Input
-                type="password"
-                placeholder="Confirm new password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                className="mono text-[11px]"
-                required
-              />
-              <Button type="submit" size="sm" className="mono text-[10px] uppercase w-full" disabled={busy}>
-                Update Password
-              </Button>
-            </form>
-          </section>
-
-          <section className="space-y-3 border-t border-border pt-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 label-eyebrow">
-                <Users className="h-3 w-3" /> Authorized Users ({authorizedUsers.length})
-              </div>
-              {!gateUnlocked && (
-                <Button type="button" variant="outline" size="sm" className="mono text-[9px] h-7" onClick={() => setGateOpen(true)}>
-                  Edit List
+            <SidebarModalSection title="Change Password" icon={Lock}>
+              {account.lastPasswordChange ? (
+                <p className="mono mb-3 rounded-sm border border-border/70 bg-muted/20 px-2.5 py-1.5 text-[10px] text-muted-foreground">
+                  Last password change: {account.lastPasswordChange}
+                </p>
+              ) : null}
+              <form onSubmit={(e) => void handlePasswordChange(e)} className="space-y-2.5">
+                <Input
+                  type="password"
+                  placeholder="Current password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  className="mono text-[11px] bg-background/80"
+                  required
+                />
+                <Input
+                  placeholder="Army number"
+                  value={armyNumber}
+                  onChange={(e) => setArmyNumber(e.target.value)}
+                  className="mono text-[11px] bg-background/80"
+                  required
+                />
+                <Input
+                  placeholder="Name (as in authorized list)"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="mono text-[11px] bg-background/80"
+                  required
+                />
+                <Input
+                  type="password"
+                  placeholder="New password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="mono text-[11px] bg-background/80"
+                  required
+                />
+                <Input
+                  type="password"
+                  placeholder="Confirm new password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="mono text-[11px] bg-background/80"
+                  required
+                />
+                <Button
+                  type="submit"
+                  size="sm"
+                  className="mono w-full text-[10px] uppercase tracking-wider"
+                  disabled={busy}
+                >
+                  Update Password
                 </Button>
-              )}
-            </div>
-            <ul className="space-y-1">
-              {authorizedUsers.map((u) => (
-                <li key={u.id} className="mono text-[10px] panel px-2 py-1.5 flex justify-between gap-2">
-                  <span>{formatAuthorizedUserLabel(u)}</span>
-                  <span className="text-muted-foreground">{u.armyNumber}</span>
-                </li>
-              ))}
-            </ul>
+              </form>
+            </SidebarModalSection>
 
-            {gateUnlocked && (
-              <div className="space-y-2 border border-primary/30 rounded-sm p-3">
-                <p className="text-[9px] text-muted-foreground mono uppercase">Editing authorized users</p>
-                {editUsers.map((u, i) => (
-                  <div key={u.id} className="grid grid-cols-3 gap-1">
-                    <Input
-                      value={u.name}
-                      onChange={(e) => {
-                        const next = [...editUsers];
-                        next[i] = { ...u, name: e.target.value };
-                        setEditUsers(next);
-                      }}
-                      className="h-7 text-[10px] mono"
-                      placeholder="Name"
-                    />
-                    <Input
-                      value={u.rank}
-                      onChange={(e) => {
-                        const next = [...editUsers];
-                        next[i] = { ...u, rank: e.target.value };
-                        setEditUsers(next);
-                      }}
-                      className="h-7 text-[10px] mono"
-                      placeholder="Rank"
-                    />
-                    <Input
-                      value={u.armyNumber}
-                      onChange={(e) => {
-                        const next = [...editUsers];
-                        next[i] = { ...u, armyNumber: e.target.value };
-                        setEditUsers(next);
-                      }}
-                      className="h-7 text-[10px] mono"
-                      placeholder="Army No."
-                    />
-                  </div>
+            <SidebarModalSection title={`Authorized Users (${authorizedUsers.length})`} icon={Users}>
+              <div className="mb-3 flex items-center justify-end">
+                {!gateUnlocked ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mono h-7 border-primary/30 text-[9px] uppercase tracking-wider hover:bg-primary/5"
+                    onClick={() => setGateOpen(true)}
+                  >
+                    Edit List
+                  </Button>
+                ) : null}
+              </div>
+
+              <ul className="space-y-1.5">
+                {authorizedUsers.map((u) => (
+                  <li
+                    key={u.id}
+                    className="mono flex items-center justify-between gap-2 rounded-sm border border-border/70 bg-muted/15 px-2.5 py-2 text-[10px]"
+                  >
+                    <span className="font-medium text-foreground">{formatAuthorizedUserLabel(u)}</span>
+                    <span className="text-muted-foreground">{u.armyNumber}</span>
+                  </li>
                 ))}
-                <Button type="button" size="sm" className="mono text-[10px] w-full" onClick={saveAuthorizedList}>
-                  Save Authorized Users
-                </Button>
-              </div>
-            )}
-          </section>
-        </div>
-      </DialogContent>
-    </Dialog>
+              </ul>
+
+              {gateUnlocked ? (
+                <div className="mt-3 space-y-2 rounded-sm border border-primary/25 bg-primary/[0.04] p-3">
+                  <p className="mono text-[9px] font-semibold uppercase tracking-wider text-primary">
+                    Editing authorized users
+                  </p>
+                  {editUsers.map((u, i) => (
+                    <div key={u.id} className="grid grid-cols-3 gap-1.5">
+                      <Input
+                        value={u.name}
+                        onChange={(e) => {
+                          const next = [...editUsers];
+                          next[i] = { ...u, name: e.target.value };
+                          setEditUsers(next);
+                        }}
+                        className="mono h-7 bg-background/80 text-[10px]"
+                        placeholder="Name"
+                      />
+                      <Input
+                        value={u.rank}
+                        onChange={(e) => {
+                          const next = [...editUsers];
+                          next[i] = { ...u, rank: e.target.value };
+                          setEditUsers(next);
+                        }}
+                        className="mono h-7 bg-background/80 text-[10px]"
+                        placeholder="Rank"
+                      />
+                      <Input
+                        value={u.armyNumber}
+                        onChange={(e) => {
+                          const next = [...editUsers];
+                          next[i] = { ...u, armyNumber: e.target.value };
+                          setEditUsers(next);
+                        }}
+                        className="mono h-7 bg-background/80 text-[10px]"
+                        placeholder="Army No."
+                      />
+                    </div>
+                  ))}
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="mono w-full text-[10px] uppercase tracking-wider"
+                    onClick={saveAuthorizedList}
+                  >
+                    Save Authorized Users
+                  </Button>
+                </div>
+              ) : null}
+            </SidebarModalSection>
+          </SidebarModalBody>
+        </SidebarModalContent>
+      </Dialog>
 
       <Dialog open={gateOpen} onOpenChange={setGateOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="mono uppercase text-sm">Security Verification</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label className="text-[10px] mono leading-snug">
-                When was the Satellite Signal Analysis and Coordination Centre (SSACC) formed?
-              </Label>
-              <Input
-                value={formationDate}
-                onChange={(e) => setFormationDate(e.target.value)}
-                onFocus={() => setFormationDateFocused(true)}
-                onBlur={() => {
-                  if (!formationDate.trim()) setFormationDateFocused(false);
-                }}
-                placeholder={formationDateFocused ? "" : "Example: March 1998"}
-                className="mono text-[11px] mt-1"
-              />
-              <p className="text-[9px] text-muted-foreground mt-1 mono">Month, Year</p>
-            </div>
-            <div>
-              <Label className="text-[10px] mono leading-snug">
-                Which AI platform was used to build this dashboard?
-              </Label>
-              <Input
-                value={aiUsed}
-                onChange={(e) => setAiUsed(e.target.value)}
-                placeholder="Enter answer"
-                className="mono text-[11px] mt-1"
-              />
-            </div>
-            <div>
-              <Label className="text-[10px] mono leading-snug">
-                What is the motto of the Corps of Signals?
-              </Label>
-              <Input
-                value={motto}
-                onChange={(e) => setMotto(e.target.value)}
-                placeholder="Enter answer"
-                className="mono text-[11px] mt-1"
-              />
-            </div>
-            <Button type="button" className="w-full mono text-[10px] uppercase" onClick={tryUnlockGate}>
+        <SidebarModalContent className="max-w-md">
+          <SidebarModalHeader
+            icon={ShieldCheck}
+            title="Security Verification"
+            subtitle="Answer all questions to unlock list editing"
+            accent="amber"
+          />
+          <SidebarModalBody className="space-y-4">
+            <SidebarModalSection>
+              <SidebarModalField
+                label="When was the Satellite Signal Analysis and Coordination Centre (SSACC) formed?"
+                hint="Month, Year — e.g. March 1998"
+              >
+                <Input
+                  value={formationDate}
+                  onChange={(e) => setFormationDate(e.target.value)}
+                  onFocus={() => setFormationDateFocused(true)}
+                  onBlur={() => {
+                    if (!formationDate.trim()) setFormationDateFocused(false);
+                  }}
+                  placeholder={formationDateFocused ? "" : "Example: March 1998"}
+                  className="mono mt-0 text-[11px] bg-background/80"
+                />
+              </SidebarModalField>
+            </SidebarModalSection>
+
+            <SidebarModalSection>
+              <SidebarModalField label="Which AI platform was used to build this dashboard?">
+                <Input
+                  value={aiUsed}
+                  onChange={(e) => setAiUsed(e.target.value)}
+                  placeholder="Enter answer"
+                  className="mono text-[11px] bg-background/80"
+                />
+              </SidebarModalField>
+            </SidebarModalSection>
+
+            <SidebarModalSection>
+              <SidebarModalField label="What is the motto of the Corps of Signals?">
+                <Input
+                  value={motto}
+                  onChange={(e) => setMotto(e.target.value)}
+                  placeholder="Enter answer"
+                  className="mono text-[11px] bg-background/80"
+                />
+              </SidebarModalField>
+            </SidebarModalSection>
+
+            <Button
+              type="button"
+              className="mono w-full text-[10px] uppercase tracking-wider"
+              onClick={tryUnlockGate}
+            >
               Verify
             </Button>
-          </div>
-        </DialogContent>
+          </SidebarModalBody>
+        </SidebarModalContent>
       </Dialog>
     </>
   );

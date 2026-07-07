@@ -3,7 +3,7 @@ import { useMemo, useState, type ComponentType } from "react";
 import { AppShell } from "@/components/AppShell";
 import { HomeNavIconBadge, type HomeIconTheme } from "@/components/home/HomeNavIcons";
 import { useOperationalState } from "@/hooks/useOperationalState";
-import { buildUnitActivityFromState } from "@/lib/operationalState";
+import { buildUnitActivityFromState, buildUnitOptimizationData, type OperationalFleetState, type UnitOptimizationData } from "@/lib/operationalState";
 import {
   CONTROL_CENTER_MODULE_MAP,
   ccHubSearch,
@@ -119,35 +119,14 @@ type UnitScanData = {
 };
 
 // — Optimization Engine types ————————————————————————————————————————————————
-type OptStatus   = "OPTIMIZED" | "SUBOPTIMAL" | "MISALLOCATED";
-type RecPriority = "URGENT" | "EFFICIENCY" | "EIRP" | "PRIORITY";
-type FactorKey   = "resource" | "visibility" | "priority" | "eirp" | "serviceability" | "engagement";
+type OptStatus = "OPTIMIZED" | "SUBOPTIMAL" | "MISALLOCATED";
+type FactorKey = "resource" | "priority" | "serviceability";
 
-type FactorEntry = {
-  score: number;
-  issues: string[];
-  severity: "ok" | "warn" | "critical";
-};
-
-type UnitOptData = {
-  compositeScore: number;
-  status: OptStatus;
-  satelliteLoad: number;
-  maxCapacity: number;
-  faultDays?: number;
-} & Record<FactorKey, FactorEntry>;
-
-type ReassignRec = {
-  id: string;
-  recPriority: RecPriority;
-  fromUnit: UnitLabel;
-  toUnit: UnitLabel;
-  satellite: string;
-  reason: string;
-  gain: string;
-  steps: string[];
-  confidence: "Low" | "Medium" | "High";
-};
+const OPT_FACTOR_DEFS: Array<{ key: FactorKey; label: string; weight: number; abbr: string }> = [
+  { key: "resource",       label: "Resource Utilization", weight: 1 / 3, abbr: "R" },
+  { key: "priority",       label: "Prioritization",       weight: 1 / 3, abbr: "P" },
+  { key: "serviceability", label: "Serviceability",       weight: 1 / 3, abbr: "S" },
+];
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SATELLITE CATALOG — 150 ENTRIES (source of truth for assignment data)
@@ -586,171 +565,6 @@ const UNIT_SCAN_DATA: Record<UnitLabel, UnitScanData> = {
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// OPTIMIZATION ENGINE — DATA
-// ═══════════════════════════════════════════════════════════════════════════════
-
-const OPT_FACTOR_DEFS: Array<{ key: FactorKey; label: string; weight: number; abbr: string }> = [
-  { key: "resource",       label: "Resource Utilization", weight: 0.20, abbr: "R" },
-  { key: "visibility",     label: "Visibility Match",     weight: 0.20, abbr: "V" },
-  { key: "priority",       label: "Priority Alignment",   weight: 0.15, abbr: "P" },
-  { key: "eirp",           label: "EIRP Effectiveness",   weight: 0.25, abbr: "E" },
-  { key: "serviceability", label: "Serviceability",       weight: 0.10, abbr: "S" },
-  { key: "engagement",     label: "Engagement Load",      weight: 0.10, abbr: "L" },
-];
-
-// Shorthand builder: (score, severity, ...issue strings) → FactorEntry
-const fac = (score: number, severity: FactorEntry["severity"], ...issues: string[]): FactorEntry =>
-  ({ score, severity, issues });
-
-const OPT_DATA: Record<UnitLabel, UnitOptData> = {
-  "Unit A": {
-    compositeScore: 86, status: "OPTIMIZED", satelliteLoad: 8, maxCapacity: 12,
-    resource:       fac(82, "ok",       "Satellite load 8/12 — optimal utilization"),
-    visibility:     fac(90, "ok",       "Primary footprint zone for all assigned satellites"),
-    priority:       fac(88, "ok",       "High-priority satellites matched to adequate capability"),
-    eirp:           fac(85, "ok",       "Average EIRP 85 dBW — strong signal across all assignments"),
-    serviceability: fac(95, "ok",       "All equipment operational"),
-    engagement:     fac(78, "ok",       "4 active scans — 22% headroom remaining"),
-  },
-  "Unit B": {
-    compositeScore: 62, status: "SUBOPTIMAL", satelliteLoad: 6, maxCapacity: 10,
-    resource:       fac(70, "ok",       "Capacity adequate — 6/10 utilized"),
-    visibility:     fac(42, "warn",     "AsiaSat 7 — edge position of beam footprint",
-                                        "Unit D has 31% stronger visibility for the same satellite"),
-    priority:       fac(65, "ok",       "1 medium-priority satellite slightly under-matched"),
-    eirp:           fac(55, "warn",     "AsiaSat 7 EIRP at unit: 55 dBW",
-                                        "Unit D would achieve 72 dBW for the same satellite"),
-    serviceability: fac(90, "ok",       "Equipment nominal"),
-    engagement:     fac(72, "ok",       "Moderate load — room for 2 additional scans"),
-  },
-  "Unit C": {
-    compositeScore: 64, status: "SUBOPTIMAL", satelliteLoad: 5, maxCapacity: 9,
-    resource:       fac(60, "ok",       "5/9 capacity utilized — moderate load"),
-    visibility:     fac(72, "ok",       "Acceptable footprint coverage"),
-    priority:       fac(35, "critical", "3 HIGH-PRIORITY satellites on below-threshold capability unit",
-                                        "SES-12 (P1), SES-7 (P1), Asiastar 1 (P2) — all exceed unit capability profile"),
-    eirp:           fac(68, "ok",       "EIRP within acceptable range"),
-    serviceability: fac(88, "ok",       "Minor calibration drift — non-critical"),
-    engagement:     fac(65, "ok",       "3 active scans — capacity underused"),
-  },
-  "Unit D": {
-    compositeScore: 78, status: "OPTIMIZED", satelliteLoad: 7, maxCapacity: 11,
-    resource:       fac(75, "ok",       "7/11 capacity — 2 slots available for reallocation"),
-    visibility:     fac(80, "ok",       "Good footprint coverage — primary zone confirmed"),
-    priority:       fac(78, "ok",       "Priority alignment balanced across all assignments"),
-    eirp:           fac(72, "ok",       "Consistent EIRP across all assigned satellites"),
-    serviceability: fac(92, "ok",       "All systems operational"),
-    engagement:     fac(80, "ok",       "4 active scans — 20% headroom"),
-  },
-  "Unit E": {
-    compositeScore: 44, status: "MISALLOCATED", satelliteLoad: 18, maxCapacity: 12,
-    resource:       fac(22, "critical", "18 satellites vs 12 optimal capacity — 50% OVERLOADED",
-                                        "Resource saturation: antenna sharing active on 6 satellites"),
-    visibility:     fac(68, "ok",       "Footprint acceptable for current assignments"),
-    priority:       fac(55, "warn",     "4 LOW-priority satellites blocking HIGH-priority queue capacity"),
-    eirp:           fac(28, "critical", "3 satellites receiving <28 dBW — insufficient for reliable intercept",
-                                        "Unit F achieves 88 dBW for the same footprint region"),
-    serviceability: fac(85, "ok",       "Equipment operational but stressed under load"),
-    engagement:     fac(18, "critical", "6 concurrent scans — exceeds recommended max of 4",
-                                        "Queue depth: 12 pending analyses"),
-  },
-  "Unit F": {
-    compositeScore: 89, status: "OPTIMIZED", satelliteLoad: 8, maxCapacity: 12,
-    resource:       fac(88, "ok",       "8/12 capacity — optimal load balance"),
-    visibility:     fac(92, "ok",       "Best-in-class footprint coverage"),
-    priority:       fac(90, "ok",       "High-priority satellites correctly assigned"),
-    eirp:           fac(88, "ok",       "Consistently high EIRP across entire footprint"),
-    serviceability: fac(95, "ok",       "All equipment nominal — last maintenance 2 days ago"),
-    engagement:     fac(82, "ok",       "5 active scans — well-balanced load"),
-  },
-  "Unit G": {
-    compositeScore: 38, status: "MISALLOCATED", satelliteLoad: 3, maxCapacity: 8, faultDays: 23,
-    resource:       fac(30, "critical", "LNA primary chain fault — effective capacity reduced to 30%",
-                                        "3 satellites orphaned — no backup assignment active"),
-    visibility:     fac(55, "warn",     "Reduced antenna tracking accuracy due to equipment fault"),
-    priority:       fac(40, "warn",     "Fault state prevents reliable high-priority tasking"),
-    eirp:           fac(45, "warn",     "Signal quality degraded — fault impact on receive chain"),
-    serviceability: fac(12, "critical", "LNA FAULT — Day 23 → ESCALATION THRESHOLD BREACHED (>15 days)",
-                                        "No repair action logged in last 8 days",
-                                        "Fault pattern: artificially stagnant — no resolution progress",
-                                        "3 prior fault events this quarter"),
-    engagement:     fac(25, "critical", "Only 2/8 capacity operational",
-                                        "Unit effectively idle — 0% productivity confirmed"),
-  },
-  "Unit H": {
-    compositeScore: 65, status: "SUBOPTIMAL", satelliteLoad: 6, maxCapacity: 9,
-    resource:       fac(68, "ok",       "6/9 capacity — adequate"),
-    visibility:     fac(65, "ok",       "Acceptable footprint coverage"),
-    priority:       fac(70, "ok",       "Priority mix balanced"),
-    eirp:           fac(48, "warn",     "PakSat 1R EIRP at unit: 48 dBW",
-                                        "Unit D achieves 68 dBW for same satellite (42% gain possible)"),
-    serviceability: fac(88, "ok",       "Equipment nominal"),
-    engagement:     fac(72, "ok",       "Moderate load — 4 active scans"),
-  },
-};
-
-const REASSIGN_RECS: ReassignRec[] = [
-  {
-    id: "rr1",
-    recPriority: "URGENT",
-    fromUnit: "Unit G", toUnit: "Unit D",
-    satellite: "Express AM5 (HIGH Priority)",
-    reason: "Unit G LNA fault at Day 23 — escalation threshold breached. 3 satellites orphaned. Unit D has 2 open slots with optimal EIRP for same footprint.",
-    gain: "Restore HIGH-priority satellite coverage · Eliminate 3 orphaned satellites · Contain Unit G escalation",
-    steps: [
-      "Move Express AM5 from Unit G → Unit D (2 open slots confirmed)",
-      "Reassign Express AT1 → Unit F (1 open slot)",
-      "Flag Unit G for immediate maintenance priority review",
-      "Escalate Unit G fault to field team (Day 23 — past 15-day threshold)",
-    ],
-    confidence: "High",
-  },
-  {
-    id: "rr2",
-    recPriority: "EFFICIENCY",
-    fromUnit: "Unit E", toUnit: "Unit D",
-    satellite: "4× LOW-Priority satellites on Unit E",
-    reason: "Unit E at 150% load (18/12). 6 concurrent scans exceed max-4 threshold. 4 low-priority satellites are blocking the HIGH-priority queue.",
-    gain: "Reduce Unit E load to ~117% · Free 4 EIRP slots for HIGH-priority queue · Unit D absorbs 2 satellites at 78% score",
-    steps: [
-      "Swap MEASAT 3B (Low-P) and NSS-12 (Low-P) from Unit E → Unit D",
-      "Swap Intelsat 906 (Low-P) and AsiaSat 5 (Low-P) from Unit E → Unit H",
-      "Verify Unit E concurrent scan count drops to ≤4",
-      "Monitor Unit E engagement score for next session",
-    ],
-    confidence: "High",
-  },
-  {
-    id: "rr3",
-    recPriority: "EIRP",
-    fromUnit: "Unit B", toUnit: "Unit D",
-    satellite: "AsiaSat 7",
-    reason: "Unit B receives AsiaSat 7 at 55 dBW (edge-of-beam). Unit D would receive 72 dBW for the same satellite — a 31% EIRP gain.",
-    gain: "31% EIRP improvement for AsiaSat 7 · Unit B freed to absorb 1 Russia-region satellite within its optimal footprint",
-    steps: [
-      "Reassign AsiaSat 7 from Unit B → Unit D",
-      "Confirm Unit D current load (7/11) — absorption feasible",
-      "Assign 1 Russia-region satellite from queue → Unit B to optimize its footprint profile",
-    ],
-    confidence: "Medium",
-  },
-  {
-    id: "rr4",
-    recPriority: "PRIORITY",
-    fromUnit: "Unit C", toUnit: "Unit F",
-    satellite: "SES-12 (P1 — HIGH Priority)",
-    reason: "SES-12 is a P1 satellite currently on Unit C (priority alignment score: 35 — below threshold). Unit F scores 90 on priority alignment.",
-    gain: "P1 satellite elevated to high-capability unit · Unit C releases a critical tasking slot for better-matched medium-priority workload",
-    steps: [
-      "Reassign SES-12 (P1) from Unit C → Unit F",
-      "Assess SES-7 (P1) and Asiastar 1 (P2) — same misalignment pattern",
-      "Update Unit C assignment profile to medium-priority satellites only",
-    ],
-    confidence: "Medium",
-  },
-];
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // HELPERS
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -803,9 +617,9 @@ function formatBandPol(band: BandType, pol: PolType): string {
   else if (p.startsWith("CH-")) p = p.slice(3);
   return `${b} · ${p}`;
 }
-function riskLevel(data: UnitOptData): "Low" | "Medium" | "High" {
+function riskLevel(data: UnitOptimizationData): "Low" | "Medium" | "High" {
   const hasCritical = OPT_FACTOR_DEFS.some(
-    f => (data as Record<FactorKey, FactorEntry>)[f.key].severity === "critical"
+    (f) => data[f.key].severity === "critical",
   );
   if (hasCritical || data.compositeScore < 45) return "High";
   if (data.compositeScore < 70) return "Medium";
@@ -1329,7 +1143,7 @@ function outcomeLabel(o: SatHistory["outcome"]) {
 }
 
 
-function UnitRow({ unit, data, idx }: { unit: UnitLabel; data: UnitScanData; idx: number }) {
+function UnitRow({ unit, data, idx }: { unit: string; data: UnitScanData; idx: number }) {
   const [selSat,      setSelSat     ] = useState(0);
   const [activeDrop,  setActiveDrop ] = useState(false);
   const [historyDrop, setHistoryDrop] = useState(false);
@@ -1337,19 +1151,19 @@ function UnitRow({ unit, data, idx }: { unit: UnitLabel; data: UnitScanData; idx
   if (data.activeSats.length === 0) {
     return (
       <tr className="border-b border-border/50 hover:bg-secondary/20 transition-colors align-top group">
-        <td className="px-3 py-2.5 mono text-[10px] text-muted-foreground/35 w-8">{idx}</td>
-        <td className="px-3 py-2.5 w-24">
-          <span className="mono text-[11px] font-bold text-foreground whitespace-nowrap">{unit}</span>
+        <td className="px-3 py-3 mono text-[11px] font-semibold text-foreground w-8">{idx}</td>
+        <td className="px-3 py-3 w-24">
+          <span className="mono text-[13px] font-bold text-foreground whitespace-nowrap">{unit}</span>
         </td>
-        <td className="px-3 py-2.5 w-52">
-          <span className="mono text-[9px] text-muted-foreground/60 uppercase tracking-wider">No active scans</span>
+        <td className="px-3 py-3 w-52">
+          <span className="mono text-[11px] font-medium text-foreground uppercase tracking-wide">No active scans</span>
         </td>
-        <td className="px-3 py-2.5 w-20"><span className="mono text-[14px] text-muted-foreground/25">—</span></td>
-        <td className="px-3 py-2.5 w-20"><span className="mono text-[14px] text-muted-foreground/25">—</span></td>
-        <td className="px-3 py-2.5 w-20"><span className="mono text-[14px] text-muted-foreground/25">—</span></td>
-        <td className="px-3 py-2.5 w-32"><span className="mono text-[9px] text-muted-foreground/40">—</span></td>
-        <td className="px-3 py-2.5 w-44">
-          <span className="mono text-[9px] text-foreground/65 truncate max-w-[120px]">
+        <td className="px-3 py-3 w-20"><span className="mono text-[14px] font-bold text-foreground">—</span></td>
+        <td className="px-3 py-3 w-20"><span className="mono text-[14px] font-bold text-foreground">—</span></td>
+        <td className="px-3 py-3 w-20"><span className="mono text-[14px] font-bold text-foreground">—</span></td>
+        <td className="px-3 py-3 w-32"><span className="mono text-[11px] font-medium text-foreground">—</span></td>
+        <td className="px-3 py-3 w-44">
+          <span className="mono text-[11px] font-medium text-foreground truncate max-w-[120px]">
             {data.history[0]?.satellite ?? "—"}
           </span>
         </td>
@@ -1366,39 +1180,39 @@ function UnitRow({ unit, data, idx }: { unit: UnitLabel; data: UnitScanData; idx
     <tr className="border-b border-border/50 hover:bg-secondary/20 transition-colors align-top group">
 
       {/* # */}
-      <td className="px-3 py-2.5 mono text-[10px] text-muted-foreground/35 w-8">{idx}</td>
+      <td className="px-3 py-3 mono text-[11px] font-semibold text-foreground w-8">{idx}</td>
 
       {/* Unit */}
-      <td className="px-3 py-2.5 w-24">
-        <span className="mono text-[11px] font-bold text-foreground whitespace-nowrap">{unit}</span>
+      <td className="px-3 py-3 w-24">
+        <span className="mono text-[13px] font-bold text-foreground whitespace-nowrap">{unit}</span>
       </td>
 
       {/* Active Satellites (dropdown) */}
-      <td className="px-3 py-2.5 w-52 align-top">
+      <td className="px-3 py-3 w-52 align-top">
         <button
           onClick={() => { setActiveDrop(p => !p); setHistoryDrop(false); }}
           className="flex items-center gap-1.5 w-full text-left group/btn"
         >
-          <span className="mono text-[10px] font-semibold text-foreground truncate max-w-[130px] group-hover/btn:text-primary transition-colors">
+          <span className="mono text-[12px] font-semibold text-foreground truncate max-w-[130px] group-hover/btn:text-primary transition-colors">
             {sat.satellite}
           </span>
-          <span className="mono text-[8px] text-primary/70 bg-primary/8 border border-primary/15 px-1 py-0.5 rounded-sm leading-none shrink-0 font-bold">
+          <span className="mono text-[9px] text-primary bg-primary/8 border border-primary/15 px-1 py-0.5 rounded-sm leading-none shrink-0 font-bold">
             {data.activeSats.length}
           </span>
-          {activeDrop ? <ChevronUp className="h-3 w-3 shrink-0 text-muted-foreground/40" /> : <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground/40" />}
+          {activeDrop ? <ChevronUp className="h-3 w-3 shrink-0 text-foreground" /> : <ChevronDown className="h-3 w-3 shrink-0 text-foreground" />}
         </button>
 
         {activeDrop && (
           <div className="mt-1.5 border-t border-border pt-1.5">
-            <div className="mono text-[7px] uppercase tracking-[0.18em] text-muted-foreground/50 mb-1.5 font-semibold">
+            <div className="mono text-[9px] uppercase tracking-[0.18em] text-foreground mb-1.5 font-semibold">
               Satellites Being Scanned: {data.activeSats.length}
             </div>
             {data.activeSats.map((s, i) => (
               <button key={s.satellite}
                 onClick={() => { setSelSat(i); setActiveDrop(false); }}
                 className={`flex items-center gap-1.5 w-full text-left py-0.5 px-1 rounded-sm hover:bg-secondary/50 transition-colors ${i === selSat ? "bg-primary/6" : ""}`}>
-                <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${i === selSat ? "bg-primary" : "bg-muted-foreground/20"}`} />
-                <span className={`mono text-[9px] truncate ${i === selSat ? "text-primary font-semibold" : "text-foreground/75"}`}>
+                <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${i === selSat ? "bg-primary" : "bg-border"}`} />
+                <span className={`mono text-[11px] truncate ${i === selSat ? "text-primary font-semibold" : "text-foreground font-medium"}`}>
                   {s.satellite}
                 </span>
               </button>
@@ -1408,32 +1222,29 @@ function UnitRow({ unit, data, idx }: { unit: UnitLabel; data: UnitScanData; idx
       </td>
 
       {/* Frequencies Scanned */}
-      <td className="px-3 py-2.5 w-20">
+      <td className="px-3 py-3 w-20">
         <span className="mono text-[14px] font-bold text-foreground leading-none">{sat.scanned}</span>
-        <div className="mono text-[7px] uppercase tracking-wide text-muted-foreground/40 mt-0.5">Scanned</div>
       </td>
 
       {/* Analyzed */}
-      <td className="px-3 py-2.5 w-20">
+      <td className="px-3 py-3 w-20">
         <span className="mono text-[14px] font-bold text-foreground leading-none">{sat.analyzed}</span>
-        <div className="mono text-[7px] uppercase tracking-wide text-muted-foreground/40 mt-0.5">Analyzed</div>
       </td>
 
       {/* Pending */}
-      <td className="px-3 py-2.5 w-20">
-        <span className={`mono text-[14px] font-bold leading-none ${pending > 0 ? "text-amber-500" : "text-muted-foreground/25"}`}>{pending}</span>
-        <div className="mono text-[7px] uppercase tracking-wide text-muted-foreground/40 mt-0.5">Pending</div>
+      <td className="px-3 py-3 w-20">
+        <span className={`mono text-[14px] font-bold leading-none ${pending > 0 ? "text-amber-600" : "text-foreground"}`}>{pending}</span>
       </td>
 
       {/* Band · Pol + productivity */}
-      <td className="px-3 py-2.5 w-32">
-        <span className="mono text-[9px] font-semibold text-primary/90 bg-primary/5 border border-primary/15 px-1.5 py-0.5 rounded-sm leading-none whitespace-nowrap">
+      <td className="px-3 py-3 w-32">
+        <span className="mono text-[10px] font-semibold text-primary bg-primary/5 border border-primary/15 px-1.5 py-0.5 rounded-sm leading-none whitespace-nowrap">
           {bp}
         </span>
         <div className="mt-1.5 flex items-center gap-1.5">
-          <span className="mono text-[8px] font-bold text-emerald-600">P:{sat.productive}</span>
-          <span className="mono text-[8px] text-muted-foreground/45">N:{sat.nonProductive}</span>
-          <span className={`mono text-[8px] font-bold ${scoreColor(pct)}`}>{pct}%</span>
+          <span className="mono text-[10px] font-bold text-emerald-600">P:{sat.productive}</span>
+          <span className="mono text-[10px] font-semibold text-foreground">N:{sat.nonProductive}</span>
+          <span className={`mono text-[10px] font-bold ${scoreColor(pct)}`}>{pct}%</span>
         </div>
         <div className="mt-1 w-full h-1 rounded-full bg-secondary overflow-hidden">
           <div className={`h-full rounded-full ${scorebar(pct)}`} style={{ width: `${pct}%` }} />
@@ -1441,27 +1252,27 @@ function UnitRow({ unit, data, idx }: { unit: UnitLabel; data: UnitScanData; idx
       </td>
 
       {/* Scan History (dropdown) */}
-      <td className="px-3 py-2.5 w-44 align-top">
+      <td className="px-3 py-3 w-44 align-top">
         <button
           onClick={() => { setHistoryDrop(p => !p); setActiveDrop(false); }}
           className="flex items-center gap-1.5 w-full text-left group/hist"
         >
-          <span className="mono text-[9px] text-foreground/65 truncate max-w-[120px] group-hover/hist:text-primary transition-colors">
+          <span className="mono text-[11px] font-medium text-foreground truncate max-w-[120px] group-hover/hist:text-primary transition-colors">
             {data.history[0]?.satellite ?? "—"}
           </span>
-          {historyDrop ? <ChevronUp className="h-3 w-3 shrink-0 text-muted-foreground/40" /> : <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground/40" />}
+          {historyDrop ? <ChevronUp className="h-3 w-3 shrink-0 text-foreground" /> : <ChevronDown className="h-3 w-3 shrink-0 text-foreground" />}
         </button>
 
         {historyDrop && (
           <div className="mt-1.5 border-t border-border pt-1.5">
-            <div className="mono text-[7px] uppercase tracking-[0.18em] text-muted-foreground/50 mb-1.5 font-semibold">
+            <div className="mono text-[9px] uppercase tracking-[0.18em] text-foreground mb-1.5 font-semibold">
               Previously Scanned
             </div>
             {data.history.map((h, i) => (
               <div key={i} className="flex items-center justify-between py-0.5 gap-1.5">
-                <span className="mono text-[8px] text-foreground/70 truncate flex-1">{h.satellite}</span>
+                <span className="mono text-[10px] font-medium text-foreground truncate flex-1">{h.satellite}</span>
                 <div className="flex items-center gap-1 shrink-0">
-                  <span className="mono text-[7px] text-muted-foreground/40">{h.time}</span>
+                  <span className="mono text-[10px] font-medium text-foreground">{h.time}</span>
                   <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${outcomeColor(h.outcome)}`} />
                 </div>
               </div>
@@ -1475,15 +1286,19 @@ function UnitRow({ unit, data, idx }: { unit: UnitLabel; data: UnitScanData; idx
 
 function UnitActivitySnapshot() {
   const [expanded, setExpanded] = useState(false);
-  const { fleetState, engagements, intelRows, isLoading, units } = useOperationalState();
+  const { fleetState, engagements, intelRows, isLoading } = useOperationalState();
 
-  const activityByUnit = useMemo(() => {
-    if (!fleetState) return new Map<UnitLabel, UnitScanData>();
-    const map = new Map<UnitLabel, UnitScanData>();
+  const unitRows = useMemo(() => {
+    if (!fleetState) return [];
+    return [...fleetState.units].sort((a, b) => a.unitCode.localeCompare(b.unitCode));
+  }, [fleetState]);
+
+  const activityByUnitId = useMemo(() => {
+    if (!fleetState) return new Map<string, UnitScanData>();
+    const map = new Map<string, UnitScanData>();
     for (const state of fleetState.units) {
-      const label = state.unitLabel as UnitLabel;
       const activity = buildUnitActivityFromState(state, engagements, intelRows);
-      map.set(label, {
+      map.set(state.unitDbId, {
         activeSats: activity.activeSats.map((s) => ({
           satellite: s.satellite,
           band: s.band as BandType,
@@ -1499,19 +1314,7 @@ function UnitActivitySnapshot() {
     return map;
   }, [fleetState, engagements, intelRows]);
 
-  const unitOrder = useMemo((): UnitLabel[] => {
-    if (units.length > 0) {
-      return [...units]
-        .sort((a, b) => a.code.localeCompare(b.code))
-        .map((u) => {
-          const letter = u.code.replace(/^GATE[-\s]?/i, "").trim().charAt(0).toUpperCase();
-          return `Unit ${letter}` as UnitLabel;
-        });
-    }
-    return [...UNIT_LABELS];
-  }, [units]);
-
-  const visible = expanded ? unitOrder : unitOrder.slice(0, 4);
+  const visible = expanded ? unitRows : unitRows.slice(0, 4);
 
   return (
     <div className="panel overflow-hidden">
@@ -1520,50 +1323,54 @@ function UnitActivitySnapshot() {
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-secondary/20">
         <div className="flex items-center gap-2.5">
           <Activity className="h-3.5 w-3.5 text-primary" />
-          <span className="mono text-[11px] font-bold uppercase tracking-wider text-foreground">
+          <span className="mono text-[12px] font-bold uppercase tracking-wider text-foreground">
             Unit Activity Snapshot
           </span>
-          <span className="mono text-[8px] uppercase tracking-[0.18em] text-primary/70 bg-primary/8 border border-primary/20 px-1.5 py-0.5 rounded-sm leading-none">
+          <span className="mono text-[9px] uppercase tracking-[0.18em] text-primary bg-primary/8 border border-primary/20 px-1.5 py-0.5 rounded-sm leading-none font-semibold">
             Real-Time · Multi-Satellite
           </span>
         </div>
-        <span className="mono text-[8px] uppercase tracking-[0.15em] text-muted-foreground/40">
-          {unitOrder.length} Units
+        <span className="mono text-[10px] uppercase tracking-[0.15em] text-foreground font-semibold">
+          {unitRows.length} Units
         </span>
       </div>
 
       {/* Table */}
       <div className="overflow-x-auto">
         {isLoading ? (
-          <div className="px-4 py-8 text-center mono text-[10px] text-muted-foreground uppercase tracking-wider">
+          <div className="px-4 py-8 text-center mono text-[11px] text-foreground uppercase tracking-wider font-medium">
             Loading operational state…
+          </div>
+        ) : unitRows.length === 0 ? (
+          <div className="px-4 py-8 text-center mono text-[11px] text-foreground uppercase tracking-wider font-medium">
+            No units registered
           </div>
         ) : (
         <table className="w-full">
           <thead>
             <tr className="border-b border-border bg-secondary/25">
-              <th className="px-3 py-2 text-left mono text-[8px] uppercase tracking-wider text-foreground w-8">#</th>
-              <th className="px-3 py-2 text-left mono text-[8px] uppercase tracking-wider text-foreground">Unit</th>
-              <th className="px-3 py-2 text-left mono text-[8px] uppercase tracking-wider text-foreground">
+              <th className="px-3 py-2.5 text-left mono text-[10px] font-bold uppercase tracking-wider text-foreground w-8">#</th>
+              <th className="px-3 py-2.5 text-left mono text-[10px] font-bold uppercase tracking-wider text-foreground">Unit</th>
+              <th className="px-3 py-2.5 text-left mono text-[10px] font-bold uppercase tracking-wider text-foreground">
                 Active Satellites
-                <span className="ml-1.5 text-muted-foreground/45 normal-case tracking-normal font-normal">(click ▾)</span>
+                <span className="ml-1.5 text-foreground/80 normal-case tracking-normal font-medium">(click ▾)</span>
               </th>
-              <th className="px-3 py-2 text-left mono text-[8px] uppercase tracking-wider text-foreground">Scanned</th>
-              <th className="px-3 py-2 text-left mono text-[8px] uppercase tracking-wider text-foreground">Analyzed</th>
-              <th className="px-3 py-2 text-left mono text-[8px] uppercase tracking-wider text-foreground">Pending</th>
-              <th className="px-3 py-2 text-left mono text-[8px] uppercase tracking-wider text-foreground">Band · Pol</th>
-              <th className="px-3 py-2 text-left mono text-[8px] uppercase tracking-wider text-foreground">
+              <th className="px-3 py-2.5 text-left mono text-[10px] font-bold uppercase tracking-wider text-foreground">Scanned</th>
+              <th className="px-3 py-2.5 text-left mono text-[10px] font-bold uppercase tracking-wider text-foreground">Analyzed</th>
+              <th className="px-3 py-2.5 text-left mono text-[10px] font-bold uppercase tracking-wider text-foreground">Pending</th>
+              <th className="px-3 py-2.5 text-left mono text-[10px] font-bold uppercase tracking-wider text-foreground">Band · Pol</th>
+              <th className="px-3 py-2.5 text-left mono text-[10px] font-bold uppercase tracking-wider text-foreground">
                 Scan History
-                <span className="ml-1.5 text-muted-foreground/45 normal-case tracking-normal font-normal">(click ▾)</span>
+                <span className="ml-1.5 text-foreground/80 normal-case tracking-normal font-medium">(click ▾)</span>
               </th>
             </tr>
           </thead>
           <tbody>
-            {visible.map((unit, idx) => (
+            {visible.map((state, idx) => (
               <UnitRow
-                key={unit}
-                unit={unit}
-                data={activityByUnit.get(unit) ?? { activeSats: [], history: [] }}
+                key={state.unitDbId}
+                unit={state.unitLabel}
+                data={activityByUnitId.get(state.unitDbId) ?? { activeSats: [], history: [] }}
                 idx={idx + 1}
               />
             ))}
@@ -1573,17 +1380,19 @@ function UnitActivitySnapshot() {
       </div>
 
       {/* Expand / collapse toggle */}
+      {unitRows.length > 4 && (
       <button
         onClick={() => setExpanded(e => !e)}
-        className="w-full flex items-center justify-center gap-1.5 py-2 border-t border-border bg-secondary/10 hover:bg-secondary/25 transition-colors"
+        className="w-full flex items-center justify-center gap-1.5 py-2.5 border-t border-border bg-secondary/10 hover:bg-secondary/25 transition-colors"
       >
-        <span className="mono text-[8px] uppercase tracking-wider text-muted-foreground/50">
-          {expanded ? "Show less" : `Show all ${unitOrder.length} units`}
+        <span className="mono text-[10px] uppercase tracking-wider text-foreground font-semibold">
+          {expanded ? "Show less" : `Show all ${unitRows.length} units`}
         </span>
         {expanded
-          ? <ChevronUp className="h-3 w-3 text-muted-foreground/40" />
-          : <ChevronDown className="h-3 w-3 text-muted-foreground/40" />}
+          ? <ChevronUp className="h-3.5 w-3.5 text-foreground" />
+          : <ChevronDown className="h-3.5 w-3.5 text-foreground" />}
       </button>
+      )}
     </div>
   );
 }
@@ -1591,231 +1400,6 @@ function UnitActivitySnapshot() {
 // ═══════════════════════════════════════════════════════════════════════════════
 // OPTIMIZATION ENGINE — COMPONENTS
 // ═══════════════════════════════════════════════════════════════════════════════
-
-function UnitOptCard({
-  unit, data, expanded, onToggle,
-}: {
-  unit: UnitLabel;
-  data: UnitOptData;
-  expanded: boolean;
-  onToggle: () => void;
-}) {
-  const unitShort = unit.replace("Unit ", "");
-
-  const borderCls =
-    data.status === "OPTIMIZED"   ? "border-l-emerald-500/60" :
-    data.status === "SUBOPTIMAL"  ? "border-l-amber-400/60"   :
-                                    "border-l-destructive/60";
-  const statusBadgeCls =
-    data.status === "OPTIMIZED"   ? "text-emerald-600 bg-emerald-500/8 border-emerald-500/20" :
-    data.status === "SUBOPTIMAL"  ? "text-amber-500 bg-amber-400/8 border-amber-400/20"       :
-                                    "text-destructive bg-destructive/8 border-destructive/20";
-
-  const entries = OPT_FACTOR_DEFS.map(f => ({
-    ...f,
-    entry: (data as Record<FactorKey, FactorEntry>)[f.key],
-  }));
-
-  const hasCritical = entries.some(e => e.entry.severity === "critical");
-  const hasWarn     = entries.some(e => e.entry.severity === "warn");
-
-  return (
-    <div className={`panel overflow-hidden border-l-[3px] ${borderCls} flex flex-col`}>
-
-      {/* ── Clickable summary ────────────────────────────────────────────── */}
-      <button
-        onClick={onToggle}
-        className="w-full text-left px-3 pt-2.5 pb-2.5 hover:bg-secondary/25 transition-colors focus:outline-none"
-      >
-        {/* Row 1: Unit badge + alert dots + chevron */}
-        <div className="flex items-center justify-between mb-1.5">
-          <span className="mono text-[10px] font-bold text-primary bg-primary/10 border border-primary/20 px-1.5 py-0.5 rounded-sm leading-none">
-            UNIT {unitShort}
-          </span>
-          <div className="flex items-center gap-1.5">
-            {hasCritical && (
-              <span className="h-1.5 w-1.5 rounded-full bg-destructive animate-pulse" />
-            )}
-            {!hasCritical && hasWarn && (
-              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-            )}
-            {expanded
-              ? <ChevronUp className="h-3 w-3 text-muted-foreground/40" />
-              : <ChevronDown className="h-3 w-3 text-muted-foreground/40" />}
-          </div>
-        </div>
-
-        {/* Composite score */}
-        <div className="flex items-end gap-1 mb-1.5">
-          <span className={`mono text-[26px] font-bold leading-none ${scoreColor(data.compositeScore)}`}>
-            {data.compositeScore}
-          </span>
-          <span className="mono text-[9px] text-muted-foreground/35 mb-0.5 leading-none">/100</span>
-        </div>
-
-        {/* Status badge */}
-        <span className={`inline-block mono text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-sm border leading-none mb-2 ${statusBadgeCls}`}>
-          {data.status}
-        </span>
-
-        {/* Score bar */}
-        <div className="w-full h-1 rounded-full bg-secondary overflow-hidden mb-2">
-          <div
-            className={`h-full rounded-full ${scorebar(data.compositeScore)}`}
-            style={{ width: `${data.compositeScore}%` }}
-          />
-        </div>
-
-        {/* Factor severity dots (R · V · P · E · S · L) */}
-        <div className="flex items-center gap-1">
-          {entries.map(({ key, abbr, entry }) => (
-            <div
-              key={key}
-              title={`${abbr}: ${entry.score}/100`}
-              className={`h-1.5 w-1.5 rounded-full ${
-                entry.severity === "ok"       ? "bg-emerald-500/60" :
-                entry.severity === "warn"     ? "bg-amber-400"      :
-                                                "bg-destructive animate-pulse"
-              }`}
-            />
-          ))}
-          <span className="mono text-[7px] text-muted-foreground/25 ml-1 tracking-wide">
-            {entries.map(e => e.abbr).join("·")}
-          </span>
-        </div>
-      </button>
-
-      {/* ── Expanded: factor breakdown ───────────────────────────────────── */}
-      {expanded && (
-        <div className="border-t border-border bg-secondary/20 px-3 py-2 space-y-2.5">
-
-          {/* Fault persistence alert */}
-          {data.faultDays !== undefined && data.faultDays >= 7 && (
-            <div className={`flex items-center gap-1.5 rounded-sm px-2 py-1.5 ${
-              data.faultDays >= 15
-                ? "bg-destructive/8 border border-destructive/20"
-                : "bg-amber-400/8 border border-amber-400/20"
-            }`}>
-              <AlertTriangle className={`h-3 w-3 shrink-0 ${data.faultDays >= 15 ? "text-destructive" : "text-amber-400"}`} />
-              <span className={`mono text-[8px] font-bold ${data.faultDays >= 15 ? "text-destructive" : "text-amber-500"}`}>
-                FAULT {data.faultDays >= 30 ? "ESCALATION" : data.faultDays >= 15 ? "CRITICAL" : "WARNING"} — Day {data.faultDays}
-              </span>
-            </div>
-          )}
-
-          {/* Load bar */}
-          <div>
-            <div className="flex items-center justify-between mb-0.5">
-              <span className="mono text-[7px] uppercase tracking-wider text-muted-foreground/40">Satellite Load</span>
-              <span className={`mono text-[8px] font-bold ${data.satelliteLoad > data.maxCapacity ? "text-destructive" : "text-muted-foreground/70"}`}>
-                {data.satelliteLoad}/{data.maxCapacity}
-              </span>
-            </div>
-            <div className="w-full h-1 rounded-full bg-secondary overflow-hidden">
-              <div
-                className={`h-full rounded-full ${data.satelliteLoad > data.maxCapacity ? "bg-destructive/80" : scorebar(Math.round((data.satelliteLoad / data.maxCapacity) * 100))}`}
-                style={{ width: `${Math.min(100, Math.round((data.satelliteLoad / data.maxCapacity) * 100))}%` }}
-              />
-            </div>
-          </div>
-
-          {/* Factor details */}
-          {entries.map(({ key, label, entry }) => (
-            <div key={key}>
-              <div className="flex items-center justify-between mb-0.5">
-                <span className={`mono text-[8px] font-semibold uppercase tracking-wide ${
-                  entry.severity === "ok" ? "text-muted-foreground/55" :
-                  entry.severity === "warn" ? "text-amber-500" : "text-destructive"
-                }`}>
-                  {label}
-                </span>
-                <span className={`mono text-[9px] font-bold ${scoreColor(entry.score)}`}>{entry.score}</span>
-              </div>
-              <div className="w-full h-0.5 bg-secondary rounded-full mb-1 overflow-hidden">
-                <div className={`h-full ${scorebar(entry.score)}`} style={{ width: `${entry.score}%` }} />
-              </div>
-              {entry.issues.map((issue, i) => (
-                <div key={i} className="flex items-start gap-1 mt-0.5">
-                  <span className={`mt-[3px] h-1 w-1 rounded-full shrink-0 ${
-                    entry.severity === "ok" ? "bg-muted-foreground/25" :
-                    entry.severity === "warn" ? "bg-amber-400" : "bg-destructive"
-                  }`} />
-                  <span className="mono text-[7.5px] text-muted-foreground/55 leading-tight">{issue}</span>
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function RecommendationCard({
-  rec, active, onToggle,
-}: {
-  rec: ReassignRec;
-  active: boolean;
-  onToggle: () => void;
-}) {
-  const p = rec.recPriority;
-  const borderCls =
-    p === "URGENT"     ? "border-l-destructive/60" :
-    p === "EFFICIENCY" ? "border-l-primary/60"     :
-    p === "EIRP"       ? "border-l-sky-500/60"     :
-                         "border-l-amber-400/60";
-  const badgeCls =
-    p === "URGENT"     ? "text-destructive bg-destructive/8 border-destructive/20" :
-    p === "EFFICIENCY" ? "text-primary bg-primary/8 border-primary/20"             :
-    p === "EIRP"       ? "text-sky-600 bg-sky-500/8 border-sky-500/20"             :
-                         "text-amber-500 bg-amber-400/8 border-amber-400/20";
-
-  return (
-    <div className={`panel overflow-hidden border-l-[3px] ${borderCls}`}>
-      <button
-        onClick={onToggle}
-        className="w-full text-left px-3 py-2 hover:bg-secondary/25 transition-colors focus:outline-none"
-      >
-        <div className="flex items-start justify-between gap-2 mb-1">
-          <span className={`mono text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-sm border leading-none shrink-0 ${badgeCls}`}>
-            {p}
-          </span>
-          <div className="flex items-center gap-1 shrink-0 text-muted-foreground/40">
-            <span className="mono text-[8px]">{rec.fromUnit} → {rec.toUnit}</span>
-            {active ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-          </div>
-        </div>
-        <div className="mono text-[9px] font-semibold text-foreground/90 leading-snug mb-0.5">
-          {rec.satellite}
-        </div>
-        <div className="mono text-[8px] text-muted-foreground/55 leading-snug">
-          {rec.reason}
-        </div>
-      </button>
-
-      {active && (
-        <div className="border-t border-border bg-secondary/20 px-3 py-2">
-          <div className="mono text-[7px] uppercase tracking-[0.2em] text-emerald-600 font-bold mb-0.5">Expected Gain</div>
-          <div className="mono text-[8px] text-emerald-600/80 leading-snug mb-2.5">{rec.gain}</div>
-
-          <div className="mono text-[7px] uppercase tracking-[0.2em] text-muted-foreground/45 font-semibold mb-1">Recommended Actions</div>
-          <div className="space-y-1">
-            {rec.steps.map((step, i) => (
-              <div key={i} className="flex items-start gap-1.5">
-                <span className="mono text-[8px] text-primary/50 font-bold shrink-0 mt-px">{i + 1}.</span>
-                <span className="mono text-[8px] text-foreground/65 leading-snug">{step}</span>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-2 pt-1.5 border-t border-border/40 mono text-[7px] uppercase tracking-widest text-muted-foreground/25 text-center">
-            Recommendation only — no auto-execution
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ── Table sort-header helper ─────────────────────────────────────────────────
 function SortThOpt({
@@ -1826,24 +1410,24 @@ function SortThOpt({
 }) {
   const active = sortKey === col;
   return (
-    <th className="px-3 py-2 text-left cursor-pointer select-none hover:bg-secondary/40 transition-colors" onClick={() => onSort(col)}>
-      <div className="flex items-center gap-1 mono text-[8px] uppercase tracking-wider text-foreground">
+    <th className="px-3 py-2.5 text-left cursor-pointer select-none hover:bg-secondary/40 transition-colors" onClick={() => onSort(col)}>
+      <div className="flex items-center gap-1 mono text-[10px] font-bold uppercase tracking-wider text-foreground">
         {children}
         {active
-          ? (sortDir === "asc" ? <ChevronUp className="h-3 w-3 text-primary" /> : <ChevronDown className="h-3 w-3 text-primary" />)
-          : <span className="mono text-[8px] text-muted-foreground/25">↕</span>}
+          ? (sortDir === "asc" ? <ChevronUp className="h-3.5 w-3.5 text-primary" /> : <ChevronDown className="h-3.5 w-3.5 text-primary" />)
+          : <span className="mono text-[10px] text-foreground/50">↕</span>}
       </div>
     </th>
   );
 }
 
 // ── Radial gauge (SVG-based circular progress) ───────────────────────────────
-function RadialGauge({ score, label, size = 88 }: { score: number; label: string; size?: number }) {
+function RadialGauge({ score, label, size = 96 }: { score: number; label: string; size?: number }) {
   const sw = 9, r = (size - sw) / 2, c = 2 * Math.PI * r, cx = size / 2;
   const palette = scoreRingPalette(score);
   const { trackStroke, arcStroke, defs } = useEngagementRingVisuals(palette);
   return (
-    <div className="flex flex-col items-center gap-1.5">
+    <div className="flex flex-col items-center gap-2">
       <div className="le-progress-ring relative" style={{ width: size, height: size }}>
         <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
           {defs}
@@ -1852,12 +1436,12 @@ function RadialGauge({ score, label, size = 88 }: { score: number; label: string
             strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - score / 100)} />
         </svg>
         <div className="absolute inset-0 flex items-center justify-center">
-          <span className={`mono text-[15px] font-bold leading-none ${scoreColor(score)}`}>{score}</span>
+          <span className={`mono text-[17px] font-bold leading-none ${scoreColor(score)}`}>{score}</span>
         </div>
       </div>
       <div className="text-center space-y-0.5">
-        <div className="mono text-[7.5px] uppercase tracking-wide text-muted-foreground/55 leading-tight">{label}</div>
-        <div className={`mono text-[8px] font-bold ${scoreColor(score)}`}>
+        <div className="mono text-[10px] font-semibold uppercase tracking-wide text-foreground leading-tight">{label}</div>
+        <div className={`mono text-[10px] font-bold ${scoreColor(score)}`}>
           {score >= 70 ? "Good" : score >= 45 ? "Average" : "Poor"}
         </div>
       </div>
@@ -1879,20 +1463,41 @@ function CompositeScoreRing({ score }: { score: number }) {
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
         <span className={`mono text-[28px] font-bold leading-none ${scoreColor(score)}`}>{score}</span>
-        <span className="mono text-[9px] text-muted-foreground/40">/100</span>
+        <span className="mono text-[11px] font-semibold text-foreground">/100</span>
       </div>
     </div>
   );
 }
 
+function unitNavKey(unitDbId: string, unitCode: string): string {
+  const letter = unitCode.replace(/^GATE[-\s]?/i, "").trim().charAt(0).toUpperCase();
+  return letter || unitDbId;
+}
+
+function resolveSelectedUnit(
+  fleetState: OperationalFleetState | null,
+  selectedUnitKey: string | undefined,
+) {
+  if (!fleetState || !selectedUnitKey) return null;
+  return fleetState.units.find(
+    (u) =>
+      u.unitDbId === selectedUnitKey ||
+      unitNavKey(u.unitDbId, u.unitCode).toUpperCase() === selectedUnitKey.toUpperCase(),
+  ) ?? null;
+}
+
 // ── Unit drill-down detail view ──────────────────────────────────────────────
-function UnitDetailView({ unit, onBack }: { unit: UnitLabel; onBack: () => void }) {
-  const data = OPT_DATA[unit];
-  const entries = OPT_FACTOR_DEFS.map(f => ({
-    ...f, entry: (data as Record<FactorKey, FactorEntry>)[f.key],
+function UnitDetailView({
+  data,
+  onBack,
+}: {
+  data: UnitOptimizationData;
+  onBack: () => void;
+}) {
+  const entries = OPT_FACTOR_DEFS.map((f) => ({
+    ...f,
+    entry: data[f.key],
   }));
-  const unitRecs = REASSIGN_RECS.filter(r => r.fromUnit === unit || r.toUnit === unit);
-  const [activeRec, setActiveRec] = useState<string | null>(null);
   const risk = riskLevel(data);
 
   const statusBadgeCls =
@@ -1907,49 +1512,35 @@ function UnitDetailView({ unit, onBack }: { unit: UnitLabel; onBack: () => void 
       <div className="panel overflow-hidden">
         <div className="px-4 py-2.5 border-b border-border bg-secondary/20 flex items-center gap-3">
           <button onClick={onBack}
-            className="flex items-center gap-1.5 mono text-[9px] uppercase tracking-wide text-muted-foreground/60 hover:text-foreground transition-colors">
+            className="flex items-center gap-1.5 mono text-[11px] font-semibold uppercase tracking-wide text-foreground hover:text-primary transition-colors">
             <ChevronLeft className="h-3.5 w-3.5" /> Optimization Table
           </button>
-          <span className="text-muted-foreground/30">·</span>
+          <span className="text-border">·</span>
           <Zap className="h-3.5 w-3.5 text-primary" />
-          <span className="mono text-[11px] font-bold uppercase tracking-wider text-foreground">{unit} — Optimization Detail</span>
+          <span className="mono text-[13px] font-bold uppercase tracking-wider text-foreground">{data.unitLabel} — Optimization Detail</span>
         </div>
 
         <div className="px-4 py-4 flex flex-col sm:flex-row items-start sm:items-center gap-5">
-          {/* Large composite score gauge */}
           <div className="flex flex-col items-center shrink-0">
             <CompositeScoreRing score={data.compositeScore} />
-            <span className={`inline-block mt-2 mono text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-sm border ${statusBadgeCls}`}>
+            <span className={`inline-block mt-2 mono text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-sm border ${statusBadgeCls}`}>
               {data.status}
             </span>
           </div>
 
-          {/* Meta cards + fault alert */}
           <div className="flex-1 space-y-2.5 w-full">
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               {([
-                { label: "Satellite Load",   value: `${data.satelliteLoad}/${data.maxCapacity}`, warn: data.satelliteLoad > data.maxCapacity },
-                { label: "Risk Level",        value: risk,                                        warn: risk === "High" },
-                { label: "Recommendations",   value: `${unitRecs.length} active`,                 warn: unitRecs.length > 0 },
-                { label: "Fault Persistence", value: data.faultDays ? `Day ${data.faultDays}` : "None", warn: (data.faultDays ?? 0) >= 7 },
-              ] as const).map(m => (
-                <div key={m.label} className="bg-secondary/30 rounded-sm border border-border px-3 py-2">
-                  <div className={`mono text-[13px] font-bold leading-none ${m.warn ? "text-destructive" : "text-foreground"}`}>{m.value}</div>
-                  <div className="mono text-[7px] uppercase tracking-wider text-muted-foreground/50 mt-0.5">{m.label}</div>
+                { label: "Satellite Load", value: `${data.satelliteLoad}/${data.maxCapacity}`, warn: data.satelliteLoad > data.maxCapacity },
+                { label: "Risk Level", value: risk, warn: risk === "High" },
+                { label: "Active Parameters", value: "3 factors", warn: false },
+              ] as const).map((m) => (
+                <div key={m.label} className="bg-secondary/30 rounded-sm border border-border px-3 py-2.5">
+                  <div className={`mono text-[15px] font-bold leading-none ${m.warn ? "text-destructive" : "text-foreground"}`}>{m.value}</div>
+                  <div className="mono text-[10px] font-semibold uppercase tracking-wider text-foreground mt-1">{m.label}</div>
                 </div>
               ))}
             </div>
-            {data.faultDays !== undefined && data.faultDays >= 7 && (
-              <div className={`flex items-center gap-2 rounded-sm px-3 py-2 ${
-                data.faultDays >= 15 ? "bg-destructive/8 border border-destructive/20" : "bg-amber-400/8 border border-amber-400/20"
-              }`}>
-                <AlertTriangle className={`h-3.5 w-3.5 shrink-0 ${data.faultDays >= 15 ? "text-destructive" : "text-amber-400"}`} />
-                <span className={`mono text-[9px] font-bold ${data.faultDays >= 15 ? "text-destructive" : "text-amber-500"}`}>
-                  FAULT {data.faultDays >= 30 ? "ESCALATION" : data.faultDays >= 15 ? "CRITICAL" : "WARNING"} — Day {data.faultDays}
-                  {data.faultDays >= 15 ? " · Escalation threshold breached" : " · Approaching critical threshold"}
-                </span>
-              </div>
-            )}
           </div>
         </div>
       </div>
@@ -1957,21 +1548,18 @@ function UnitDetailView({ unit, onBack }: { unit: UnitLabel; onBack: () => void 
       {/* Score Breakdown ─────────────────────────────────────────────────── */}
       <div className="panel overflow-hidden">
         <div className="px-4 py-2.5 border-b border-border bg-secondary/20 flex items-center gap-3">
-          <span className="mono text-[10px] font-bold uppercase tracking-wider text-foreground">Score Breakdown</span>
-          <span className="mono text-[8px] text-muted-foreground/45">Weighted contribution to composite score</span>
+          <span className="mono text-[12px] font-bold uppercase tracking-wider text-foreground">Score Breakdown</span>
+          <span className="mono text-[10px] font-medium text-foreground">Equal weight across three parameters</span>
         </div>
 
-        <div className="px-4 pt-4 pb-3 grid grid-cols-3 sm:grid-cols-6 gap-4 border-b border-border">
+        <div className="px-4 pt-4 pb-3 grid grid-cols-1 sm:grid-cols-3 gap-6 border-b border-border">
           {entries.map(({ key, label, weight, entry }) => (
-            <div key={key} className="flex flex-col items-center gap-0.5">
-              <RadialGauge score={entry.score} label={
-                label.replace(" Utilization","").replace(" Match","").replace(" Alignment","")
-                     .replace(" Effectiveness","").replace(" Health","").replace(" Load","")
-              } />
-              <span className="mono text-[7px] text-muted-foreground/40">{Math.round(weight * 100)}% wt</span>
+            <div key={key} className="flex flex-col items-center gap-1">
+              <RadialGauge score={entry.score} label={label} />
+              <span className="mono text-[10px] font-semibold text-foreground">{Math.round(weight * 100)}% wt</span>
               {entry.severity !== "ok" && (
-                <div className={`flex items-center gap-0.5 mono text-[7px] font-bold uppercase ${entry.severity === "critical" ? "text-destructive" : "text-amber-500"}`}>
-                  <AlertTriangle className="h-2.5 w-2.5" />
+                <div className={`flex items-center gap-0.5 mono text-[10px] font-bold uppercase ${entry.severity === "critical" ? "text-destructive" : "text-amber-600"}`}>
+                  <AlertTriangle className="h-3 w-3" />
                   {entry.severity === "critical" ? "Critical" : "Warn"}
                 </div>
               )}
@@ -1980,21 +1568,21 @@ function UnitDetailView({ unit, onBack }: { unit: UnitLabel; onBack: () => void 
         </div>
 
         <div className="px-4 py-3">
-          <div className="mono text-[8px] uppercase tracking-[0.18em] text-muted-foreground/50 font-semibold mb-2">Detected Issues</div>
-          {entries.filter(e => e.entry.severity !== "ok").length === 0 ? (
-            <p className="mono text-[9px] text-emerald-600 py-1">All factors within optimal thresholds</p>
+          <div className="mono text-[11px] uppercase tracking-[0.18em] text-foreground font-bold mb-2">Detected Issues</div>
+          {entries.filter((e) => e.entry.severity !== "ok").length === 0 ? (
+            <p className="mono text-[11px] font-medium text-emerald-600 py-1">All factors within optimal thresholds</p>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {entries.filter(e => e.entry.severity !== "ok").map(({ label, entry }) => (
-                <div key={label} className={`rounded-sm border px-3 py-2 ${
+              {entries.filter((e) => e.entry.severity !== "ok").map(({ label, entry }) => (
+                <div key={label} className={`rounded-sm border px-3 py-2.5 ${
                   entry.severity === "critical" ? "border-destructive/20 bg-destructive/4" : "border-amber-400/20 bg-amber-400/4"
                 }`}>
                   <div className="flex items-center justify-between mb-1">
-                    <span className={`mono text-[8px] font-bold uppercase tracking-wide ${entry.severity === "critical" ? "text-destructive" : "text-amber-500"}`}>{label}</span>
-                    <span className={`mono text-[9px] font-bold ${scoreColor(entry.score)}`}>{entry.score}/100</span>
+                    <span className={`mono text-[11px] font-bold uppercase tracking-wide ${entry.severity === "critical" ? "text-destructive" : "text-amber-600"}`}>{label}</span>
+                    <span className={`mono text-[12px] font-bold ${scoreColor(entry.score)}`}>{entry.score}/100</span>
                   </div>
                   {entry.issues.map((iss, i) => (
-                    <div key={i} className="mono text-[7.5px] text-muted-foreground/60 leading-snug">· {iss}</div>
+                    <div key={i} className="mono text-[10px] font-medium text-foreground leading-snug">· {iss}</div>
                   ))}
                 </div>
               ))}
@@ -2002,57 +1590,6 @@ function UnitDetailView({ unit, onBack }: { unit: UnitLabel; onBack: () => void 
           )}
         </div>
       </div>
-
-      {/* Recommendations ─────────────────────────────────────────────────── */}
-      {unitRecs.length > 0 && (
-        <div className="panel overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-border bg-secondary/20 flex items-center gap-3">
-            <span className="mono text-[10px] font-bold uppercase tracking-wider text-foreground">Optimization Recommendations</span>
-            <span className="mono text-[8px] text-muted-foreground/45">Read-only · no auto-execution</span>
-          </div>
-          <div className="p-3 space-y-2">
-            {unitRecs.map(rec => {
-              const p = rec.recPriority;
-              const bl = p==="URGENT"?"border-l-destructive/60":p==="EFFICIENCY"?"border-l-primary/60":p==="EIRP"?"border-l-sky-500/60":"border-l-amber-400/60";
-              const bb = p==="URGENT"?"text-destructive bg-destructive/8 border-destructive/20":p==="EFFICIENCY"?"text-primary bg-primary/8 border-primary/20":p==="EIRP"?"text-sky-600 bg-sky-500/8 border-sky-500/20":"text-amber-500 bg-amber-400/8 border-amber-400/20";
-              const cc = rec.confidence==="High"?"text-emerald-600":rec.confidence==="Medium"?"text-amber-500":"text-muted-foreground/55";
-              const open = activeRec === rec.id;
-              return (
-                <div key={rec.id} className={`panel overflow-hidden border-l-[3px] ${bl}`}>
-                  <button onClick={() => setActiveRec(x => x===rec.id?null:rec.id)}
-                    className="w-full text-left px-3 py-2 hover:bg-secondary/25 transition-colors focus:outline-none">
-                    <div className="flex items-start justify-between gap-2 mb-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className={`mono text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-sm border leading-none ${bb}`}>{p}</span>
-                        <span className={`mono text-[8px] font-semibold ${cc}`}>{rec.confidence} Confidence</span>
-                        <span className="mono text-[8px] text-muted-foreground/40">{rec.fromUnit} → {rec.toUnit}</span>
-                      </div>
-                      {open ? <ChevronUp className="h-3 w-3 text-muted-foreground/40 shrink-0"/> : <ChevronDown className="h-3 w-3 text-muted-foreground/40 shrink-0"/>}
-                    </div>
-                    <div className="mono text-[9px] font-semibold text-foreground/90 leading-snug mb-0.5">{rec.satellite}</div>
-                    <div className="mono text-[8px] text-muted-foreground/55 leading-snug">{rec.reason}</div>
-                  </button>
-                  {open && (
-                    <div className="border-t border-border bg-secondary/20 px-3 py-2">
-                      <div className="mono text-[7px] uppercase tracking-[0.18em] text-emerald-600 font-bold mb-0.5">Expected Gain</div>
-                      <div className="mono text-[8px] text-emerald-600/80 leading-snug mb-2.5">{rec.gain}</div>
-                      <div className="mono text-[7px] uppercase tracking-[0.18em] text-muted-foreground/45 font-semibold mb-1">Recommended Actions</div>
-                      <div className="space-y-1">
-                        {rec.steps.map((step, i) => (
-                          <div key={i} className="flex items-start gap-1.5">
-                            <span className="mono text-[8px] text-primary/50 font-bold shrink-0 mt-px">{i+1}.</span>
-                            <span className="mono text-[8px] text-foreground/65 leading-snug">{step}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -2061,10 +1598,21 @@ function UnitDetailView({ unit, onBack }: { unit: UnitLabel; onBack: () => void 
 function OptimizationEngine() {
   const navigate = Route.useNavigate();
   const { unit: selectedUnitKey } = Route.useSearch();
+  const { fleetState, equipment, isLoading } = useOperationalState();
   const [sortKey, setSortKey] = useState<"unit"|"score"|"status"|"risk">("score");
   const [sortDir, setSortDir] = useState<"asc"|"desc">("desc");
   const [filterStatus, setFilterStatus] = useState<OptStatus|"ALL">("ALL");
   const [tableExpanded, setTableExpanded] = useState(false);
+
+  const optByUnitId = useMemo(() => {
+    const map = new Map<string, UnitOptimizationData>();
+    if (!fleetState) return map;
+    for (const state of fleetState.units) {
+      const unitEq = equipment.filter((e) => e.unit_id === state.unitDbId);
+      map.set(state.unitDbId, buildUnitOptimizationData(state, unitEq));
+    }
+    return map;
+  }, [fleetState, equipment]);
 
   const handleSort = (col: string) => {
     const k = col as typeof sortKey;
@@ -2072,28 +1620,37 @@ function OptimizationEngine() {
     else { setSortKey(k); setSortDir("desc"); }
   };
 
-  if (selectedUnitKey) {
-    const unitLabel = `Unit ${selectedUnitKey}` as UnitLabel;
-    if ((UNIT_LABELS as readonly string[]).includes(unitLabel)) {
-      return <UnitDetailView unit={unitLabel} onBack={() => navigate({ search: ccHubSearch("engagement") })} />;
-    }
-  }
-
   const statusOrder: Record<OptStatus, number> = { MISALLOCATED: 0, SUBOPTIMAL: 1, OPTIMIZED: 2 };
   const riskOrder: Record<"High"|"Medium"|"Low", number> = { High: 0, Medium: 1, Low: 2 };
 
-  const rows = UNIT_LABELS
-    .filter(u => filterStatus === "ALL" || OPT_DATA[u].status === filterStatus)
-    .slice()
-    .sort((a, b) => {
-      const da = OPT_DATA[a], db = OPT_DATA[b];
-      let diff = 0;
-      if (sortKey === "score")  diff = da.compositeScore - db.compositeScore;
-      if (sortKey === "unit")   diff = a.localeCompare(b);
-      if (sortKey === "status") diff = statusOrder[da.status] - statusOrder[db.status];
-      if (sortKey === "risk")   diff = riskOrder[riskLevel(da)] - riskOrder[riskLevel(db)];
-      return sortDir === "asc" ? diff : -diff;
-    });
+  const rows = useMemo(() => {
+    if (!fleetState) return [];
+    return [...fleetState.units]
+      .map((state) => ({ state, data: optByUnitId.get(state.unitDbId)! }))
+      .filter(({ data }) => data && (filterStatus === "ALL" || data.status === filterStatus))
+      .sort((a, b) => {
+        const da = a.data;
+        const db = b.data;
+        let diff = 0;
+        if (sortKey === "score") diff = da.compositeScore - db.compositeScore;
+        if (sortKey === "unit") diff = a.state.unitLabel.localeCompare(b.state.unitLabel);
+        if (sortKey === "status") diff = statusOrder[da.status] - statusOrder[db.status];
+        if (sortKey === "risk") diff = riskOrder[riskLevel(da)] - riskOrder[riskLevel(db)];
+        return sortDir === "asc" ? diff : -diff;
+      });
+  }, [fleetState, optByUnitId, filterStatus, sortKey, sortDir]);
+
+  const selectedUnit = resolveSelectedUnit(fleetState, selectedUnitKey);
+  const selectedOpt = selectedUnit ? optByUnitId.get(selectedUnit.unitDbId) : undefined;
+
+  if (selectedUnit && selectedOpt) {
+    return (
+      <UnitDetailView
+        data={selectedOpt}
+        onBack={() => navigate({ search: ccHubSearch("engagement") })}
+      />
+    );
+  }
 
   return (
     <div className="panel overflow-hidden">
@@ -2102,8 +1659,8 @@ function OptimizationEngine() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-4 py-2.5 border-b border-border bg-secondary/20">
         <div className="flex items-center gap-2.5">
           <Zap className="h-3.5 w-3.5 text-primary shrink-0" />
-          <span className="mono text-[11px] font-bold uppercase tracking-wider text-foreground">Optimization Engine</span>
-          <span className="mono text-[8px] text-muted-foreground/50 bg-secondary border border-border px-1.5 py-0.5 rounded-sm leading-none uppercase tracking-[0.15em]">
+          <span className="mono text-[12px] font-bold uppercase tracking-wider text-foreground">Optimization Engine</span>
+          <span className="mono text-[10px] font-semibold text-foreground bg-secondary border border-border px-1.5 py-0.5 rounded-sm leading-none uppercase tracking-[0.15em]">
             Unit Ranking
           </span>
         </div>
@@ -2112,7 +1669,7 @@ function OptimizationEngine() {
             const on = filterStatus === s;
             return (
               <button key={s} onClick={() => setFilterStatus(s)}
-                className={`mono text-[8px] uppercase tracking-wide px-2 py-1 rounded-sm border transition-colors ${
+                className={`mono text-[10px] font-semibold uppercase tracking-wide px-2 py-1 rounded-sm border transition-colors ${
                   on
                     ? s==="OPTIMIZED"?"bg-emerald-500/15 border-emerald-500/40 text-emerald-700"
                     : s==="SUBOPTIMAL"?"bg-amber-400/15 border-amber-400/40 text-amber-600"
@@ -2129,29 +1686,34 @@ function OptimizationEngine() {
 
       {/* Table ─────────────────────────────────────────────────────────── */}
       <div className="overflow-x-auto">
+        {isLoading ? (
+          <div className="py-10 text-center mono text-[11px] uppercase tracking-wider text-foreground font-medium">
+            Loading optimization data…
+          </div>
+        ) : (
         <table className="w-full">
           <thead>
             <tr className="border-b border-border bg-secondary/25">
-              <th className="px-4 py-2 text-left mono text-[8px] uppercase tracking-wider text-foreground w-10">#</th>
+              <th className="px-4 py-2.5 text-left mono text-[10px] font-bold uppercase tracking-wider text-foreground w-10">#</th>
               <SortThOpt col="unit"   sortKey={sortKey} sortDir={sortDir} onSort={handleSort}>Unit</SortThOpt>
               <SortThOpt col="score"  sortKey={sortKey} sortDir={sortDir} onSort={handleSort}>Opt. Score</SortThOpt>
               <SortThOpt col="status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort}>Status</SortThOpt>
               <SortThOpt col="risk"   sortKey={sortKey} sortDir={sortDir} onSort={handleSort}>Risk Level</SortThOpt>
-              <th className="px-3 py-2 w-8" />
+              <th className="px-3 py-2.5 w-8" />
             </tr>
           </thead>
           <tbody>
-            {(tableExpanded ? rows : rows.slice(0, 4)).map((unit, idx) => {
-              const d = OPT_DATA[unit];
+            {(tableExpanded ? rows : rows.slice(0, 4)).map(({ state, data: d }, idx) => {
               const risk = riskLevel(d);
               const sb = d.status==="OPTIMIZED"?"text-emerald-700 bg-emerald-500/10 border-emerald-500/25":d.status==="SUBOPTIMAL"?"text-amber-600 bg-amber-400/10 border-amber-400/25":"text-destructive bg-destructive/10 border-destructive/25";
               const rb = risk==="Low"?"text-emerald-700 bg-emerald-500/8 border-emerald-500/20":risk==="Medium"?"text-amber-600 bg-amber-400/8 border-amber-400/20":"text-destructive bg-destructive/8 border-destructive/20";
+              const navKey = unitNavKey(state.unitDbId, state.unitCode);
               return (
-                <tr key={unit}
-                  onClick={() => navigate({ search: ccHubSearch("engagement", unit.replace("Unit ", "")) })}
+                <tr key={state.unitDbId}
+                  onClick={() => navigate({ search: ccHubSearch("engagement", navKey) })}
                   className="border-b border-border/50 hover:bg-secondary/30 cursor-pointer transition-colors group">
-                  <td className="px-4 py-3"><span className="mono text-[10px] text-muted-foreground/40">{idx+1}</span></td>
-                  <td className="px-3 py-3"><span className="mono text-[12px] font-bold text-foreground whitespace-nowrap">{unit}</span></td>
+                  <td className="px-4 py-3"><span className="mono text-[11px] font-semibold text-foreground">{idx+1}</span></td>
+                  <td className="px-3 py-3"><span className="mono text-[14px] font-bold text-foreground whitespace-nowrap">{state.unitLabel}</span></td>
                   <td className="px-3 py-3">
                     <div className="flex items-center gap-2.5">
                       <span className={`mono text-[15px] font-bold ${scoreColor(d.compositeScore)}`}>{d.compositeScore}</span>
@@ -2161,21 +1723,22 @@ function OptimizationEngine() {
                     </div>
                   </td>
                   <td className="px-3 py-3">
-                    <span className={`inline-block mono text-[8px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-sm border ${sb}`}>{d.status}</span>
+                    <span className={`inline-block mono text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-sm border ${sb}`}>{d.status}</span>
                   </td>
                   <td className="px-3 py-3">
-                    <span className={`inline-block mono text-[8px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-sm border ${rb}`}>{risk}</span>
+                    <span className={`inline-block mono text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-sm border ${rb}`}>{risk}</span>
                   </td>
                   <td className="px-3 py-3 text-right">
-                    <ChevronRight className="h-4 w-4 text-muted-foreground/30 group-hover:text-primary transition-colors ml-auto" />
+                    <ChevronRight className="h-4 w-4 text-foreground/40 group-hover:text-primary transition-colors ml-auto" />
                   </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
-        {rows.length === 0 && (
-          <div className="py-10 text-center mono text-[9px] uppercase tracking-wider text-muted-foreground/40">
+        )}
+        {!isLoading && rows.length === 0 && (
+          <div className="py-10 text-center mono text-[11px] uppercase tracking-wider text-foreground font-medium">
             No units match the selected filter
           </div>
         )}
@@ -2185,14 +1748,14 @@ function OptimizationEngine() {
       {rows.length > 4 && (
         <button
           onClick={() => setTableExpanded(e => !e)}
-          className="w-full flex items-center justify-center gap-1.5 py-2 border-t border-border bg-secondary/10 hover:bg-secondary/25 transition-colors"
+          className="w-full flex items-center justify-center gap-1.5 py-2.5 border-t border-border bg-secondary/10 hover:bg-secondary/25 transition-colors"
         >
-          <span className="mono text-[8px] uppercase tracking-wider text-muted-foreground/50">
+          <span className="mono text-[10px] uppercase tracking-wider text-foreground font-semibold">
             {tableExpanded ? "Show less" : `Show all ${rows.length} units`}
           </span>
           {tableExpanded
-            ? <ChevronUp className="h-3 w-3 text-muted-foreground/40" />
-            : <ChevronDown className="h-3 w-3 text-muted-foreground/40" />}
+            ? <ChevronUp className="h-3.5 w-3.5 text-foreground" />
+            : <ChevronDown className="h-3.5 w-3.5 text-foreground" />}
         </button>
       )}
     </div>

@@ -9,6 +9,7 @@ import {
   resolveMatrixVisibility,
   type VisibilityMatrixSnapshot,
 } from "@/lib/visibilityMatrix";
+import { resolveMatrixVisibilityFromCatalog } from "@/lib/satelliteCatalog";
 
 export type IntelIntegrityResult = {
   valid: boolean;
@@ -36,7 +37,10 @@ export function getMatrixSnapshot(
   satName: string,
   unitId: string,
 ): VisibilityMatrixSnapshot | null {
-  return resolveMatrixVisibility(unitId, satName);
+  return (
+    resolveMatrixVisibilityFromCatalog(unitId, satName) ??
+    resolveMatrixVisibility(unitId, satName)
+  );
 }
 
 /** Visible bands — derived from matrix visible beams only. */

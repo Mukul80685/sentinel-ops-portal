@@ -37,6 +37,18 @@ export function normalizeSatelliteName(name: string): string {
   return name.trim().toLowerCase();
 }
 
+/** Alphanumeric-only key for fuzzy satellite name matching (APSTAR-9 ↔ Apstar 9). */
+export function canonicalSatelliteKey(name: string): string {
+  return name.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function namesMatch(a: string, b: string): boolean {
+  return (
+    normalizeSatelliteName(a) === normalizeSatelliteName(b) ||
+    canonicalSatelliteKey(a) === canonicalSatelliteKey(b)
+  );
+}
+
 export const GEO_REGIONS: GeoRegion[] = [
   {
     id: "china",
@@ -300,12 +312,15 @@ export function findGeoSatelliteEntry(
   satelliteName: string,
 ): { sat: GeoSatellite; regionId: string } | null {
   const norm = normalizeSatelliteName(satelliteName);
+  const canon = canonicalSatelliteKey(satelliteName);
   for (const region of GEO_REGIONS) {
-    const sat = region.satellites.find((s) => normalizeSatelliteName(s.name) === norm);
+    const sat = region.satellites.find(
+      (s) => normalizeSatelliteName(s.name) === norm || canonicalSatelliteKey(s.name) === canon,
+    );
     if (sat) return { sat, regionId: region.id };
   }
   const aliasKey = Object.keys(INT_SATELLITE_MATRIX_ALIASES).find(
-    (k) => normalizeSatelliteName(k) === norm,
+    (k) => namesMatch(k, satelliteName),
   );
   if (aliasKey) {
     const alias = INT_SATELLITE_MATRIX_ALIASES[aliasKey];

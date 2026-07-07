@@ -108,6 +108,7 @@ import { INT_UNITS } from "@/lib/intelRepository";
 import { unitTileTitle, UNIT_SLOTS, type UnitSlot } from "@/lib/priorityAllocation";
 import { resolveIntUnitSlug } from "@/lib/operationalSync";
 import { UnitAdvancedFeatures } from "@/components/UnitAdvancedFeatures";
+import { RegionFlagIcon } from "@/components/visibility/RegionFlagIcon";
 import {
   buildIntScanLookupForUnit,
   isSatelliteInIntRoster,
@@ -820,21 +821,13 @@ function RegionGrid({
                 className="panel flex flex-col items-center justify-center gap-2 py-5 px-3 min-h-[120px] hover:bg-secondary/60 focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
               >
                 <div className="flex flex-col items-center gap-2">
-                  {region.flagCode ? (
-                    <img
-                      src={`https://flagcdn.com/w40/${region.flagCode}.png`}
-                      srcSet={`https://flagcdn.com/w80/${region.flagCode}.png 2x`}
-                      alt={region.label}
-                      className="w-12 h-8 object-cover rounded-sm border border-border"
-                      loading="lazy"
-                    />
-                  ) : region.emoji ? (
-                    <span className="text-3xl leading-none select-none" role="img" aria-label={region.label}>
-                      {region.emoji}
-                    </span>
-                  ) : (
-                    REGION_ICON[region.id] ?? <Globe className="h-7 w-7 text-muted-foreground" />
-                  )}
+                  <RegionFlagIcon
+                    flagCode={region.flagCode}
+                    label={region.label}
+                    emoji={region.emoji}
+                    fallback={REGION_ICON[region.id] ?? <Globe className="h-7 w-7 text-muted-foreground" />}
+                    variant="tile"
+                  />
                   <span className="mono text-[11px] font-bold uppercase tracking-widest text-center leading-tight">
                     {region.label}
                   </span>
@@ -869,19 +862,12 @@ function RegionGrid({
                 >
                   {/* Flag / emoji */}
                   <div className="w-10 shrink-0 flex items-center justify-center">
-                    {region.flagCode ? (
-                      <img
-                        src={`https://flagcdn.com/w40/${region.flagCode}.png`}
-                        srcSet={`https://flagcdn.com/w80/${region.flagCode}.png 2x`}
-                        alt={region.label}
-                        className="w-9 h-6 object-cover rounded-sm border border-border"
-                        loading="lazy"
-                      />
-                    ) : (
-                      <span className="text-xl leading-none select-none" role="img" aria-label={region.label}>
-                        {region.emoji ?? "🌐"}
-                      </span>
-                    )}
+                    <RegionFlagIcon
+                      flagCode={region.flagCode}
+                      label={region.label}
+                      emoji={region.emoji ?? "🌐"}
+                      variant="row"
+                    />
                   </div>
 
                   <div className="flex-1 min-w-0">

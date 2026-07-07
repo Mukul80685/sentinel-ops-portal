@@ -1,10 +1,10 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { ccHubSearch } from "@/lib/controlCenter";
 import {
-  clearImportant,
   getImportantFrequencyRefs,
   getFrequencyState,
   INTEL_FREQ_EVENT,
+  removeImportantFrequencyEntry,
 } from "@/lib/intelFrequencyActions";
 import { ImportantFrequencyMetadata } from "@/components/intel/FrequencyStateSymbols";
 import { VISIBILITY_SATELLITE_PROFILES } from "@/lib/intelAnalysisData";
@@ -106,7 +106,7 @@ type SortDir = "asc" | "desc";
 /** Table + import schema — column order must match exactly. */
 const TABLE_HEADERS = ["Satellite", "Frequency", "Unit", "Date of Report", "INT Notes"] as const;
 const FREQ_GRID_COLS =
-  "[grid-template-columns:1.5rem_1.5rem_minmax(0,1.05fr)_minmax(0,0.88fr)_minmax(2.75rem,0.62fr)_3.5rem_minmax(5rem,1.75fr)_4.5rem]";
+  "[grid-template-columns:1.5rem_1.5rem_minmax(0,1.05fr)_minmax(0,0.88fr)_minmax(2.25rem,0.45fr)_4.75rem_minmax(4.5rem,1.65fr)_4.5rem]";
 
 type FreqRow = {
   id: string;
@@ -327,7 +327,7 @@ export function ImportantFrequenciesView() {
         satellite_id: "",
         frequency: ref.frequency,
         band: ref.unitLabel,
-        label: `[INT ref] ${ref.satelliteName}${ref.beamName ? ` · ${ref.beamName}` : ""}`,
+        label: ref.notes,
         created_at: ref.createdAt,
         _mock: true,
         _satName: ref.satelliteName,
@@ -451,56 +451,56 @@ export function ImportantFrequenciesView() {
   }
 
   function clearAllEntries() {
-    clearImportantFrequencies();
+    const mockIds: string[] = [];
+    for (const row of effectiveRows) {
+      const satName = row._mock ? (row._satName ?? "") : (satMap[row.satellite_id]?.name ?? "");
+      removeImportantFrequencyEntry(userLabel, {
+        refKey: row._refKey,
+        storedId: row._refKey ? undefined : row.id,
+        frequency: row.frequency,
+        satelliteName: satName,
+        unitLabel: row.band ?? undefined,
+        notes: row.label ?? undefined,
+      });
+      if (!row._refKey && !row._mock) {
+        deleteImportantFrequency(row.id);
+      }
+      if (row._mock) mockIds.push(row.id);
+    }
+    if (mockIds.length > 0) {
+      setHiddenRowIds((prev) => new Set([...prev, ...mockIds]));
+    }
+    setRefSync((n) => n + 1);
     qc.invalidateQueries({ queryKey: ["important"] });
-    toast.success("All frequency entries cleared");
+    toast.success("All entries moved to Discarded Frequencies");
     setClearConfirm(false);
     setAdvancedOpen(false);
   }
 
   // ── Row actions ──────────────────────────────────────────────────────────────
-  function deleteRow(id: string) {
-    deleteImportantFrequency(id);
-    toast.success("Frequency removed");
-    qc.invalidateQueries({ queryKey: ["important"] });
-  }
-
-  function removeIntRef(refKey: string) {
-    clearImportant(refKey, userLabel);
-    toast.success("Removed from Important Frequencies");
-    setRefSync((n) => n + 1);
-  }
-
-  function dismissLocalRow(id: string) {
-    setHiddenRowIds((prev) => new Set(prev).add(id));
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
-    toast.success("Frequency removed");
-  }
-
   function removeRow(row: FreqRow) {
-    if (row._refKey) {
-      removeIntRef(row._refKey);
-      setSelectedIds((prev) => {
-        const next = new Set(prev);
-        next.delete(row.id);
-        return next;
-      });
-      return;
+    const satName = row._mock ? (row._satName ?? "") : (satMap[row.satellite_id]?.name ?? "");
+    removeImportantFrequencyEntry(userLabel, {
+      refKey: row._refKey,
+      storedId: row._refKey ? undefined : row.id,
+      frequency: row.frequency,
+      satelliteName: satName,
+      unitLabel: row.band ?? undefined,
+      notes: row.label ?? undefined,
+    });
+    if (!row._refKey && !row._mock) {
+      deleteImportantFrequency(row.id);
     }
-    if (row._mock || row.id.startsWith("mock-")) {
-      dismissLocalRow(row.id);
-      return;
+    if (row._mock) {
+      setHiddenRowIds((prev) => new Set(prev).add(row.id));
     }
-    deleteRow(row.id);
+    setRefSync((n) => n + 1);
     setSelectedIds((prev) => {
       const next = new Set(prev);
       next.delete(row.id);
       return next;
     });
+    toast.success("Moved to Discarded Frequencies");
   }
 
   // ── Render ───────────────────────────────────────────────────────────────────
@@ -636,8 +636,8 @@ export function ImportantFrequenciesView() {
       )}
 
       {/* ── Record counts + bulk bar ───────────────────────────────────────────── */}
-      <div className="flex items-center gap-3 mb-2 mono text-[10px] text-muted-foreground">
-        <span>Total: <span className="text-foreground font-bold">{effectiveRows.length}</span></span>
+      <div className="flex items-center gap-3 mb-2 mono text-[10px] text-foreground">
+        <span>Total: <span className="font-bold">{effectiveRows.length}</span></span>
         {isFiltered && (
           <span>Filtered: <span className="text-primary font-bold">{sorted.length}</span></span>
         )}
@@ -676,13 +676,13 @@ export function ImportantFrequenciesView() {
 
       {/* ── Table ──────────────────────────────────────────────────────────── */}
       {sorted.length === 0 ? (
-        <div className="rounded-md border border-border px-4 py-10 text-center mono text-[11px] text-muted-foreground">
+        <div className="rounded-md border border-border px-4 py-10 text-center mono text-[11px] text-foreground font-medium">
           No entries recorded.
         </div>
       ) : (
-        <div className="rounded-md border border-border overflow-x-hidden">
+        <div className="rounded-md border border-border overflow-x-hidden bg-white">
           <div
-            className={`grid ${FREQ_GRID_COLS} gap-x-1 items-center border-b border-border bg-secondary/50 px-1 py-1.5 sticky top-0 z-10`}
+            className={`grid ${FREQ_GRID_COLS} gap-x-1.5 items-center border-b border-border bg-muted/50 px-1.5 py-1.5 sticky top-0 z-10`}
           >
             <div className="flex justify-center">
               <input
@@ -702,7 +702,7 @@ export function ImportantFrequenciesView() {
               Unit{sortIcon("unit")}
             </FreqTh>
             <FreqTh>Date</FreqTh>
-            <FreqTh>INT</FreqTh>
+            <FreqTh align="center">INT</FreqTh>
             <FreqTh align="right">Actions</FreqTh>
           </div>
 
@@ -717,16 +717,16 @@ export function ImportantFrequenciesView() {
             return (
                 <div
                   key={row.id}
-                  className={`grid ${FREQ_GRID_COLS} gap-x-1 items-center border-b border-border px-1 py-1.5
-                              transition-colors
-                              ${checked ? "bg-primary/8" : "hover:bg-secondary/20"}`}
+                  className={`grid ${FREQ_GRID_COLS} gap-x-1.5 items-center border-b border-border px-1.5 py-1.5
+                              bg-white transition-colors hover:bg-gray-50
+                              ${checked ? "ring-1 ring-inset ring-primary/25" : ""}`}
                 >
-                  <div className="flex justify-center" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex justify-center bg-white" onClick={(e) => e.stopPropagation()}>
                     <input type="checkbox" checked={checked} onChange={() => toggleId(row.id)}
                       className="cursor-pointer accent-primary" />
                   </div>
-                  <div className="mono text-[11px] text-muted-foreground tabular-nums text-center">{idx + 1}</div>
-                  <div className="mono text-[11px] font-bold text-foreground uppercase leading-tight min-w-0">
+                  <div className="mono text-[11px] text-foreground font-medium tabular-nums text-center bg-white">{idx + 1}</div>
+                  <div className="mono text-[11px] font-bold text-foreground uppercase leading-tight min-w-0 bg-white">
                     {satName}
                     <ImportantFrequencyMetadata
                       refKey={row._refKey}
@@ -734,16 +734,16 @@ export function ImportantFrequenciesView() {
                       tick={refSync}
                     />
                   </div>
-                  <div className="flex items-center gap-1 min-w-0">
+                  <div className="flex items-center gap-1 min-w-0 bg-white">
                     <Radio className="h-3 w-3 text-primary shrink-0" />
                     <span className="mono text-[11px] font-bold text-foreground">{displayFrequencyMhz(row.frequency)}</span>
                   </div>
-                  <div className="mono text-[11px] text-foreground">{row.band || "—"}</div>
-                  <div className="mono text-[10px] text-muted-foreground tabular-nums whitespace-nowrap">{fmtDateCompact(row.created_at)}</div>
-                  <div className="mono text-[11px] text-foreground leading-snug break-words whitespace-normal overflow-visible min-w-0">
+                  <div className="mono text-[11px] text-foreground font-semibold bg-white">{row.band || "—"}</div>
+                  <div className="mono text-[10px] text-foreground font-medium tabular-nums whitespace-nowrap bg-white">{fmtDateCompact(row.created_at)}</div>
+                  <div className="mono text-[11px] text-foreground font-medium leading-snug break-words whitespace-normal overflow-visible min-w-0 text-center bg-white">
                     {row.label || "—"}
                   </div>
-                  <div className="flex items-center justify-end gap-1">
+                  <div className="flex items-center justify-end gap-1 bg-white">
                     {unitCount > 1 && (
                       <button
                         type="button"
@@ -769,9 +769,9 @@ export function ImportantFrequenciesView() {
                           e.stopPropagation();
                           removeRow(row);
                         }}
-                        title="Remove frequency entry"
-                        className="h-6 w-6 grid place-items-center rounded-sm border border-destructive/30
-                                   hover:bg-destructive/10 transition-colors text-destructive/60 hover:text-destructive"
+                        title="Move frequency to Discarded Frequencies"
+                        className="h-6 w-6 grid place-items-center rounded-sm border border-destructive/40
+                                   hover:bg-destructive/10 transition-colors text-destructive"
                       >
                         <Trash2 className="h-3 w-3" />
                       </button>
@@ -793,7 +793,7 @@ export function ImportantFrequenciesView() {
           </DialogHeader>
           {unitsDialog && (
             <>
-              <p className="mono text-[10px] text-muted-foreground">{unitsDialog.freqLabel}</p>
+              <p className="mono text-[10px] text-foreground font-medium">{unitsDialog.freqLabel}</p>
               <ul className="space-y-1 mt-2">
                 {unitsDialog.units.map((unit) => (
                   <li key={unit} className="mono text-[11px] font-bold text-foreground">
@@ -851,7 +851,7 @@ export function ImportantFrequenciesView() {
               Delete Selected Entries
             </AlertDialogTitle>
             <AlertDialogDescription className="mono text-[11px] text-foreground">
-              Delete {selectedIds.size} selected frequency entr{selectedIds.size !== 1 ? "ies" : "y"}? This cannot be undone.
+              Move {selectedIds.size} selected entr{selectedIds.size !== 1 ? "ies" : "y"} to Discarded Frequencies?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -879,7 +879,7 @@ export function ImportantFrequenciesView() {
           <AlertDialogHeader>
             <AlertDialogTitle>Clear All Frequency Entries?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete all saved frequency records. This cannot be undone.
+              This will move all visible frequency entries to Discarded Frequencies. INT repository entries will also be removed from active Productive / Non-Productive tables.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1067,13 +1067,16 @@ function FreqTh({
   children: React.ReactNode;
   sortable?: boolean;
   onClick?: () => void;
-  align?: "left" | "right";
+  align?: "left" | "right" | "center";
 }) {
-  const alignCls = align === "right" ? "text-right justify-end" : "text-left";
+  const alignCls =
+    align === "right" ? "text-right justify-end" :
+    align === "center" ? "text-center justify-center" :
+    "text-left";
   return (
     <div
-      className={`mono text-[9px] uppercase tracking-wide text-muted-foreground font-medium
-                  flex items-center min-w-0 ${alignCls} ${sortable ? "cursor-pointer hover:text-foreground select-none" : ""}`}
+      className={`mono text-[9px] uppercase tracking-wide text-foreground font-semibold
+                  flex items-center min-w-0 ${alignCls} ${sortable ? "cursor-pointer hover:text-primary select-none" : ""}`}
       onClick={onClick}
     >
       {children}

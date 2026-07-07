@@ -2,6 +2,8 @@
 
 const STORAGE_KEY = "ssacc_intel_cell_edits";
 
+export const INTEL_CELL_EDITS_EVENT = "ssacc-intel-cell-edits-change";
+
 /** Edits for a single row — maps field name → overridden value. */
 export type RowEdits = Record<string, string>;
 
@@ -43,6 +45,8 @@ export type ReportCellEdits = {
   novel: TableStore;
 };
 
+export type ImportTableKey = "productive" | "nonProductive" | "novel";
+
 function emptyTableStore(): TableStore {
   return { cells: {}, extra: [] };
 }
@@ -57,20 +61,55 @@ export function emptyReportEdits(): ReportCellEdits {
   };
 }
 
+function normalizeTableStore(raw: Partial<TableStore> | undefined): TableStore {
+  const extra = Array.isArray(raw?.extra) ? raw.extra : [];
+  return {
+    cells: raw?.cells ?? {},
+    extra,
+    importedMode: raw?.importedMode === true || extra.length > 0,
+  };
+}
+
+function normalizeReportEdits(raw: Partial<ReportCellEdits> | undefined): ReportCellEdits {
+  if (!raw) return emptyReportEdits();
+  return {
+    satellite: raw.satellite ?? {},
+    scan: raw.scan ?? {},
+    productive: normalizeTableStore(raw.productive),
+    nonProductive: normalizeTableStore(raw.nonProductive),
+    novel: normalizeTableStore(raw.novel),
+  };
+}
+
 function loadAll(): Record<string, ReportCellEdits> {
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}");
+    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as Record<
+      string,
+      Partial<ReportCellEdits>
+    >;
+    const out: Record<string, ReportCellEdits> = {};
+    for (const [id, edits] of Object.entries(parsed)) {
+      out[id] = normalizeReportEdits(edits);
+    }
+    return out;
   } catch {
     return {};
   }
 }
 
-function saveAll(data: Record<string, ReportCellEdits>) {
+function saveAll(data: Record<string, ReportCellEdits>): boolean {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    return true;
   } catch {
-    // ignore quota errors
+    return false;
   }
+}
+
+function notifyChange(reportId: string) {
+  window.dispatchEvent(
+    new CustomEvent(INTEL_CELL_EDITS_EVENT, { detail: { reportId } }),
+  );
 }
 
 export function getReportCellEdits(reportId: string): ReportCellEdits {
@@ -78,14 +117,31 @@ export function getReportCellEdits(reportId: string): ReportCellEdits {
   return all[reportId] ?? emptyReportEdits();
 }
 
-export function setReportCellEdits(reportId: string, edits: ReportCellEdits) {
+export function setReportCellEdits(reportId: string, edits: ReportCellEdits): boolean {
   const all = loadAll();
-  all[reportId] = edits;
-  saveAll(all);
+  all[reportId] = normalizeReportEdits(edits);
+  const ok = saveAll(all);
+  if (ok) notifyChange(reportId);
+  return ok;
+}
+
+export function patchReportTableImport(
+  reportId: string,
+  table: ImportTableKey,
+  extra: TableStore["extra"],
+): ReportCellEdits {
+  const current = getReportCellEdits(reportId);
+  const next: ReportCellEdits = {
+    ...current,
+    [table]: { cells: {}, extra, importedMode: true },
+  };
+  setReportCellEdits(reportId, next);
+  return next;
 }
 
 export function removeReportCellEdits(reportId: string) {
   const all = loadAll();
   delete all[reportId];
   saveAll(all);
+  notifyChange(reportId);
 }

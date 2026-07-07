@@ -142,6 +142,81 @@ export function frequencyKey(reportId: string, freqId: string, section: Frequenc
   return `${reportId}::${section}::${freqId}`;
 }
 
+/** Parse a frequency action key produced by {@link frequencyKey}. */
+export function parseFrequencyKey(key: string): {
+  reportId: string;
+  section: FrequencySection;
+  frequencyId: string;
+} | null {
+  const first = key.indexOf("::");
+  if (first === -1) return null;
+  const second = key.indexOf("::", first + 2);
+  if (second === -1) return null;
+  const section = key.slice(first + 2, second) as FrequencySection;
+  if (section !== "productive" && section !== "non_productive") return null;
+  return {
+    reportId: key.slice(0, first),
+    section,
+    frequencyId: key.slice(second + 2),
+  };
+}
+
+const MANUAL_IMPORTANT_DISCARD_PREFIX = "__manual__important__";
+
+export type ImportantEntryDiscardInput = {
+  /** INT repository ref key when the row originated from Productive / Non-Productive tables. */
+  refKey?: string;
+  /** Local Important Frequencies store id (non-INT manual entries). */
+  storedId?: string;
+  frequency: string;
+  satelliteName: string;
+  unitLabel?: string;
+  beamName?: string;
+  band?: string;
+  notes?: string;
+};
+
+/**
+ * Remove a row from Important Frequencies and archive it in Discarded Frequencies.
+ * INT-linked rows are also marked discarded so they disappear from the INT repository tables.
+ */
+export function removeImportantFrequencyEntry(
+  userLabel: string,
+  entry: ImportantEntryDiscardInput,
+): FrequencyActionState | null {
+  const reason = "Removed from Important Frequencies — moved to Discarded";
+
+  if (entry.refKey && !entry.refKey.startsWith(MANUAL_IMPORTANT_DISCARD_PREFIX)) {
+    const parsed = parseFrequencyKey(entry.refKey);
+    const impRef = getImportantFrequencyRefs().find((r) => r.refKey === entry.refKey);
+    const reportId = parsed?.reportId ?? impRef?.sourceReportId;
+    const sourceUnitId = reportId?.includes("__") ? reportId.split("__")[0] : undefined;
+
+    return discardFrequency(entry.refKey, userLabel, {
+      frequencyId: impRef?.frequency ?? parsed?.frequencyId ?? entry.frequency,
+      satelliteName: impRef?.satelliteName ?? entry.satelliteName,
+      section: parsed?.section ?? "productive",
+      sourceUnitId,
+      beamName: impRef?.beamName ?? entry.beamName,
+      band: impRef?.band ?? entry.band ?? entry.unitLabel,
+      reason,
+    });
+  }
+
+  const key =
+    entry.refKey ??
+    `${MANUAL_IMPORTANT_DISCARD_PREFIX}${entry.storedId ?? crypto.randomUUID()}`;
+
+  return discardFrequency(key, userLabel, {
+    frequencyId: entry.frequency,
+    satelliteName: entry.satelliteName,
+    section: "productive",
+    band: entry.band ?? entry.unitLabel,
+    beamName: entry.beamName,
+    reason: entry.notes ? `${reason} · ${entry.notes}` : reason,
+  });
+}
+
 function formatAuditTime(d = new Date()): string {
   return d.toLocaleString("en-GB", {
     timeZone: "Asia/Kolkata",
@@ -197,6 +272,7 @@ export function markImportant(
     beamName?: string;
     band?: string;
     polarization?: string;
+    notes?: string;
   },
 ): FrequencyActionState {
   let state = getFrequencyState(key);
@@ -227,7 +303,7 @@ export function markImportant(
       band: meta.band,
       polarization: meta.polarization,
       createdAt: new Date().toISOString(),
-      notes: `INT ref · ${meta.reportId}`,
+      notes: meta.notes ?? `INT ref · ${meta.reportId}`,
     });
     saveJson(STORAGE_IMPORTANT, refs);
     emitUpdate();
@@ -351,9 +427,15 @@ export function discardFrequency(
   let state = getFrequencyState(key);
   if (state.flags.discarded) return state;
 
+  const impRefs = loadJson<ImportantFreqRef[]>(STORAGE_IMPORTANT, []);
+  const wasImportant = state.flags.important || impRefs.some((r) => r.refKey === key);
+  if (impRefs.some((r) => r.refKey === key)) {
+    saveJson(STORAGE_IMPORTANT, impRefs.filter((r) => r.refKey !== key));
+  }
+
   state = {
     ...state,
-    flags: { ...state.flags, discarded: true },
+    flags: { ...state.flags, discarded: true, important: false },
     satelliteName: meta?.satelliteName ?? state.satelliteName,
     frequencyId: meta?.frequencyId ?? state.frequencyId,
     beamName: meta?.beamName ?? state.beamName,
@@ -361,6 +443,13 @@ export function discardFrequency(
   };
   const note = meta?.reason ?? "Removed from active analytical consideration";
   state = appendAudit(state, { action: "discard", userLabel, note });
+  if (wasImportant) {
+    state = appendAudit(state, {
+      action: "clear_important",
+      userLabel,
+      note: "Removed from Important Frequencies",
+    });
+  }
   setFrequencyState(key, state);
 
   if (meta) {
@@ -527,7 +616,7 @@ export function getAuditActionLabel(entry: AuditEntry): string {
     case "clear_important":
       return "Removed from Important Frequencies";
     case "request_tech_analysis":
-      return "Technical Analysis Requested";
+      return "Detailed Analysis Requested";
     case "clear_tech_analysis":
       return "Technical Analysis Removed";
     case "clear_allocation":
@@ -562,6 +651,21 @@ export function hasIntegrityOverride(reportId: string): boolean {
 
 export function getImportantFrequencyRefs(): ImportantFreqRef[] {
   return loadJson<ImportantFreqRef[]>(STORAGE_IMPORTANT, []);
+}
+
+export type FrequencyCurrentStatus =
+  | "normal"
+  | "important"
+  | "discarded"
+  | "detailed_analysis_requested";
+
+/** Derived status for a frequency action record (single source of truth in flags + audit). */
+export function getFrequencyCurrentStatus(key: string): FrequencyCurrentStatus {
+  const { flags } = getFrequencyState(key);
+  if (flags.discarded) return "discarded";
+  if (flags.techAnalysis) return "detailed_analysis_requested";
+  if (flags.important) return "important";
+  return "normal";
 }
 
 export type EligibleUnit = {

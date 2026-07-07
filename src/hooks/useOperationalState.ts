@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   buildOperationalFleetState,
   type OperationalFleetState,
@@ -21,11 +22,23 @@ import {
 
 export function useOperationalState() {
   const [ready, setReady] = useState(false);
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     ensureOperationalDataset();
     setReady(true);
   }, []);
+
+  useEffect(() => {
+    const sync = () => {
+      void queryClient.invalidateQueries({ queryKey: ["units"] });
+      void queryClient.invalidateQueries({ queryKey: ["equipment-all"] });
+      void queryClient.invalidateQueries({ queryKey: ENGAGEMENTS_ALL_KEY });
+      void queryClient.invalidateQueries({ queryKey: INTEL_RECORDS_ALL_KEY });
+    };
+    window.addEventListener(OPERATIONAL_STORE_EVENT, sync);
+    return () => window.removeEventListener(OPERATIONAL_STORE_EVENT, sync);
+  }, [queryClient]);
 
   const { data: units = [] } = useQuery({
     queryKey: ["units"],

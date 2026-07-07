@@ -183,21 +183,27 @@ export function ResourceInventoryHome() {
       subtitle="Ground Station Equipment Registry"
       headerIcon={<HomeNavIconBadge icon={Boxes} theme="inventory" size="md" />}
       horizontalNav={null}
+      fillMain
     >
-      {/* ── Unit tiles — dynamic grid, no slot cap, scrolls as units grow ── */}
-      {isLoading ? (
-        <p className="text-sm text-muted-foreground py-10 text-center">Loading units…</p>
-      ) : units.length === 0 ? (
-        <p className="text-sm text-muted-foreground py-10 text-center">
-          No units registered. Use Advanced Features → Add Unit to create one.
-        </p>
-      ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-          {units.map((unit) => {
+      <div className="flex flex-col flex-1 min-h-0">
+        {/* ── Unit tiles — fill viewport; scroll when many units ── */}
+        {isLoading ? (
+          <div className="flex flex-1 items-center justify-center">
+            <p className="text-sm text-muted-foreground">Loading units…</p>
+          </div>
+        ) : units.length === 0 ? (
+          <div className="flex flex-1 items-center justify-center">
+            <p className="text-sm text-muted-foreground text-center">
+              No units registered. Use Advanced Features → Add Unit to create one.
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 flex-1 min-h-0 auto-rows-fr overflow-y-auto">
+            {units.map((unit) => {
             const eqCount = equipmentCountByUnit.get(unit.id) ?? 0;
             const hasEquipment = eqCount > 0;
             return (
-              <div key={unit.id} className="relative panel p-3 flex flex-col gap-2.5">
+              <div key={unit.id} className="relative panel p-3 flex flex-col gap-2.5 h-full min-h-[9rem]">
                 {/* Unit identity — name + location only */}
                 <div className="flex items-start gap-2">
                   <div className="h-7 w-7 grid place-items-center rounded-sm border border-border bg-muted text-foreground shrink-0 mt-0.5">
@@ -242,11 +248,14 @@ export function ResourceInventoryHome() {
               </div>
             );
           })}
-        </div>
-      )}
+          </div>
+        )}
 
-      {/* ── Advanced Features — shared across all modules ── */}
-      <UnitAdvancedFeatures />
+        {/* ── Advanced Features — shared across all modules ── */}
+        <div className="shrink-0">
+          <UnitAdvancedFeatures />
+        </div>
+      </div>
 
       {/* ══ MODALS ══ */}
 

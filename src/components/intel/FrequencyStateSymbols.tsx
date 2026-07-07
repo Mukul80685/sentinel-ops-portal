@@ -1,5 +1,5 @@
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Star } from "lucide-react";
+import { Microscope, Star } from "lucide-react";
 import type { ReactNode } from "react";
 import {
   formatAuditShortDate,
@@ -8,8 +8,9 @@ import {
   type AuditEntry,
 } from "@/lib/intelFrequencyActions";
 
-/** Dark royal blue — tech-analysis text emphasis (not row selection). */
+/** Detailed analysis — royal blue text emphasis on frequency ID. */
 export const TECH_ANALYSIS_TEXT_CLASS = "text-[#1a237e] dark:text-[#5c6bc0] font-semibold";
+export const TECH_ANALYSIS_BG_CLASS = "bg-sky-50 dark:bg-sky-950/40";
 
 function ActionHistoryPopover({
   icon,
@@ -25,6 +26,7 @@ function ActionHistoryPopover({
       <PopoverTrigger asChild>
         <button
           type="button"
+          data-freq-indicator
           className="mono text-[11px] leading-none hover:opacity-80 cursor-pointer"
           title={title}
           onClick={(e) => e.stopPropagation()}
@@ -52,7 +54,7 @@ function ActionHistoryPopover({
   );
 }
 
-/** Repository-only: icon indicator for explicitly marked important frequencies. */
+/** Repository-only: star indicator for explicitly marked important frequencies. */
 function ImportantIndicator({ stateKey, tick }: { stateKey: string; tick?: number }) {
   void tick;
   const state = getFrequencyState(stateKey);
@@ -60,7 +62,7 @@ function ImportantIndicator({ stateKey, tick }: { stateKey: string; tick?: numbe
 
   return (
     <ActionHistoryPopover
-      icon={<Star className="h-3 w-3 fill-primary text-primary" aria-hidden />}
+      icon={<Star className="h-3 w-3 fill-amber-400 text-amber-500" aria-hidden />}
       title="Important — added from INT repository"
       entries={state.auditLog.filter(
         (e) => e.action === "mark_important" || e.action === "clear_important",
@@ -69,7 +71,7 @@ function ImportantIndicator({ stateKey, tick }: { stateKey: string; tick?: numbe
   );
 }
 
-/** Shared status chips: ⚙ then 📡 (no important — implicit on Important table). */
+/** Status chips shown beneath the frequency ID after actions are applied. */
 function FrequencyStatusChips({ stateKey, tick }: { stateKey: string; tick?: number }) {
   void tick;
   const state = getFrequencyState(stateKey);
@@ -81,8 +83,8 @@ function FrequencyStatusChips({ stateKey, tick }: { stateKey: string; tick?: num
       key: "tech",
       node: (
         <ActionHistoryPopover
-          icon="⚙"
-          title="Technical Analysis Requested"
+          icon={<Microscope className="h-3 w-3 text-[#1a237e] dark:text-[#5c6bc0]" aria-hidden />}
+          title="Detailed Analysis Requested"
           entries={state.auditLog.filter(
             (e) => e.action === "request_tech_analysis" || e.action === "clear_tech_analysis",
           )}
@@ -116,10 +118,10 @@ function FrequencyStatusChips({ stateKey, tick }: { stateKey: string; tick?: num
   if (chips.length === 0) return null;
 
   return (
-    <span className="inline-flex items-center gap-1">
+    <span className="inline-flex items-center gap-1" data-freq-indicator>
       {chips.map((chip, i) => (
         <span key={chip.key} className="inline-flex items-center gap-1">
-          {i > 0 && <span className="text-muted-foreground/50">•</span>}
+          {i > 0 && <span className="text-foreground/40">•</span>}
           <span className={chip.key === "tech" ? TECH_ANALYSIS_TEXT_CLASS : "text-foreground/80"}>{chip.node}</span>
         </span>
       ))}
@@ -127,30 +129,52 @@ function FrequencyStatusChips({ stateKey, tick }: { stateKey: string; tick?: num
   );
 }
 
-/** INT drill-down frequency cell — frequency only on line 1; badge + status on line 2. */
+/** INT drill-down frequency cell — click frequency ID to open action menu. */
 export function IntRepositoryFrequencyCell({
   stateKey,
   frequencyId,
   tick,
+  onFrequencyClick,
+  actionsDisabled,
 }: {
   stateKey: string;
   frequencyId: string;
   tick?: number;
+  onFrequencyClick?: (e: React.MouseEvent) => void;
+  actionsDisabled?: boolean;
 }) {
   void tick;
   const { flags } = getFrequencyState(stateKey);
   const hasMeta = flags.important || flags.techAnalysis || flags.allocated;
+  const techActive = flags.techAnalysis;
+
+  const freqClass = `${frequencyTechTextClass(stateKey, tick)} ${techActive ? TECH_ANALYSIS_BG_CLASS : ""}`;
 
   return (
     <div className="min-w-0">
-      <span className={`font-bold block leading-tight ${frequencyTechTextClass(stateKey, tick)}`}>
-        {frequencyId}
-      </span>
+      {onFrequencyClick && !actionsDisabled ? (
+        <button
+          type="button"
+          title="Click for frequency actions"
+          className={`font-bold block leading-tight text-left w-full rounded px-0.5 -mx-0.5
+                      cursor-pointer hover:text-primary hover:underline transition-colors ${freqClass}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onFrequencyClick(e);
+          }}
+        >
+          {frequencyId}
+        </button>
+      ) : (
+        <span className={`font-bold block leading-tight rounded px-0.5 -mx-0.5 ${freqClass}`}>
+          {frequencyId}
+        </span>
+      )}
       {hasMeta && (
         <div className="mono text-[9px] leading-tight mt-0.5 flex flex-wrap items-center gap-x-1 gap-y-0 min-w-0">
           <ImportantIndicator stateKey={stateKey} tick={tick} />
           {(flags.important && (flags.techAnalysis || flags.allocated)) && (
-            <span className="text-muted-foreground/50">•</span>
+            <span className="text-foreground/40">•</span>
           )}
           <FrequencyStatusChips stateKey={stateKey} tick={tick} />
         </div>
@@ -169,11 +193,11 @@ export function frequencyRowHighlightClass(_stateKey: string, _tick?: number): s
   return "";
 }
 
-/** Text emphasis on frequency ID when technical analysis is active. */
+/** Text emphasis on frequency ID when detailed analysis is active. */
 export function frequencyTechTextClass(stateKey: string, tick?: number): string {
   void tick;
   const { flags } = getFrequencyState(stateKey);
-  return flags.techAnalysis ? TECH_ANALYSIS_TEXT_CLASS : "";
+  return flags.techAnalysis ? TECH_ANALYSIS_TEXT_CLASS : "text-foreground";
 }
 
 /** Polarization only — Important table entries are implicitly important (no action badges). */

@@ -14,6 +14,7 @@ import {
   buildIntelLinkageVisibilityRows,
   buildIntelSatelliteTable,
   buildSyntheticDrillDownReport,
+  enrichDrillDownFromScanSeed,
   formatIntelCompactDate,
   hasIntelData,
 } from "@/lib/intelAnalysisData";
@@ -30,6 +31,11 @@ import {
   setReportCellEdits,
   removeReportCellEdits,
 } from "@/lib/intelCellStore";
+import {
+  coerceSpreadsheetCell,
+  gridToRecords,
+  parseIntelSpreadsheet,
+} from "@/lib/intelSpreadsheetImport";
 import {
   Dialog,
   DialogContent,
@@ -62,6 +68,92 @@ const SCAN_IMPORT_HEADERS = [
   "Pending", "Productivity (%)", "Updated On",
 ] as const;
 
+// ── Date parsing ─────────────────────────────────────────────────────────────
+// Excel serial-date epoch: 1 = 1 Jan 1900 (with a known Excel leap-year bug for 1900).
+const EXCEL_EPOCH_MS = new Date(Date.UTC(1899, 11, 30)).getTime();
+const MONTH_NAMES_LOWER = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
+
+/**
+ * Convert any date-like value from an Excel/CSV cell into an ISO-8601 date string
+ * (YYYY-MM-DD in UTC).  Handles:
+ *   • Excel serial numbers  (e.g. 46049)
+ *   • ISO strings           (YYYY-MM-DD / YYYY/MM/DD)
+ *   • US format             MM/DD/YYYY  MM-DD-YYYY
+ *   • European format       DD/MM/YYYY  DD-MM-YYYY  (detected when day > 12)
+ *   • Named-month format    DD-Mon-YYYY  DD Mon YYYY
+ *   • Compact numeric       YYYYMMDD
+ * Returns today's ISO date if parsing fails.
+ */
+function parseImportDate(raw: unknown): string {
+  const fallback = new Date().toISOString().slice(0, 10);
+
+  // --- Excel serial number ---
+  const numVal = typeof raw === "number" ? raw : parseFloat(String(raw ?? ""));
+  if (!isNaN(numVal) && numVal > 1 && numVal < 2_958_466) {
+    // 2 958 466 ≈ year 9999 in Excel serial
+    const ms = EXCEL_EPOCH_MS + Math.round(numVal) * 86_400_000;
+    const d = new Date(ms);
+    if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  }
+
+  const str = String(raw ?? "").trim();
+  if (!str) return fallback;
+
+  // --- ISO: YYYY-MM-DD or YYYY/MM/DD ---
+  const isoMatch = str.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (isoMatch) {
+    const [, y, m, d] = isoMatch;
+    const dt = new Date(Date.UTC(+y, +m - 1, +d));
+    if (!isNaN(dt.getTime())) return dt.toISOString().slice(0, 10);
+  }
+
+  // --- Compact YYYYMMDD ---
+  const compactMatch = str.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (compactMatch) {
+    const [, y, m, d] = compactMatch;
+    const dt = new Date(Date.UTC(+y, +m - 1, +d));
+    if (!isNaN(dt.getTime())) return dt.toISOString().slice(0, 10);
+  }
+
+  // --- Named-month: DD-Mon-YYYY or DD Mon YYYY ---
+  const namedMatch = str.match(/^(\d{1,2})[-\s]([A-Za-z]{3,9})[-\s](\d{4})$/);
+  if (namedMatch) {
+    const [, d, mon, y] = namedMatch;
+    const mIdx = MONTH_NAMES_LOWER.indexOf(mon.slice(0, 3).toLowerCase());
+    if (mIdx !== -1) {
+      const dt = new Date(Date.UTC(+y, mIdx, +d));
+      if (!isNaN(dt.getTime())) return dt.toISOString().slice(0, 10);
+    }
+  }
+
+  // --- Numeric with separator: could be MM/DD/YYYY or DD/MM/YYYY ---
+  const numericMatch = str.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})$/);
+  if (numericMatch) {
+    let [, a, b, y] = numericMatch;
+    if (y.length === 2) y = `20${y}`;
+    const aNum = +a, bNum = +b;
+    // If first part is definitely > 12, it must be the day (DD/MM/YYYY)
+    if (aNum > 12) {
+      const dt = new Date(Date.UTC(+y, bNum - 1, aNum));
+      if (!isNaN(dt.getTime())) return dt.toISOString().slice(0, 10);
+    }
+    // If second part is > 12, it must be the day (MM/DD/YYYY)
+    if (bNum > 12) {
+      const dt = new Date(Date.UTC(+y, aNum - 1, bNum));
+      if (!isNaN(dt.getTime())) return dt.toISOString().slice(0, 10);
+    }
+    // Ambiguous (both ≤ 12) — assume MM/DD/YYYY (US, common in English-locale spreadsheets)
+    const dt = new Date(Date.UTC(+y, aNum - 1, bNum));
+    if (!isNaN(dt.getTime())) return dt.toISOString().slice(0, 10);
+  }
+
+  // --- Last resort: let the JS engine try (ISO-only strings are safe) ---
+  const fallbackDate = new Date(str);
+  if (!isNaN(fallbackDate.getTime())) return fallbackDate.toISOString().slice(0, 10);
+
+  return fallback;
+}
+
 function scanOverridesKey(unitId: string) { return `intel-scan-overrides-${unitId}`; }
 
 function loadScanOverrides(unitId: string): ScanReportOverride[] {
@@ -69,6 +161,22 @@ function loadScanOverrides(unitId: string): ScanReportOverride[] {
     const raw = localStorage.getItem(scanOverridesKey(unitId));
     return raw ? (JSON.parse(raw) as ScanReportOverride[]) : [];
   } catch { return []; }
+}
+
+// ── Suppressed satellite rows ────────────────────────────────────────────────
+// Tracks satellite names explicitly deleted so they don't re-appear from the
+// seeded roster (tableRows) after their override data has been removed.
+function suppressedSatsKey(unitId: string) { return `intel-suppressed-sats-${unitId}`; }
+
+function loadSuppressedSats(unitId: string): string[] {
+  try {
+    const raw = localStorage.getItem(suppressedSatsKey(unitId));
+    return raw ? (JSON.parse(raw) as string[]) : [];
+  } catch { return []; }
+}
+
+function saveSuppressedSats(unitId: string, names: string[]): void {
+  localStorage.setItem(suppressedSatsKey(unitId), JSON.stringify(names));
 }
 
 function saveScanOverrides(unitId: string, overrides: ScanReportOverride[]): void {
@@ -116,45 +224,6 @@ function isSetupComplete(p: SetupProgress) {
 function isAnyDone(p: SetupProgress) {
   return p.details === "done" || p.scan === "done" ||
     p.productive === "done" || p.nonProductive === "done" || p.novel === "done";
-}
-
-// Spreadsheet helpers (duplicated from IntelSatelliteDrillDown for self-containment)
-function parseCsvText(text: string): string[][] {
-  return text.trim().split(/\r?\n/).filter(Boolean).map((line) => {
-    const cells: string[] = []; let cur = ""; let inQ = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"') { if (inQ && line[i + 1] === '"') { cur += '"'; i++; } else inQ = !inQ; }
-      else if (ch === "," && !inQ) { cells.push(cur.trim()); cur = ""; }
-      else cur += ch;
-    }
-    cells.push(cur.trim()); return cells;
-  });
-}
-
-async function parseSetupSpreadsheet(file: File): Promise<string[][]> {
-  if (file.name.toLowerCase().endsWith(".csv")) {
-    const buf = await file.arrayBuffer();
-    const bytes = new Uint8Array(buf);
-    // Detect UTF-8 BOM (EF BB BF). Excel "Save as CSV UTF-8" adds it; plain CSV export does not.
-    // Without a BOM, Excel on Windows saves CSV in Windows-1252 (ANSI).
-    // windows-1252 maps byte 0xB0 → ° correctly; utf-8 treats 0xB0 as an invalid byte → "?".
-    const hasUtf8Bom = bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF;
-    const text = new TextDecoder(hasUtf8Bom ? "utf-8" : "windows-1252").decode(buf);
-    return parseCsvText(hasUtf8Bom ? text.slice(1) : text);
-  }
-  const { read, utils } = await import("xlsx");
-  const wb = read(await file.arrayBuffer());
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  return utils.sheet_to_json<string[]>(ws, { header: 1, defval: "" }) as string[][];
-}
-
-function gridToObj(grid: string[][]): Record<string, string>[] {
-  if (grid.length < 2) return [];
-  const [headers, ...dataRows] = grid;
-  return dataRows
-    .filter((r) => r.some((c) => c !== ""))
-    .map((row) => Object.fromEntries(headers.map((h, i) => [h.trim(), (row[i] ?? "").trim()])));
 }
 
 function downloadSetupTemplate(filename: string, headers: string[], example: string[]) {
@@ -276,9 +345,9 @@ function SatelliteSetupDialog({
     const sec = SETUP_SECTIONS.find((s) => s.key === sectionKey)!;
 
     // ── Phase 1: read the file (pure I/O — errors here mean the file itself is unreadable) ──
-    let grid: string[][];
+    let grid: unknown[][];
     try {
-      grid = await parseSetupSpreadsheet(file);
+      grid = await parseIntelSpreadsheet(file);
     } catch {
       toast.error(
         `The file "${file.name}" could not be opened. ` +
@@ -290,7 +359,7 @@ function SatelliteSetupDialog({
     // ── Phase 2 & 3: validate and save (wrapped so any unexpected error surfaces clearly) ──
     try {
       // 2a. Header row check
-      const fileHeaders = (grid[0] ?? []).map((h) => String(h ?? "").trim());
+      const fileHeaders = (grid[0] ?? []).map((h) => coerceSpreadsheetCell(h));
       const expectedHeaders = [...sec.template.headers];
       for (let i = 0; i < expectedHeaders.length; i++) {
         if (fileHeaders[i] !== expectedHeaders[i]) {
@@ -308,7 +377,7 @@ function SatelliteSetupDialog({
       }
 
       // 2b. At least one data row
-      const objs = gridToObj(grid);
+      const objs = gridToRecords(grid, expectedHeaders, { validateHeaders: false });
       if (objs.length === 0) {
         toast.error(
           `Your file has a header row but no data. ` +
@@ -454,7 +523,11 @@ function SatelliteSetupDialog({
         };
       }
 
-      setReportCellEdits(reportId, edits);
+      const saved = setReportCellEdits(reportId, edits);
+      if (!saved) {
+        toast.error("Could not save imported data — storage may be full");
+        return;
+      }
       persist({ ...progress, [sectionKey]: "done" });
       toast.success(`${sec.label} imported — ${objs.length} row${objs.length !== 1 ? "s" : ""} saved`);
     } catch (err) {
@@ -670,6 +743,14 @@ function IntelUnitView() {
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const importFileRef = useRef<HTMLInputElement>(null);
   const [scanOverrides, setScanOverrides] = useState<ScanReportOverride[]>(() => loadScanOverrides(unitId));
+  const [suppressedSatNames, setSuppressedSatNames] = useState<Set<string>>(
+    () => new Set(loadSuppressedSats(unitId).map((n) => n.toLowerCase())),
+  );
+  // Keep a ref so the navigate-back effect always reads the latest overrides without
+  // triggering unnecessary re-runs.
+  const scanOverridesRef = useRef(scanOverrides);
+  useEffect(() => { scanOverridesRef.current = scanOverrides; }, [scanOverrides]);
+  const prevReportIdRef = useRef<string | null>(null);
   // Setup wizard: holds the satellite name when the user clicks an imported (non-roster) satellite
   const [setupSatellite, setSetupSatellite] = useState<{ name: string; reportId: string } | null>(null);
 
@@ -738,51 +819,87 @@ function IntelUnitView() {
   );
 
   const mergedTableRows = useMemo(() => {
-    if (scanOverrides.length === 0) return tableRows;
-    const ovMap = new Map(scanOverrides.map((o) => [o.satelliteName.toLowerCase(), o]));
-    const updatedExisting = tableRows.map((row) => {
-      const ov = ovMap.get(row.satelliteName.toLowerCase());
-      if (!ov) return row;
-      return {
-        ...row,
-        polarization: ov.polarization,
-        totalScanned: ov.totalScanned,
-        analyzed: ov.analyzed,
-        pending: ov.pending,
-        productivityScore: ov.productivityScore,
-        reportTimestamp: ov.updatedOn,
-      };
-    });
-    // Add override rows whose satellite name doesn't appear in the computed roster
-    const rosterNames = new Set(tableRows.map((r) => r.satelliteName.toLowerCase()));
-    const extraRows = scanOverrides
-      .filter((o) => !rosterNames.has(o.satelliteName.toLowerCase()))
-      .map((o) => ({
-        reportId: `${intUnitSlug}__${o.satelliteName.replace(/\s+/g, "-")}`,
-        satelliteName: o.satelliteName,
-        scanEligible: true as const,
-        totalScanned: o.totalScanned,
-        analyzed: o.analyzed,
-        pending: o.pending,
-        productivityScore: o.productivityScore,
-        reportTimestamp: o.updatedOn,
-        polarization: o.polarization,
-        processingStatus: "ready" as const,
-        engagementStatus: null,
-      }));
-    return [...updatedExisting, ...extraRows];
-  }, [tableRows, scanOverrides]);
+    const ovNameSet = new Set(scanOverrides.map((o) => o.satelliteName.toLowerCase()));
+
+    let combined: Array<ReturnType<typeof buildIntelSatelliteTable>[number] & {
+      isZeroImported?: boolean;
+    }>;
+
+    if (scanOverrides.length === 0) {
+      combined = tableRows;
+    } else {
+      const ovMap = new Map(scanOverrides.map((o) => [o.satelliteName.toLowerCase(), o]));
+      const updatedExisting = tableRows.map((row) => {
+        const ov = ovMap.get(row.satelliteName.toLowerCase());
+        if (!ov) return row;
+        return {
+          ...row,
+          polarization: ov.polarization,
+          totalScanned: ov.totalScanned,
+          analyzed: ov.analyzed,
+          pending: ov.pending,
+          productivityScore: ov.productivityScore,
+          reportTimestamp: ov.updatedOn,
+        };
+      });
+      // Add override rows whose satellite name doesn't appear in the computed roster
+      const rosterNames = new Set(tableRows.map((r) => r.satelliteName.toLowerCase()));
+      const extraRows = scanOverrides
+        .filter((o) => !rosterNames.has(o.satelliteName.toLowerCase()))
+        .map((o) => ({
+          reportId: `${intUnitSlug}__${o.satelliteName.replace(/\s+/g, "-")}`,
+          satelliteName: o.satelliteName,
+          scanEligible: true as const,
+          totalScanned: o.totalScanned,
+          analyzed: o.analyzed,
+          pending: o.pending,
+          productivityScore: o.productivityScore,
+          reportTimestamp: o.updatedOn,
+          polarization: o.polarization,
+          processingStatus: "ready" as const,
+          engagementStatus: null,
+        }));
+      combined = [...updatedExisting, ...extraRows];
+    }
+
+    // Remove satellites that were explicitly deleted (suppressed), so they don't
+    // re-surface from the seeded roster after their override data is cleared.
+    const filtered = combined.filter(
+      (row) => !suppressedSatNames.has(row.satelliteName.toLowerCase()),
+    );
+
+    // Tag rows that are in the override list but have all-zero counts — these should
+    // offer re-import instead of opening the drill-down.
+    return filtered.map((row) => ({
+      ...row,
+      isZeroImported:
+        ovNameSet.has(row.satelliteName.toLowerCase()) &&
+        row.totalScanned === 0 &&
+        row.analyzed === 0 &&
+        row.pending === 0,
+    }));
+  }, [tableRows, scanOverrides, suppressedSatNames, intUnitSlug]);
 
   const drillDown = useMemo(() => {
     if (!selectedReportId || !unit) return null;
-    const report = buildIntelDrillDownReport(intUnitSlug, selectedReportId, linkageCtx, unitEngagements);
-    if (report) return report;
-    // Fallback: build a synthetic report for satellites imported via the scan-report importer
-    const ovRow = scanOverrides.find(
-      (o) => `${intUnitSlug}__${o.satelliteName.replace(/\s+/g, "-")}` === selectedReportId,
-    );
-    return ovRow ? buildSyntheticDrillDownReport(ovRow.satelliteName, intUnitSlug, linkageCtx) : null;
-  }, [selectedReportId, unit, intUnitSlug, linkageCtx, unitEngagements, scanOverrides]);
+    const selectedRow = mergedTableRows.find((r) => r.reportId === selectedReportId);
+    const scanSeed = selectedRow
+      ? {
+          polarization: selectedRow.polarization,
+          totalScanned: selectedRow.totalScanned,
+          analyzed: selectedRow.analyzed,
+          pending: selectedRow.pending,
+          updatedOn: selectedRow.reportTimestamp ?? undefined,
+        }
+      : undefined;
+
+    const built = buildIntelDrillDownReport(intUnitSlug, selectedReportId, linkageCtx, unitEngagements);
+    if (built) return enrichDrillDownFromScanSeed(built, scanSeed);
+
+    return selectedRow
+      ? buildSyntheticDrillDownReport(selectedRow.satelliteName, intUnitSlug, linkageCtx, scanSeed)
+      : null;
+  }, [selectedReportId, unit, intUnitSlug, linkageCtx, unitEngagements, mergedTableRows]);
 
   const isLoading = dataAvailable && (engLoading || eqLoading);
 
@@ -792,6 +909,42 @@ function IntelUnitView() {
     const match = mergedTableRows.find((r) => r.satelliteName.trim().toLowerCase() === target);
     if (match) setSelectedReportId(match.reportId);
   }, [searchSatellite, mergedTableRows, dataAvailable]);
+
+  // When the user navigates back from the drill-down page, check whether all frequency
+  // data for that satellite was cleared from within.  If every table is empty and at
+  // least one was previously in imported-mode, zero out the outer scan-report row so it
+  // shows the re-upload prompt instead of stale non-zero counts.
+  useEffect(() => {
+    const prev = prevReportIdRef.current;
+    prevReportIdRef.current = selectedReportId;
+    if (prev === null || selectedReportId !== null) return;
+
+    const edits = getReportCellEdits(prev);
+    const wasEverImported =
+      edits.productive.importedMode ||
+      edits.nonProductive.importedMode ||
+      edits.novel.importedMode;
+    const allEmpty =
+      edits.productive.extra.length === 0 &&
+      edits.nonProductive.extra.length === 0 &&
+      edits.novel.extra.length === 0;
+
+    if (wasEverImported && allEmpty) {
+      const currentOverrides = scanOverridesRef.current;
+      const satName = currentOverrides.find(
+        (o) => `${intUnitSlug}__${o.satelliteName.replace(/\s+/g, "-")}` === prev,
+      )?.satelliteName;
+      if (satName) {
+        const updated = currentOverrides.map((o) =>
+          o.satelliteName.toLowerCase() === satName.toLowerCase()
+            ? { ...o, totalScanned: 0, analyzed: 0, pending: 0, productivityScore: null }
+            : o,
+        );
+        saveScanOverrides(unitId, updated);
+        setScanOverrides(updated);
+      }
+    }
+  }, [selectedReportId, intUnitSlug, unitId]);
 
   function downloadImportTemplate() {
     const example = ["EXAMPLE-SAT-1", "V/H", "450", "320", "130", "71", "2024-01-15"];
@@ -806,12 +959,15 @@ function IntelUnitView() {
     try {
       const { read, utils } = await import("xlsx");
       const buffer = await file.arrayBuffer();
+      // Use raw:true so Excel date serial numbers arrive as numbers (not pre-formatted strings).
+      // We handle all conversion ourselves via parseImportDate.
       const wb = read(buffer, { type: "array" });
       const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = utils.sheet_to_json<string[]>(ws, { header: 1, raw: false }) as string[][];
+      const rows = utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: true }) as unknown[][];
 
       if (!rows.length) return toast.error("File is empty");
 
+      // Header row: force to string for comparison regardless of raw mode
       const fileHeaders = (rows[0] ?? []).map((h) => String(h ?? "").trim());
       for (let i = 0; i < SCAN_IMPORT_HEADERS.length; i++) {
         if (fileHeaders[i] !== SCAN_IMPORT_HEADERS[i]) {
@@ -824,10 +980,10 @@ function IntelUnitView() {
         }
       }
 
-      const dataRows = rows.slice(1).filter((r) => String(r[0] ?? "").trim());
+      const dataRows = rows.slice(1).filter((r) => String((r as unknown[])[0] ?? "").trim());
       if (dataRows.length === 0) return toast.error("No data rows found — add at least one satellite row below the header");
 
-      const overrides: ScanReportOverride[] = dataRows.map((r) => ({
+      const overrides: ScanReportOverride[] = (dataRows as unknown[][]).map((r) => ({
         satelliteName: String(r[0] ?? "").trim(),
         polarization: String(r[1] ?? "").trim() || "—",
         totalScanned: Math.max(0, parseInt(String(r[2] ?? "0").replace(/\D/g, "")) || 0),
@@ -837,11 +993,18 @@ function IntelUnitView() {
           const v = parseFloat(String(r[5] ?? "").replace(/[^0-9.]/g, ""));
           return isNaN(v) ? null : Math.min(100, Math.max(0, v));
         })(),
-        updatedOn: String(r[6] ?? "").trim() || new Date().toISOString().slice(0, 10),
+        // Use the robust multi-format date parser so serial numbers, DD/MM/YYYY, etc. all work
+        updatedOn: parseImportDate(r[6]),
       }));
 
       saveScanOverrides(unitId, overrides);
       setScanOverrides(overrides);
+      // Un-suppress any satellite that appears in the freshly imported data so it becomes
+      // visible again after previously being deleted.
+      const importedLower = new Set(overrides.map((o) => o.satelliteName.toLowerCase()));
+      const newSuppressed = new Set([...suppressedSatNames].filter((n) => !importedLower.has(n)));
+      saveSuppressedSats(unitId, [...newSuppressed]);
+      setSuppressedSatNames(newSuppressed);
       toast.success(`Imported ${overrides.length} scan report row${overrides.length !== 1 ? "s" : ""}`);
     } catch {
       toast.error("Failed to parse file — ensure it matches the downloaded template");
@@ -863,6 +1026,11 @@ function IntelUnitView() {
       localStorage.removeItem(setupKey(repId, satName));
       removeReportCellEdits(repId);
     }
+    // Suppress these satellites so they don't re-appear from the seeded roster.
+    const newSuppressed = new Set([...suppressedSatNames, ...nameSet]);
+    saveSuppressedSats(unitId, [...newSuppressed]);
+    setSuppressedSatNames(newSuppressed);
+
     const opIds = (intelRows as any[])
       .filter((r) => nameSet.has((r.satellites?.name ?? "").toLowerCase()))
       .map((r) => r.id)
@@ -1118,17 +1286,20 @@ function IntelUnitView() {
                         {idx + 1}
                       </div>
 
-                      {/* Satellite name — clickable for drill-down (or setup wizard for imported sats) */}
+                      {/* Satellite name — always clickable; opens drill-down for all rows */}
                       <div
                         className="px-1 py-2 min-w-0 text-left cursor-pointer"
                         onClick={() => {
-                          // Extra (imported) rows have a reportId built from the override list but
-                          // return null from buildIntelDrillDownReport. Use the setup wizard for them
-                          // until setup is complete; then go straight to the analysis page.
-                          const isImported = scanOverrides.some(
-                            (o) => `${intUnitSlug}__${o.satelliteName.replace(/\s+/g, "-")}` === row.reportId,
-                          ) && !buildIntelDrillDownReport(intUnitSlug, row.reportId, linkageCtx, unitEngagements);
-                          if (isImported) {
+                          // For imported (non-roster) rows that haven't completed setup yet,
+                          // open the setup wizard first — but only if they have scan data.
+                          // Zero-count and seeded-roster rows go directly to the analysis page.
+                          const isImportedNoEngagement =
+                            !row.isZeroImported &&
+                            scanOverrides.some(
+                              (o) => `${intUnitSlug}__${o.satelliteName.replace(/\s+/g, "-")}` === row.reportId,
+                            ) &&
+                            !buildIntelDrillDownReport(intUnitSlug, row.reportId, linkageCtx, unitEngagements);
+                          if (isImportedNoEngagement) {
                             const prog = loadSetup(row.reportId, row.satelliteName);
                             if (!isSetupComplete(prog)) {
                               setSetupSatellite({ name: row.satelliteName, reportId: row.reportId });
@@ -1144,35 +1315,45 @@ function IntelUnitView() {
                           {row.satelliteName}
                         </div>
                         <div className="mono text-[10px] text-foreground/75 leading-tight">{row.polarization}</div>
-                        {!row.scanEligible && (
-                          <span className="inline-block mt-0.5 mono text-[8px] font-bold uppercase px-1 py-px rounded-sm border border-muted-foreground/30 text-muted-foreground bg-secondary/40">
-                            No visibility
+                        {row.isZeroImported ? (
+                          <span className="inline-block mt-0.5 mono text-[8px] font-bold uppercase px-1 py-px rounded-sm border border-amber-500/40 text-amber-700 bg-amber-500/8">
+                            No data — click to import
                           </span>
-                        )}
-                        {row.engagementStatus && row.scanEligible && (
-                          <span
-                            className={`inline-block mt-0.5 mono text-[8px] font-bold uppercase px-1 py-px rounded-sm border ${
-                              row.engagementStatus === "Completed"
-                                ? "border-emerald-500/40 text-emerald-700 bg-emerald-500/10"
-                                : "border-primary/30 text-primary bg-primary/8"
-                            }`}
-                          >
-                            {row.engagementStatus}
-                          </span>
+                        ) : (
+                          <>
+                            {!row.scanEligible && (
+                              <span className="inline-block mt-0.5 mono text-[8px] font-bold uppercase px-1 py-px rounded-sm border border-muted-foreground/30 text-muted-foreground bg-secondary/40">
+                                No visibility
+                              </span>
+                            )}
+                            {row.engagementStatus && row.scanEligible && (
+                              <span
+                                className={`inline-block mt-0.5 mono text-[8px] font-bold uppercase px-1 py-px rounded-sm border ${
+                                  row.engagementStatus === "Completed"
+                                    ? "border-emerald-500/40 text-emerald-700 bg-emerald-500/10"
+                                    : "border-primary/30 text-primary bg-primary/8"
+                                }`}
+                              >
+                                {row.engagementStatus}
+                              </span>
+                            )}
+                          </>
                         )}
                       </div>
 
-                      <div className={`px-1 py-2 mono text-[12px] text-center font-semibold tabular-nums ${!row.scanEligible ? "text-muted-foreground" : "text-foreground"}`}>
-                        {row.totalScanned.toLocaleString()}
+                      <div className={`px-1 py-2 mono text-[12px] text-center font-semibold tabular-nums ${row.isZeroImported || !row.scanEligible ? "text-muted-foreground/50" : "text-foreground"}`}>
+                        {row.isZeroImported ? "—" : row.totalScanned.toLocaleString()}
                       </div>
-                      <div className={`px-1 py-2 mono text-[12px] text-center font-semibold tabular-nums ${!row.scanEligible ? "text-muted-foreground" : "text-foreground"}`}>
-                        {row.analyzed.toLocaleString()}
+                      <div className={`px-1 py-2 mono text-[12px] text-center font-semibold tabular-nums ${row.isZeroImported || !row.scanEligible ? "text-muted-foreground/50" : "text-foreground"}`}>
+                        {row.isZeroImported ? "—" : row.analyzed.toLocaleString()}
                       </div>
-                      <div className={`px-1 py-2 mono text-[12px] text-center font-semibold tabular-nums ${!row.scanEligible ? "text-muted-foreground" : "text-foreground"}`}>
-                        {row.pending.toLocaleString()}
+                      <div className={`px-1 py-2 mono text-[12px] text-center font-semibold tabular-nums ${row.isZeroImported || !row.scanEligible ? "text-muted-foreground/50" : "text-foreground"}`}>
+                        {row.isZeroImported ? "—" : row.pending.toLocaleString()}
                       </div>
                       <div className="px-1 py-2 text-center">
-                        {row.productivityScore === null ? (
+                        {row.isZeroImported ? (
+                          <span className="mono text-[10px] font-bold uppercase text-muted-foreground/50">—</span>
+                        ) : row.productivityScore === null ? (
                           <span className="mono text-[10px] font-bold uppercase text-muted-foreground">N/A</span>
                         ) : (
                           <span
@@ -1188,8 +1369,8 @@ function IntelUnitView() {
                           </span>
                         )}
                       </div>
-                      <div className="px-1 py-2 mono text-[11px] text-muted-foreground tabular-nums text-center">
-                        {row.reportTimestamp ? formatIntelCompactDate(row.reportTimestamp) : "—"}
+                      <div className={`px-1 py-2 mono text-[11px] tabular-nums text-center ${row.isZeroImported ? "text-muted-foreground/50" : "text-muted-foreground"}`}>
+                        {row.reportTimestamp && !row.isZeroImported ? formatIntelCompactDate(row.reportTimestamp) : "—"}
                       </div>
 
                       {/* Delete action */}
@@ -1243,7 +1424,7 @@ function IntelUnitView() {
 
       <IntelSatelliteDrillDown
         report={drillDown}
-        open={!!selectedReportId && !!drillDown}
+        open={!!selectedReportId}
         onClose={() => setSelectedReportId(null)}
       />
 

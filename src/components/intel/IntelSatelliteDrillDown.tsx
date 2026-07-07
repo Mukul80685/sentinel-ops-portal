@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import {
-  ArrowLeft, ExternalLink, Globe, Radar, Satellite, Star, Cog, Trash2, Navigation,
+  ArrowLeft, ExternalLink, Globe, Radar, Satellite, Star, Trash2, Microscope,
   FileInput, AlertTriangle, FileSpreadsheet, Info, ChevronDown, ChevronUp,
 } from "lucide-react";
 import {
@@ -27,7 +27,6 @@ import { buildVisibilityDeepLinkSearch } from "@/lib/visibilityMatrix";
 import { evaluateFrequencyAllocationEligibility } from "@/lib/intelIntegrity";
 import {
   allocateToUnit,
-  clearAllocation,
   clearImportant,
   clearTechnicalAnalysis,
   discardFrequency,
@@ -48,59 +47,43 @@ import {
   getReportCellEdits,
   setReportCellEdits,
   emptyReportEdits,
+  INTEL_CELL_EDITS_EVENT,
   type ReportCellEdits,
-  type TableStore,
 } from "@/lib/intelCellStore";
+import {
+  gridToRecords,
+  parseIntelSpreadsheet,
+  SpreadsheetHeaderError,
+} from "@/lib/intelSpreadsheetImport";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
 type Props = { report: IntelDrillDownReport | null; open: boolean; onClose: () => void };
-type MenuState = { key: string; freqId: string; x: number; y: number; techActive: boolean; importantActive: boolean; allocatedActive: boolean };
-type PendingAction = { action: string; key: string; frequencyId: string; actionLabel: string };
+type FreqRowSnapshot = {
+  outputType?: string;
+  details?: string;
+  protocol?: string;
+  level?: string;
+  remarks?: string;
+};
+type MenuState = {
+  key: string;
+  freqId: string;
+  x: number;
+  y: number;
+  techActive: boolean;
+  importantActive: boolean;
+  rowSnapshot: FreqRowSnapshot;
+};
+type PendingAction = {
+  action: string;
+  key: string;
+  frequencyId: string;
+  actionLabel: string;
+  rowSnapshot: FreqRowSnapshot;
+};
 type ColDef = { field: string; label: string; width: string; isFreqId?: boolean };
 type MergedRow = { id: string; isExtra: boolean } & Record<string, string>;
-
-// ─── Spreadsheet parse helpers ──────────────────────────────────────────────
-
-function parseCsvRows(text: string): string[][] {
-  const lines = text.trim().split(/\r?\n/).filter((l) => l.trim());
-  return lines.map((line) => {
-    const cells: string[] = [];
-    let cur = ""; let inQ = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"') { if (inQ && line[i + 1] === '"') { cur += '"'; i++; } else inQ = !inQ; }
-      else if (ch === "," && !inQ) { cells.push(cur.trim()); cur = ""; }
-      else cur += ch;
-    }
-    cells.push(cur.trim());
-    return cells;
-  });
-}
-
-async function parseSpreadsheet(file: File): Promise<string[][]> {
-  if (file.name.toLowerCase().endsWith(".csv")) {
-    const buf = await file.arrayBuffer();
-    const bytes = new Uint8Array(buf);
-    // Detect UTF-8 BOM. Without it, Excel saves CSV in Windows-1252 (ANSI).
-    // windows-1252 maps 0xB0 → ° correctly; utf-8 cannot decode 0xB0 alone → "?".
-    const hasUtf8Bom = bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF;
-    const text = new TextDecoder(hasUtf8Bom ? "utf-8" : "windows-1252").decode(buf);
-    return parseCsvRows(hasUtf8Bom ? text.slice(1) : text);
-  }
-  const { read, utils } = await import("xlsx");
-  const wb = read(await file.arrayBuffer());
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  return utils.sheet_to_json<string[]>(ws, { header: 1, defval: "" }) as string[][];
-}
-
-function gridToObjects(grid: string[][]): Record<string, string>[] {
-  if (grid.length < 2) return [];
-  const [headers, ...dataRows] = grid;
-  return dataRows
-    .filter((r) => r.some((c) => c !== ""))
-    .map((row) => Object.fromEntries(headers.map((h, i) => [h.trim(), (row[i] ?? "").trim()])));
-}
 
 function downloadCsvFile(filename: string, rows: string[][]) {
   const csv = rows
@@ -155,6 +138,33 @@ function resolveFrequencyBeamContext(report: IntelDrillDownReport, frequencyId: 
 }
 function preventDialogDismissOnFreqMenu(e: Event) {
   if ((e.target as HTMLElement | null)?.closest("[data-freq-action-menu]")) e.preventDefault();
+}
+
+function buildImportantNotes(
+  section: FrequencySection,
+  row: FreqRowSnapshot,
+  reportId: string,
+): string {
+  if (section === "productive") {
+    const parts = [row.outputType, row.protocol, row.details].filter(Boolean);
+    return parts.length > 0 ? parts.join(" · ") : `INT ref · ${reportId}`;
+  }
+  const parts = [
+    row.level ? `Level ${row.level}` : "",
+    row.protocol,
+    row.remarks,
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(" · ") : `INT ref · ${reportId}`;
+}
+
+function rowToSnapshot(row: MergedRow): FreqRowSnapshot {
+  return {
+    outputType: row.outputType,
+    details: row.details,
+    protocol: row.protocol,
+    level: row.level,
+    remarks: row.remarks,
+  };
 }
 
 // ─── Color scheme ───────────────────────────────────────────────────────────
@@ -278,33 +288,80 @@ function DisplayTable({
   const displayRows = collapsible && collapsed ? allRows.slice(0, PREVIEW_ROWS) : allRows;
   const hiddenCount = allRows.length - PREVIEW_ROWS;
 
-  function openMenu(e: React.MouseEvent, key: string, freqId: string) {
+  function openMenu(e: React.MouseEvent, key: string, freqId: string, row: MergedRow) {
     if (visibilityBlocked) return;
-    e.preventDefault(); e.stopPropagation();
+    e.preventDefault();
+    e.stopPropagation();
     const x = Math.min(e.clientX, window.innerWidth - 300);
     const y = Math.min(e.clientY, window.innerHeight - 220);
     const state = getFrequencyState(key);
-    setMenu({ key, freqId, x, y, techActive: state.flags.techAnalysis, importantActive: state.flags.important, allocatedActive: state.flags.allocated });
+    setMenu({
+      key,
+      freqId,
+      x,
+      y,
+      techActive: state.flags.techAnalysis,
+      importantActive: state.flags.important,
+      rowSnapshot: rowToSnapshot(row),
+    });
   }
   function queueAction(action: string, actionLabel: string) {
-    if (!menu) return; setPending({ action, key: menu.key, frequencyId: menu.freqId, actionLabel }); setMenu(null);
+    if (!menu) return;
+    setPending({
+      action,
+      key: menu.key,
+      frequencyId: menu.freqId,
+      actionLabel,
+      rowSnapshot: menu.rowSnapshot,
+    });
+    setMenu(null);
   }
-  function runAction(key: string, freqId: string, action: string) {
+  function runAction(key: string, freqId: string, action: string, rowSnapshot: FreqRowSnapshot) {
     if (!section) return;
     const beamCtx = resolveFrequencyBeamContext(report, freqId);
     if (action === "important") {
-      if (getFrequencyState(key).flags.important) { clearImportant(key, userLabel); toast.success("Removed from Important Frequencies"); }
-      else { markImportant(key, { frequency: freqId, satelliteName: report.satelliteName, unitLabel, reportId: report.reportId, userLabel, sourceUnitId: report.unitId, beamName: beamCtx.beamName, band: beamCtx.band, polarization: report.scanSummary.polarization }); toast.success("Added to Important Frequencies"); }
-    } else if (action === "allocate") {
-      if (getFrequencyState(key).flags.allocated) { clearAllocation(key, userLabel); toast.success("Allocation removed"); }
-      else onAllocate(key, freqId);
-      onAction(); return;
+      if (getFrequencyState(key).flags.important) {
+        clearImportant(key, userLabel);
+        toast.success("Removed from Important Frequencies");
+      } else {
+        markImportant(key, {
+          frequency: freqId,
+          satelliteName: report.satelliteName,
+          unitLabel,
+          reportId: report.reportId,
+          userLabel,
+          sourceUnitId: report.unitId,
+          beamName: beamCtx.beamName,
+          band: beamCtx.band,
+          polarization: report.scanSummary.polarization,
+          notes: buildImportantNotes(section, rowSnapshot, report.reportId),
+        });
+        toast.success("Added to Important Frequencies");
+      }
     } else if (action === "discard") {
-      discardFrequency(key, userLabel, { frequencyId: freqId, satelliteName: report.satelliteName, section, sourceUnitId: report.unitId, beamName: beamCtx.beamName, band: beamCtx.band });
-      toast.success("Moved to Discard Repository");
+      discardFrequency(key, userLabel, {
+        frequencyId: freqId,
+        satelliteName: report.satelliteName,
+        section,
+        sourceUnitId: report.unitId,
+        beamName: beamCtx.beamName,
+        band: beamCtx.band,
+      });
+      toast.success("Moved to Discarded Frequencies");
     } else if (action === "tech") {
-      if (getFrequencyState(key).flags.techAnalysis) { clearTechnicalAnalysis(key, userLabel); toast.success("Technical analysis removed"); }
-      else { requestTechnicalAnalysis(key, userLabel, { sourceUnitId: report.unitId, frequencyId: freqId, satelliteName: report.satelliteName, beamName: beamCtx.beamName, band: beamCtx.band }); toast.success("Technical analysis requested"); }
+      if (getFrequencyState(key).flags.techAnalysis) {
+        clearTechnicalAnalysis(key, userLabel);
+        toast.success("Detailed analysis request cleared");
+      } else {
+        requestTechnicalAnalysis(key, userLabel, {
+          sourceUnitId: report.unitId,
+          frequencyId: freqId,
+          satelliteName: report.satelliteName,
+          beamName: beamCtx.beamName,
+          band: beamCtx.band,
+        });
+        toast.success("Detailed analysis requested");
+      }
     }
     onAction();
   }
@@ -341,8 +398,8 @@ function DisplayTable({
       <div className="overflow-x-auto">
         <table className="w-full border-collapse">
           <thead>
-            <tr className="border-b border-border bg-secondary/10">
-              <th className="w-8 text-center px-1 py-1 border-r border-border/40 mono text-[9px] text-foreground/45 font-bold select-none">#</th>
+            <tr className={`border-b border-border ${c.header}`}>
+              <th className="w-8 text-center px-1 py-1 border-r border-border/40 mono text-[9px] text-foreground font-bold select-none">#</th>
               {columns.map((col) => (
                 <th key={col.field} style={{ width: col.width }}
                   className="px-2 py-1 text-left mono text-[9px] uppercase tracking-wider text-foreground font-bold border-r border-border/30 last:border-r-0">
@@ -351,10 +408,10 @@ function DisplayTable({
               ))}
             </tr>
           </thead>
-          <tbody>
+          <tbody className="bg-white">
             {allRows.length === 0 ? (
               <tr>
-                <td colSpan={columns.length + 1} className="px-3 py-5 text-center">
+                <td colSpan={columns.length + 1} className="px-3 py-5 text-center bg-white">
                   <div className="flex flex-col items-center gap-2">
                     <FileSpreadsheet className="h-6 w-6 text-foreground/20" />
                     <p className="mono text-[11px] text-foreground/50">No data yet.</p>
@@ -371,16 +428,22 @@ function DisplayTable({
                 const isInvalid = invalidRowIds?.has(row.id);
                 return (
                   <tr key={row.id}
-                    className={`border-b border-border/25 transition-colors ${c.row} ${isInvalid ? "bg-amber-500/5" : ""}`}>
-                    <td className="w-8 text-center px-1 py-1.5 border-r border-border/25 mono text-[10px] text-foreground/35 select-none align-middle">
+                    className={`border-b border-border/25 bg-white hover:bg-gray-50 ${isInvalid ? "border-l-2 border-l-amber-500" : ""}`}>
+                    <td className="w-8 text-center px-1 py-1.5 border-r border-border/25 mono text-[10px] text-foreground/50 select-none align-middle bg-white">
                       {isInvalid ? <AlertTriangle className="h-3 w-3 text-amber-500 mx-auto" /> : rowIdx + 1}
                     </td>
                     {columns.map((col) => (
-                      <td key={col.field} className="border-r border-border/25 last:border-r-0 align-middle px-2 py-1.5"
-                        onContextMenu={col.isFreqId && key ? (e) => openMenu(e, key, freqId) : undefined}>
+                      <td key={col.field} className="border-r border-border/25 last:border-r-0 align-middle px-2 py-1.5 bg-white text-foreground"
+                        onContextMenu={col.isFreqId && key && !visibilityBlocked ? (e) => openMenu(e, key, freqId, row) : undefined}>
                         {col.isFreqId && key ? (
                           <div className="mono text-[11px]">
-                            <IntRepositoryFrequencyCell stateKey={key} frequencyId={freqId} tick={freqTick} />
+                            <IntRepositoryFrequencyCell
+                              stateKey={key}
+                              frequencyId={freqId}
+                              tick={freqTick}
+                              actionsDisabled={visibilityBlocked}
+                              onFrequencyClick={(e) => openMenu(e, key, freqId, row)}
+                            />
                           </div>
                         ) : (
                           <span className="mono text-[11px] text-foreground break-words leading-snug">
@@ -414,7 +477,10 @@ function DisplayTable({
 
       {menu && <FreqActionMenu menu={menu} onClose={() => setMenu(null)} onAction={(a, l) => queueAction(a, l)} />}
       <ActionConfirmDialog pending={pending} satelliteName={report.satelliteName}
-        onConfirm={() => { if (pending) runAction(pending.key, pending.frequencyId, pending.action); setPending(null); }}
+        onConfirm={() => {
+          if (pending) runAction(pending.key, pending.frequencyId, pending.action, pending.rowSnapshot);
+          setPending(null);
+        }}
         onCancel={() => setPending(null)} />
     </div>
   );
@@ -432,35 +498,57 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
   const [edits, setEditsState] = useState<ReportCellEdits>(emptyReportEdits);
 
   useEffect(() => {
-    if (report?.reportId) setEditsState(getReportCellEdits(report.reportId));
+    if (open && report?.reportId) setEditsState(getReportCellEdits(report.reportId));
+  }, [open, report?.reportId]);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ reportId: string }>).detail;
+      if (report?.reportId && detail?.reportId === report.reportId) {
+        setEditsState(getReportCellEdits(report.reportId));
+      }
+    };
+    window.addEventListener(INTEL_CELL_EDITS_EVENT, handler);
+    return () => window.removeEventListener(INTEL_CELL_EDITS_EVENT, handler);
   }, [report?.reportId]);
 
-  function saveEdits(next: ReportCellEdits) {
-    if (!report) return;
-    setEditsState(next);
-    setReportCellEdits(report.reportId, next);
-  }
+  const saveEdits = useCallback(
+    (updater: ReportCellEdits | ((prev: ReportCellEdits) => ReportCellEdits)) => {
+      if (!report) return false;
+      let saved = false;
+      setEditsState((prev) => {
+        const next = typeof updater === "function" ? updater(prev) : updater;
+        saved = setReportCellEdits(report.reportId, next);
+        return next;
+      });
+      return saved;
+    },
+    [report],
+  );
 
   function handleClearImport(table: "productive" | "nonProductive" | "novel") {
-    const tbl = edits[table];
-    saveEdits({ ...edits, [table]: { ...tbl, importedMode: false, extra: [] } });
+    saveEdits((prev) => ({
+      ...prev,
+      [table]: { ...prev[table], importedMode: false, extra: [] },
+    }));
   }
   function handleClearSatelliteImport() {
-    saveEdits({ ...edits, satellite: {} });
+    saveEdits((prev) => ({ ...prev, satellite: {} }));
   }
   function handleClearScanImport() {
-    saveEdits({ ...edits, scan: {} });
+    saveEdits((prev) => ({ ...prev, scan: {} }));
   }
 
   // ── Import handlers ───────────────────────────────────────────────────────
 
   async function handleImportSatellite(file: File) {
     try {
-      const objs = gridToObjects(await parseSpreadsheet(file));
+      const grid = await parseIntelSpreadsheet(file);
+      const objs = gridToRecords(grid, TEMPLATES.satellite.headers);
       if (!objs.length) return toast.error("No data rows found in file");
-      const row = objs[0];
-      saveEdits({
-        ...edits,
+      const row = objs[0]!;
+      const ok = saveEdits((prev) => ({
+        ...prev,
         satellite: {
           name: row["Satellite Name"] ?? "",
           originCountry: row["Origin Country"] ?? "",
@@ -468,18 +556,26 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
           orbitalPosition: row["Orbital Position"] ?? "",
           totalTransponders: row["Total Transponders"] ?? "",
         },
-      });
+      }));
+      if (!ok) return toast.error("Could not save imported data — storage may be full");
       toast.success("Satellite details imported");
-    } catch { toast.error("Failed to parse file"); }
+    } catch (err) {
+      toast.error(
+        err instanceof SpreadsheetHeaderError
+          ? err.message
+          : "Failed to parse file — check format matches the template",
+      );
+    }
   }
 
   async function handleImportScan(file: File) {
     try {
-      const objs = gridToObjects(await parseSpreadsheet(file));
+      const grid = await parseIntelSpreadsheet(file);
+      const objs = gridToRecords(grid, TEMPLATES.scan.headers);
       if (!objs.length) return toast.error("No data rows found in file");
-      const row = objs[0];
-      saveEdits({
-        ...edits,
+      const row = objs[0]!;
+      const ok = saveEdits((prev) => ({
+        ...prev,
         scan: {
           polarization: row["Polarization"] ?? "",
           scanStartDate: row["Scan Start Date"] ?? "",
@@ -487,32 +583,79 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
           analyzed: row["Frequencies Analyzed"] ?? "",
           pending: row["Frequencies Pending"] ?? "",
         },
-      });
+      }));
+      if (!ok) return toast.error("Could not save imported data — storage may be full");
       toast.success("Scan summary imported");
-    } catch { toast.error("Failed to parse file"); }
+    } catch (err) {
+      toast.error(
+        err instanceof SpreadsheetHeaderError
+          ? err.message
+          : "Failed to parse file — check format matches the template",
+      );
+    }
   }
 
   async function handleImportTable(table: "productive" | "nonProductive" | "novel", file: File) {
     try {
-      const objs = gridToObjects(await parseSpreadsheet(file));
+      const templateKey = table;
+      const grid = await parseIntelSpreadsheet(file);
+      const objs = gridToRecords(grid, TEMPLATES[templateKey].headers);
       if (!objs.length) return toast.error("No data rows found in file");
+
+      const stamp = Date.now();
       const extra = objs.map((row, i) => {
-        const id = `imp-${Date.now()}-${i}`;
-        if (table === "productive")    return { id, frequencyId: row["Frequency ID"] ?? "", outputType: row["Output Type"] ?? "", details: row["Details of Interception"] ?? "", protocol: row["Protocol"] ?? "" };
-        if (table === "nonProductive") return { id, frequencyId: row["Frequency ID"] ?? "", level: row["Level"] ?? "", protocol: row["Protocol"] ?? "", remarks: row["Remarks"] ?? "" };
-        return { id, frequency: row["Frequency"] ?? "", protocol: row["Protocol"] ?? "", remarks: row["Remarks"] ?? "" };
+        const id = `imp-${table}-${stamp}-${i}`;
+        if (table === "productive") {
+          return {
+            id,
+            frequencyId: row["Frequency ID"] ?? "",
+            outputType: row["Output Type"] ?? "",
+            details: row["Details of Interception"] ?? "",
+            protocol: row["Protocol"] ?? "",
+          };
+        }
+        if (table === "nonProductive") {
+          return {
+            id,
+            frequencyId: row["Frequency ID"] ?? "",
+            level: row["Level"] ?? "",
+            protocol: row["Protocol"] ?? "",
+            remarks: row["Remarks"] ?? "",
+          };
+        }
+        return {
+          id,
+          frequency: row["Frequency"] ?? "",
+          protocol: row["Protocol"] ?? "",
+          remarks: row["Remarks"] ?? "",
+        };
       });
-      saveEdits({ ...edits, [table]: { cells: {}, extra, importedMode: true } });
+
+      const ok = saveEdits((prev) => ({
+        ...prev,
+        [table]: { cells: {}, extra, importedMode: true },
+      }));
+      if (!ok) return toast.error("Could not save imported data — storage may be full");
       toast.success(`Imported ${extra.length} row${extra.length !== 1 ? "s" : ""}`);
-    } catch { toast.error("Failed to parse file — check format matches the template"); }
+    } catch (err) {
+      toast.error(
+        err instanceof SpreadsheetHeaderError
+          ? err.message
+          : "Failed to parse file — check format matches the template",
+      );
+    }
   }
 
   // ── Build display rows ────────────────────────────────────────────────────
 
+  function usesImportedRows(tbl: ReportCellEdits["productive"]): boolean {
+    return tbl.importedMode === true || tbl.extra.length > 0;
+  }
+
   function buildProductiveRows(): MergedRow[] {
     if (!report) return [];
     const tbl = edits.productive;
-    if (tbl.importedMode) return tbl.extra.map((r) => ({ ...r, isExtra: true })) as MergedRow[];
+    if (usesImportedRows(tbl)) return tbl.extra.map((r) => ({ ...r, isExtra: true })) as MergedRow[];
     return report.productive.map((f) => ({
       id: f.id, isExtra: false,
       frequencyId: f.frequencyId, outputType: f.outputType,
@@ -523,7 +666,7 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
   function buildNonProductiveRows(): MergedRow[] {
     if (!report) return [];
     const tbl = edits.nonProductive;
-    if (tbl.importedMode) return tbl.extra.map((r) => ({ ...r, isExtra: true })) as MergedRow[];
+    if (usesImportedRows(tbl)) return tbl.extra.map((r) => ({ ...r, isExtra: true })) as MergedRow[];
     return report.nonProductive.map((f) => ({
       id: f.id, isExtra: false,
       frequencyId: f.frequencyId, level: f.level,
@@ -534,7 +677,7 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
   function buildNovelRows(): MergedRow[] {
     if (!report) return [];
     const tbl = edits.novel;
-    if (tbl.importedMode) return tbl.extra.map((r) => ({ ...r, isExtra: true })) as MergedRow[];
+    if (usesImportedRows(tbl)) return tbl.extra.map((r) => ({ ...r, isExtra: true })) as MergedRow[];
     return report.novelProtocols.map((p, i) => ({
       id: `novel-${i}`, isExtra: false,
       frequency: p.frequency, protocol: p.protocol, remarks: p.remarks,
@@ -677,7 +820,7 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
                 </div>
               }
             >
-              <dl className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-4 gap-y-2 p-2.5">
+              <dl className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-3 gap-y-2 p-2.5 bg-white">
                 <DisplayField label="Satellite Name" value={satName} emphasis />
                 <DisplayField label="Origin Country" value={satCountry} />
                 <DisplayField label="Launch Date" value={satLaunch} />
@@ -702,14 +845,14 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
                 </div>
               }
             >
-              <div className="flex flex-wrap gap-x-5 gap-y-1.5 px-2.5 py-2 border-b border-border/30">
+              <div className="flex flex-wrap gap-x-5 gap-y-1.5 px-2.5 py-2 border-b border-border/30 bg-white">
                 <StripItem label="Polarization"           value={scanPolarization} />
                 <StripItem label="Scan Start Date"        value={scanDate} />
                 <StripItem label="Frequencies Scanned"    value={scanTotal} />
                 <StripItem label="Frequencies Analyzed"   value={scanAnalyzed} />
                 <StripItem label="Frequencies Pending"    value={scanPending} />
               </div>
-              <div className="grid grid-cols-2 divide-x divide-border/40">
+              <div className="grid grid-cols-2 divide-x divide-border/40 bg-white">
                 <BeamPanel title="Total Beams Available" beams={totalBeamsAvailable} countOverride={totalBeamCount} />
                 <BeamPanel
                   title={`Beams Visible to ${unitName}`} beams={beamsVisibleToUnit} highlight
@@ -729,7 +872,7 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
               <div className="flex items-center gap-2 mb-2 px-0.5">
                 <span className="mono text-[10px] font-bold uppercase tracking-wider text-foreground">C · Detailed Intelligence Analysis</span>
                 <span className="mono text-[9px] text-foreground/50">
-                  Right-click a Frequency ID for operational actions · Import replaces existing data
+                  Click a Frequency ID for operational actions · Import replaces existing data
                 </span>
               </div>
 
@@ -742,7 +885,7 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
                   visibilityBlocked={visibilityBlocked} blockedMessage={blockedMsg}
                   onAllocate={(key, freq) => setAllocateOpen({ key, frequency: freq })} onAction={bump}
                   templateSection="productive" onImport={(f) => handleImportTable("productive", f)}
-                  importedMode={edits.productive.importedMode}
+                  importedMode={usesImportedRows(edits.productive)}
                   onClearImport={() => handleClearImport("productive")}
                 />
 
@@ -754,7 +897,7 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
                   visibilityBlocked={visibilityBlocked} blockedMessage={blockedMsg}
                   onAllocate={(key, freq) => setAllocateOpen({ key, frequency: freq })} onAction={bump}
                   templateSection="nonProductive" onImport={(f) => handleImportTable("nonProductive", f)}
-                  importedMode={edits.nonProductive.importedMode}
+                  importedMode={usesImportedRows(edits.nonProductive)}
                   onClearImport={() => handleClearImport("nonProductive")}
                 />
 
@@ -767,7 +910,7 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
                   visibilityBlocked={visibilityBlocked} blockedMessage={blockedMsg}
                   onAllocate={(key, freq) => setAllocateOpen({ key, frequency: freq })} onAction={bump}
                   templateSection="novel" onImport={(f) => handleImportTable("novel", f)}
-                  importedMode={edits.novel.importedMode}
+                  importedMode={usesImportedRows(edits.novel)}
                   onClearImport={() => handleClearImport("novel")}
                 />
 
@@ -815,7 +958,7 @@ function SectionImportFileButton({ onImport }: { templateSection: keyof typeof T
 
 function DisplayField({ label, value, emphasis }: { label: string; value: string; emphasis?: boolean }) {
   return (
-    <div>
+    <div className="rounded-sm border border-border/30 bg-white px-2 py-1.5">
       <dt className="mono text-[9px] uppercase tracking-wider text-foreground/70">{label}</dt>
       <dd className={`mt-0.5 mono ${emphasis ? "text-[12px] font-bold" : "text-[11px] font-semibold"} text-foreground`}>
         {value || <span className="text-foreground/35">—</span>}
@@ -826,7 +969,7 @@ function DisplayField({ label, value, emphasis }: { label: string; value: string
 
 function StripItem({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-baseline gap-1.5 mono">
+    <div className="flex items-baseline gap-1.5 mono rounded-sm border border-border/30 bg-white px-2 py-1">
       <span className="text-[9px] uppercase tracking-wider text-foreground/70 shrink-0">{label}:</span>
       <span className="text-[11px] font-bold text-foreground">{value || "—"}</span>
     </div>
@@ -853,22 +996,22 @@ function SectionCard({ badge, color = "sky", title, icon, actions, children }: {
 function BeamPanel({ title, beams, highlight, footerAction, emptyMessage = "None listed.", countOverride }: { title: string; beams: string[]; highlight?: boolean; footerAction?: React.ReactNode; emptyMessage?: string; countOverride?: number }) {
   const displayCount = countOverride ?? beams.length;
   return (
-    <div className={`flex flex-col ${highlight ? "bg-primary/[0.03]" : ""}`}>
-      <div className="px-2 py-1 border-b border-border/30 bg-secondary/10 shrink-0 flex items-baseline gap-2">
+    <div className="flex flex-col bg-white">
+      <div className="px-2 py-1 border-b border-border/30 bg-teal-500/8 shrink-0 flex items-baseline gap-2">
         <span className="mono text-[10px] font-bold uppercase tracking-wider text-foreground">{title}</span>
         <span className="mono text-[9px] text-foreground/60">({displayCount})</span>
       </div>
       {beams.length === 0
-        ? <p className="px-2 py-1.5 mono text-[11px] text-foreground/65">{emptyMessage}</p>
-        : <ul className="px-2 py-1.5 space-y-0.5 overflow-y-auto max-h-[100px]">
+        ? <p className="px-2 py-1.5 mono text-[11px] text-foreground bg-white">{emptyMessage}</p>
+        : <ul className="px-2 py-1.5 space-y-0.5 overflow-y-auto max-h-[100px] bg-white">
             {beams.map((b) => (
-              <li key={b} className="mono text-[11px] text-foreground leading-snug flex items-start gap-1">
+              <li key={b} className="mono text-[11px] text-foreground leading-snug flex items-start gap-1 bg-white">
                 <span className="text-primary shrink-0">•</span>
                 <span className={highlight ? "font-semibold" : ""}>{b}</span>
               </li>
             ))}
           </ul>}
-      {footerAction && <div className="px-2 py-1.5 border-t border-border/30 bg-secondary/10 shrink-0">{footerAction}</div>}
+      {footerAction && <div className="px-2 py-1.5 border-t border-border/30 bg-white shrink-0">{footerAction}</div>}
     </div>
   );
 }
@@ -908,23 +1051,37 @@ function FreqActionMenu({ menu, onClose, onAction }: { menu: MenuState; onClose:
     return () => { document.removeEventListener("click", handleOutside, true); document.removeEventListener("keydown", handleKey); };
   }, [onClose]);
   const items = [
-    { id: "important", label: menu.importantActive ? "Remove from Important Frequencies" : "Add to Important Frequencies", icon: Star },
-    { id: "allocate",  label: menu.allocatedActive  ? "Remove Unit Allocation"            : "Allocate to Unit",             icon: Navigation },
-    { id: "tech",      label: menu.techActive        ? "Remove Technical Analysis"         : "Request Detailed Technical Analysis", icon: Cog },
-    { id: "discard",   label: "Discard", icon: Trash2 },
+    {
+      id: "important",
+      label: menu.importantActive ? "Remove from Important Frequencies" : "Add to Important Frequencies",
+      icon: Star,
+      iconClass: "text-amber-500",
+    },
+    {
+      id: "tech",
+      label: menu.techActive ? "Clear Detailed Analysis Request" : "Request Detailed Analysis",
+      icon: Microscope,
+      iconClass: "text-[#1a237e] dark:text-[#5c6bc0]",
+    },
+    {
+      id: "discard",
+      label: "Discard Frequency",
+      icon: Trash2,
+      iconClass: "text-destructive",
+    },
   ];
   return (
     <div ref={ref} data-freq-action-menu className="fixed z-[200] min-w-[280px] rounded-md border border-border bg-popover shadow-lg py-1" style={{ left: menu.x, top: menu.y }} onPointerDown={(e) => e.stopPropagation()}>
-      <div className="px-2.5 py-1.5 border-b border-border/50 mono text-[9px] font-bold uppercase tracking-wider text-foreground/80">Frequency Actions</div>
-      <div className="px-2.5 py-0.5 mono text-[10px] text-foreground truncate">{menu.freqId}</div>
+      <div className="px-2.5 py-1.5 border-b border-border/50 mono text-[9px] font-bold uppercase tracking-wider text-foreground">Frequency Actions</div>
+      <div className="px-2.5 py-0.5 mono text-[10px] font-semibold text-foreground truncate">{menu.freqId}</div>
       {items.map((item) => {
         const Icon = item.icon;
         return (
           <button key={item.id} type="button"
-            className="w-full text-left px-2.5 py-2 mono text-[11px] text-foreground hover:bg-primary/10 transition-colors flex items-center gap-2"
+            className="w-full text-left px-2.5 py-2 mono text-[11px] text-foreground hover:bg-primary/10 transition-colors flex items-center gap-2.5"
             onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onAction(item.id, item.label); onClose(); }}>
-            <Icon className={`h-3.5 w-3.5 shrink-0 ${item.id === "discard" ? "text-destructive" : "text-primary"}`} />
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onAction(item.id, item.label); }}>
+            <Icon className={`h-3.5 w-3.5 shrink-0 ${item.iconClass}`} />
             {item.label}
           </button>
         );

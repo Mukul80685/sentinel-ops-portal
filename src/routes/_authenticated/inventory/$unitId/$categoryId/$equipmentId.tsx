@@ -66,13 +66,17 @@ function EquipmentDetail() {
   }
 
   async function changePhoto(file: File) {
-    const path = await uploadFile(file, `equipment/${unitId}`);
-    if (!updateOperationalEquipment(equipmentId, { photo_url: path })) {
-      return toast.error("Equipment not found.");
+    try {
+      const path = await uploadFile(file, `equipment/${unitId}`);
+      if (!updateOperationalEquipment(equipmentId, { photo_url: path })) {
+        return toast.error("Equipment not found.");
+      }
+      toast.success("Photo updated");
+      qc.invalidateQueries({ queryKey: ["eq-detail", equipmentId] });
+      qc.invalidateQueries({ queryKey: ["eq", unitId, categoryId] });
+    } catch (err: any) {
+      toast.error(err.message ?? "Failed to upload photo.");
     }
-    toast.success("Photo updated");
-    qc.invalidateQueries({ queryKey: ["eq-detail", equipmentId] });
-    qc.invalidateQueries({ queryKey: ["eq", unitId, categoryId] });
   }
 
   async function addAttachment(file: File) {

@@ -92,10 +92,10 @@ function DocumentTile({
         <Checkbox checked={selected} onCheckedChange={onToggleSelect} className="mt-0.5" />
         <FileText className="h-4 w-4 text-primary shrink-0 mt-0.5" />
         <div className="min-w-0 flex-1">
-          <div className="mono text-[11px] font-medium truncate" title={doc.filename}>
+          <div className="mono text-[11px] font-semibold text-foreground truncate" title={doc.filename}>
             {doc.filename}
           </div>
-          <div className="text-[9px] text-muted-foreground mt-0.5">
+          <div className="text-[9px] text-foreground font-medium mt-0.5">
             {formatFileSize(doc.size)} · {new Date(doc.uploadedAt).toLocaleDateString()}
           </div>
         </div>
@@ -139,16 +139,16 @@ function FolderTile({
           e.stopPropagation();
           onDelete();
         }}
-        className="absolute top-2 right-2 h-6 w-6 grid place-items-center rounded-sm border border-border
-                   bg-card hover:bg-destructive/10 transition-colors text-muted-foreground hover:text-destructive"
+        className="absolute top-2 right-2 h-6 w-6 grid place-items-center rounded-sm border border-destructive/30
+                   bg-card hover:bg-destructive/10 transition-colors text-destructive"
       >
         <Trash2 className="h-3 w-3" />
       </button>
       <div className="flex items-start gap-2 pr-7">
         <Folder className="h-4 w-4 text-primary shrink-0 mt-0.5" />
         <div className="min-w-0 flex-1">
-          <div className="mono text-[11px] font-medium truncate">{folder.name}</div>
-          <div className="text-[9px] text-muted-foreground mt-0.5">
+          <div className="mono text-[11px] font-semibold text-foreground truncate">{folder.name}</div>
+          <div className="text-[9px] text-foreground font-medium mt-0.5">
             {docCount} document{docCount !== 1 ? "s" : ""}
           </div>
         </div>
@@ -309,7 +309,7 @@ export function DocumentModuleModal({ module, open, onClose, title, accept }: Pr
         <DialogContent className="max-w-[95vw] w-full h-[95vh] max-h-[95vh] flex flex-col p-0 gap-0">
           <DialogHeader className="px-4 pt-4 pb-2 pr-12 border-b shrink-0">
             <div className="flex items-center justify-between gap-2">
-              <DialogTitle className="mono uppercase tracking-wider">
+              <DialogTitle className="mono uppercase tracking-wider text-foreground font-bold">
                 {title}
                 {managerView === "folder" && activeFolder ? ` / ${activeFolder.name}` : " / Home"}
               </DialogTitle>
@@ -337,7 +337,7 @@ export function DocumentModuleModal({ module, open, onClose, title, accept }: Pr
           <div className="flex flex-1 min-h-0">
             <aside className="w-52 border-r border-border p-2 shrink-0 overflow-auto flex flex-col gap-2">
               <div className="panel p-2 space-y-2 border border-border/80">
-                <p className="text-[9px] mono uppercase tracking-wider text-muted-foreground">Create Folder</p>
+                <p className="text-[9px] mono uppercase tracking-wider text-foreground font-semibold">Create Folder</p>
                 <Input
                   value={newFolderName}
                   onChange={(e) => setNewFolderName(e.target.value)}
@@ -359,7 +359,7 @@ export function DocumentModuleModal({ module, open, onClose, title, accept }: Pr
                   </Button>
                 )}
                 <div className="relative flex-1 min-w-[160px]">
-                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-foreground/60" />
                   <Input
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
@@ -367,20 +367,20 @@ export function DocumentModuleModal({ module, open, onClose, title, accept }: Pr
                     className="pl-8 mono text-[11px] h-8"
                   />
                 </div>
-                <Button type="button" variant="ghost" size="sm" className="mono text-[9px] h-8" onClick={() => cycleSort("name")}>
+                <Button type="button" variant="ghost" size="sm" className="mono text-[9px] h-8 text-foreground font-medium" onClick={() => cycleSort("name")}>
                   Name <ArrowUpDown className="h-3 w-3 ml-1" />
                 </Button>
-                <Button type="button" variant="ghost" size="sm" className="mono text-[9px] h-8" onClick={() => cycleSort("size")}>
+                <Button type="button" variant="ghost" size="sm" className="mono text-[9px] h-8 text-foreground font-medium" onClick={() => cycleSort("size")}>
                   Size <ArrowUpDown className="h-3 w-3 ml-1" />
                 </Button>
-                <Button type="button" variant="ghost" size="sm" className="mono text-[9px] h-8" onClick={() => cycleSort("date")}>
+                <Button type="button" variant="ghost" size="sm" className="mono text-[9px] h-8 text-foreground font-medium" onClick={() => cycleSort("date")}>
                   Date <ArrowUpDown className="h-3 w-3 ml-1" />
                 </Button>
               </div>
 
               {selectedDocIds.size > 0 && (
                 <div className="px-4 py-2 border-b bg-secondary/20 flex flex-wrap items-center gap-2 shrink-0">
-                  <span className="mono text-[10px]">{selectedDocIds.size} selected</span>
+                  <span className="mono text-[10px] text-foreground font-semibold">{selectedDocIds.size} selected</span>
                   <Select value={targetFolderId} onValueChange={setTargetFolderId}>
                     <SelectTrigger className="h-8 text-[10px] mono w-[160px]">
                       <SelectValue placeholder="Target folder" />
@@ -412,9 +412,9 @@ export function DocumentModuleModal({ module, open, onClose, title, accept }: Pr
 
               <div className="flex-1 overflow-auto p-4">
                 {managerView === "home" && !search.trim() && store.folders.length === 0 && managerContent.length === 0 ? (
-                  <p className="text-[11px] text-muted-foreground mono">No folders or documents yet. Use "Upload" to add files.</p>
+                  <p className="text-[11px] text-foreground mono font-medium">No folders or documents yet. Use "Upload" to add files.</p>
                 ) : managerView === "folder" && !search.trim() && managerContent.length === 0 ? (
-                  <p className="text-[11px] text-muted-foreground mono">No documents in this folder.</p>
+                  <p className="text-[11px] text-foreground mono font-medium">No documents in this folder.</p>
                 ) : (
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
                     {managerView === "home" && !search.trim() &&

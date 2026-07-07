@@ -19,8 +19,11 @@ import {
   buildVisibilityDeepLinkSearch,
   bandsFromVisibleBeams,
   normalizeSatelliteName,
+  canonicalSatelliteKey,
+  type GeoSatellite,
 } from "@/lib/visibilityMatrix";
 import { bandToPolarizations, INT_UNITS } from "@/lib/intelRepository";
+import { findSatelliteInCatalog } from "@/lib/satelliteCatalog";
 
 export const OUTPUT_TYPES = ["voice", "packet", "image", "video", "location"] as const;
 
@@ -70,6 +73,99 @@ export type VisibilitySatelliteProfile = {
   beamDistributionSummary: string;
   defaultPolarization: string;
 };
+
+function inferDefaultPolarization(sat: GeoSatellite): string {
+  const t = `${sat.transponders ?? ""} ${sat.kuBandTransponders ?? ""} ${sat.cBandTransponders ?? ""}`.toLowerCase();
+  if (t.includes("ku") && t.includes("c")) return "KU-HH";
+  if (t.includes("ku")) return "KU-HH";
+  if (t.includes("c-band") || /\bc\b/.test(t)) return "C-HL";
+  return "—";
+}
+
+/** Map Visibility Matrix GeoSatellite metadata → INT drill-down profile fields. */
+export function geoSatelliteToVisibilityProfile(
+  sat: GeoSatellite,
+  countryOfOrigin: string,
+): VisibilitySatelliteProfile {
+  const beamParts = [
+    sat.orbitType,
+    sat.beamCoverage,
+    sat.beams?.length ? sat.beams.join(" · ") : null,
+  ].filter(Boolean);
+  return {
+    name: sat.name,
+    originCountry: countryOfOrigin || "—",
+    launchDate: sat.launchDate || "—",
+    orbitalPosition: sat.position || "—",
+    totalTransponders: sat.transponders || "—",
+    beamDistributionSummary: beamParts.join(" · ") || "—",
+    defaultPolarization: inferDefaultPolarization(sat),
+  };
+}
+
+/**
+ * Resolve satellite details for INT drill-down — legacy mock profiles first,
+ * then Satellite Visibility Matrix catalog (base + overlay, unit-scoped).
+ */
+export function resolveSatelliteProfile(
+  satelliteName: string,
+  unitId?: string,
+): VisibilitySatelliteProfile {
+  const legacy = VISIBILITY_SATELLITE_PROFILES[satelliteName];
+  if (legacy) return legacy;
+
+  const legacyKey = Object.keys(VISIBILITY_SATELLITE_PROFILES).find((k) =>
+    normalizeSatelliteName(k) === normalizeSatelliteName(satelliteName) ||
+    canonicalSatelliteKey(k) === canonicalSatelliteKey(satelliteName),
+  );
+  if (legacyKey) return VISIBILITY_SATELLITE_PROFILES[legacyKey];
+
+  const catalogRow = findSatelliteInCatalog(satelliteName, unitId);
+  if (catalogRow) {
+    return geoSatelliteToVisibilityProfile(catalogRow.satellite, catalogRow.countryOfOrigin);
+  }
+
+  return {
+    name: satelliteName,
+    originCountry: "—",
+    launchDate: "—",
+    orbitalPosition: "—",
+    totalTransponders: "—",
+    beamDistributionSummary: "—",
+    defaultPolarization: "—",
+  };
+}
+
+export type ScanSummarySeed = {
+  polarization?: string;
+  totalScanned?: number;
+  analyzed?: number;
+  pending?: number;
+  updatedOn?: string;
+};
+
+/** Apply scan-report table values onto a drill-down report (summary row → detail view). */
+export function enrichDrillDownFromScanSeed(
+  report: IntelDrillDownReport,
+  seed?: ScanSummarySeed,
+): IntelDrillDownReport {
+  if (!seed) return report;
+  const pol =
+    seed.polarization && seed.polarization !== "—"
+      ? seed.polarization
+      : report.scanSummary.polarization;
+  return {
+    ...report,
+    baseProfile: resolveSatelliteProfile(report.satelliteName, report.unitId),
+    scanSummary: {
+      ...report.scanSummary,
+      polarization: pol,
+      totalScanned: seed.totalScanned ?? report.scanSummary.totalScanned,
+      analyzed: seed.analyzed ?? report.scanSummary.analyzed,
+      pending: seed.pending ?? report.scanSummary.pending,
+    },
+  };
+}
 
 export const VISIBILITY_SATELLITE_PROFILES: Record<string, VisibilitySatelliteProfile> = {
   "ChinaSat 6B": {
@@ -642,8 +738,7 @@ export function buildIntelDrillDownReport(
   const row = buildIntelSatelliteTable(unitId, ctx, engagements).find((r) => r.reportId === reportId);
   if (!row) return null;
 
-  const profile = VISIBILITY_SATELLITE_PROFILES[row.satelliteName];
-  if (!profile) return null;
+  const profile = resolveSatelliteProfile(row.satelliteName, unitId);
 
   const scanPol = resolveScanPolarizationFromEngagement(row.satelliteName, unitId, ctx, engagements);
   const { beams: beamVisibility, filteredOut: beamFilteredOut, snapshot } = resolveBeamVisibilityFromMatrix(
@@ -767,14 +862,16 @@ export function buildIntelDrillDownReport(
 /** Fixed epoch for deterministic mock INT timestamps — all views derive from the same rows. */
 const INTEL_MOCK_EPOCH_MS = Date.parse("2026-06-19T12:00:00Z");
 
+const MONTH_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"] as const;
+
 export function formatIntelCompactDate(iso: string | null | undefined): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "—";
   const dd = String(d.getUTCDate()).padStart(2, "0");
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const yy = String(d.getUTCFullYear()).slice(-2);
-  return `${dd}/${mm}/${yy}`;
+  const mon = MONTH_SHORT[d.getUTCMonth()];
+  const yyyy = d.getUTCFullYear();
+  return `${dd} ${mon} ${yyyy}`;
 }
 
 /** @deprecated Use formatIntelCompactDate for repository summary views. */
@@ -832,17 +929,10 @@ export function buildSyntheticDrillDownReport(
   satelliteName: string,
   unitId: string,
   ctx?: IntelLinkageContext,
+  scanSeed?: ScanSummarySeed,
 ): IntelDrillDownReport {
   const reportId = `${unitId}__${satelliteName.replace(/\s+/g, "-")}`;
-  const emptyProfile: VisibilitySatelliteProfile = {
-    name: satelliteName,
-    originCountry: "—",
-    launchDate: "—",
-    orbitalPosition: "—",
-    totalTransponders: "—",
-    beamDistributionSummary: "—",
-    defaultPolarization: "—",
-  };
+  const profile = resolveSatelliteProfile(satelliteName, unitId);
 
   let totalBeamsAvailable: string[] = [];
   let totalBeamCount = 0;
@@ -863,11 +953,18 @@ export function buildSyntheticDrillDownReport(
     }
   }
 
+  const pol =
+    scanSeed?.polarization && scanSeed.polarization !== "—"
+      ? scanSeed.polarization
+      : profile.defaultPolarization !== "—"
+        ? profile.defaultPolarization
+        : "—";
+
   return {
     reportId,
     satelliteName,
     unitId,
-    baseProfile: emptyProfile,
+    baseProfile: profile,
     totalBeamsAvailable,
     totalBeamCount,
     beamsVisibleToUnit,
@@ -875,10 +972,10 @@ export function buildSyntheticDrillDownReport(
     visibilityBlocked,
     visibilityConstraint,
     scanSummary: {
-      polarization: "—",
-      totalScanned: 0,
-      analyzed: 0,
-      pending: 0,
+      polarization: pol,
+      totalScanned: scanSeed?.totalScanned ?? 0,
+      analyzed: scanSeed?.analyzed ?? 0,
+      pending: scanSeed?.pending ?? 0,
       scanStartDate: "—",
     },
     productive: [],

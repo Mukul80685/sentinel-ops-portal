@@ -70,8 +70,8 @@ function SatelliteDetailDialog({
 function Info({ label, value, className }: { label: string; value: string; className?: string }) {
   return (
     <div className={`panel p-2 ${className ?? ""}`}>
-      <div className="text-muted-foreground text-[9px] uppercase tracking-wider">{label}</div>
-      <div className="font-medium mt-0.5">{value}</div>
+      <div className="text-foreground text-[9px] uppercase tracking-wider font-semibold">{label}</div>
+      <div className="font-semibold mt-0.5 text-foreground">{value}</div>
     </div>
   );
 }
@@ -153,7 +153,7 @@ export function SatellitesModuleModal() {
               <DialogTitle className="mono uppercase tracking-wider flex items-center gap-2 min-w-0 flex-1">
                 <Satellite className="h-4 w-4 text-primary shrink-0" />
                 <span className="truncate">Satellites</span>
-                <span className="text-muted-foreground font-normal text-[10px] shrink-0">
+                <span className="text-foreground font-normal text-[10px] shrink-0">
                   ({catalog.length} from Visibility Matrix)
                 </span>
               </DialogTitle>
@@ -208,7 +208,7 @@ export function SatellitesModuleModal() {
 
           <div className="overflow-auto flex-1 min-h-0 px-4 py-2">
             <table className="w-full text-[11px] mono">
-              <thead className="text-muted-foreground sticky top-0 bg-card z-10">
+              <thead className="text-foreground sticky top-0 bg-muted/50 z-10">
                 <tr className="border-b border-border">
                   <th className="w-8 py-2">
                     <Checkbox
@@ -218,10 +218,10 @@ export function SatellitesModuleModal() {
                       }
                     />
                   </th>
-                  <th className="text-left py-2">
+                  <th className="text-left py-2 font-semibold">
                     <button
                       type="button"
-                      className="inline-flex items-center gap-1 hover:text-foreground uppercase tracking-wider"
+                      className="inline-flex items-center gap-1 text-foreground uppercase tracking-wider font-semibold"
                       onClick={cycleNameSort}
                     >
                       Satellite Name
@@ -229,11 +229,11 @@ export function SatellitesModuleModal() {
                       {nameSort && <span className="text-primary">{nameSort === "asc" ? "A–Z" : "Z–A"}</span>}
                     </button>
                   </th>
-                  <th className="text-left py-2 uppercase tracking-wider">Country of Origin</th>
-                  <th className="text-left py-2">
+                  <th className="text-left py-2 uppercase tracking-wider font-semibold">Country of Origin</th>
+                  <th className="text-left py-2 font-semibold">
                     <button
                       type="button"
-                      className="inline-flex items-center gap-1 hover:text-foreground uppercase tracking-wider"
+                      className="inline-flex items-center gap-1 text-foreground uppercase tracking-wider font-semibold"
                       onClick={cycleDateSort}
                     >
                       Date of Launch
@@ -244,11 +244,11 @@ export function SatellitesModuleModal() {
                   <th className="w-8 py-2" />
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="bg-white">
                 {rows.map((row) => (
                   <tr
                     key={row.id}
-                    className={`border-b border-border/60 hover:bg-secondary/30 ${selected.has(row.id) ? "bg-primary/5" : ""}`}
+                    className={`border-b border-border/60 bg-white hover:bg-gray-50 ${selected.has(row.id) ? "ring-1 ring-inset ring-primary/25" : ""}`}
                   >
                     <td className="py-1.5">
                       <Checkbox
@@ -256,23 +256,23 @@ export function SatellitesModuleModal() {
                         onCheckedChange={() => setSelected((s) => toggleSelection(s, row.id))}
                       />
                     </td>
-                    <td className="py-1.5">
+                    <td className="py-1.5 bg-white text-foreground font-semibold">
                       <button
                         type="button"
-                        className="text-left hover:text-primary hover:underline"
+                        className="text-left text-foreground font-semibold hover:text-primary hover:underline"
                         onClick={() => setDetailRow(row)}
                       >
                         {row.name}
                       </button>
                     </td>
-                    <td className="py-1.5 text-muted-foreground">{row.countryOfOrigin}</td>
-                    <td className="py-1.5 text-muted-foreground">{row.launchDate}</td>
-                    <td className="py-1.5">
+                    <td className="py-1.5 bg-white text-foreground font-medium">{row.countryOfOrigin}</td>
+                    <td className="py-1.5 bg-white text-foreground font-medium">{row.launchDate}</td>
+                    <td className="py-1.5 bg-white">
                       <button
                         type="button"
                         title="Delete satellite"
                         onClick={() => setDeleteTarget(row)}
-                        className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                        className="p-1 rounded hover:bg-destructive/10 text-destructive transition-colors"
                       >
                         <Trash2 className="h-3 w-3" />
                       </button>

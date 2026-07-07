@@ -73,7 +73,7 @@ function InventoryCategories() {
               className="tile flex flex-col items-center justify-center gap-3 aspect-square hover:bg-secondary/60 transition-colors"
             >
               {/* Large icon box */}
-              <div className="h-14 w-14 grid place-items-center rounded-sm border border-border bg-secondary text-primary">
+              <div className="h-14 w-14 grid place-items-center rounded-sm border border-border bg-secondary text-secondary-foreground">
                 <CatIcon className="h-7 w-7" />
               </div>
 

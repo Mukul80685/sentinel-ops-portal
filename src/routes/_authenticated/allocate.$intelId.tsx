@@ -152,7 +152,7 @@ function AllocateRecommendation() {
             {eligible.map((e, idx) => (
               <div key={e.unit.id} className="panel p-3">
                 <div className="flex items-center gap-3">
-                  <div className={`mono text-xs px-2 py-1 rounded-sm uppercase tracking-wider ${idx === 0 ? "bg-primary text-primary-foreground" : "bg-secondary text-foreground"}`}>
+                  <div className={`mono text-xs px-2 py-1 rounded-sm uppercase tracking-wider ${idx === 0 ? "bg-primary text-primary-foreground" : "bg-secondary text-secondary-foreground"}`}>
                     {idx === 0 ? "Best Fit" : idx === 1 ? "Good Fit" : `Option ${idx + 1}`}
                   </div>
                   <div className="mono text-sm font-bold uppercase flex-1">

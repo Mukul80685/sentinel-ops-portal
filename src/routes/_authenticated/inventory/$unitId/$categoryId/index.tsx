@@ -38,6 +38,12 @@ const SERVICEABILITY_OPTIONS = [
   "Non-Serviceable",
 ] as const;
 
+const ANTENNA_CATEGORY_ID = "op-cat-antenna";
+
+function isAntennaCategory(categoryId: string, categoryName?: string | null): boolean {
+  return categoryId === ANTENNA_CATEGORY_ID || categoryName === "Antenna";
+}
+
 function EquipmentList() {
   const { unitId, categoryId } = Route.useParams();
   const canEdit = useCanEdit();
@@ -93,6 +99,7 @@ function EquipmentList() {
   const headerPageTitle = meta
     ? `${unitLabel} \u2014 ${meta.cat?.name ?? "Equipment"}`
     : "Equipment";
+  const showAntennaGallery = isAntennaCategory(categoryId, meta?.cat?.name);
 
   return (
     <AppShell
@@ -115,7 +122,12 @@ function EquipmentList() {
                 All
               </label>
             )}
-            <AddDetailsDialog items={items} unitId={unitId} onSaved={refresh} />
+            <AddDetailsDialog
+              items={items}
+              unitId={unitId}
+              onSaved={refresh}
+              requirePhoto={showAntennaGallery}
+            />
           </div>
         ) : null
       }
@@ -141,7 +153,7 @@ function EquipmentList() {
           title="No equipment registered"
           hint="Add equipment from the unit overview to see items here."
         />
-      ) : (
+      ) : showAntennaGallery ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
           {items.map((eq: any) => (
             <div key={eq.id} className="relative group">
@@ -194,6 +206,15 @@ function EquipmentList() {
             </div>
           ))}
         </div>
+      ) : (
+        <EquipmentTable
+          items={items}
+          unitId={unitId}
+          categoryId={categoryId}
+          canEdit={canEdit}
+          selectedIds={selectedIds}
+          onToggleSelect={(id) => setSelectedIds((prev) => toggleSelection(prev, id))}
+        />
       )}
 
       <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
@@ -229,7 +250,17 @@ function EquipmentList() {
 
 // ── Add Details dialog — enriches an existing equipment record ────────────────
 
-type EqItem = { id: string; name: string; make?: string | null; model?: string | null; serial_number?: string | null; serviceability?: string; remarks?: string | null };
+type EqItem = {
+  id: string;
+  name: string;
+  make?: string | null;
+  model?: string | null;
+  serial_number?: string | null;
+  serviceability?: string;
+  remarks?: string | null;
+  photo_url?: string | null;
+  specifications?: string | null;
+};
 
 const EMPTY_FORM = {
   name: "",
@@ -240,14 +271,104 @@ const EMPTY_FORM = {
   remarks: "",
 };
 
+function EquipmentTable({
+  items,
+  unitId,
+  categoryId,
+  canEdit,
+  selectedIds,
+  onToggleSelect,
+}: {
+  items: EqItem[];
+  unitId: string;
+  categoryId: string;
+  canEdit: boolean;
+  selectedIds: Set<string>;
+  onToggleSelect: (id: string) => void;
+}) {
+  return (
+    <div className="panel flex-1 flex flex-col min-h-0 overflow-hidden">
+      <div className="flex-1 min-h-0 overflow-auto">
+        <table className="w-full border-collapse">
+          <thead className="sticky top-0 z-10 bg-secondary/40 backdrop-blur-sm border-b border-border">
+            <tr className="mono text-[9px] uppercase tracking-wide text-foreground font-bold">
+              {canEdit && <th className="px-2 py-2 w-8" />}
+              <th className="px-2 py-2 w-10 text-center">#</th>
+              <th className="px-2 py-2 text-left">Name</th>
+              <th className="px-2 py-2 text-left">Make</th>
+              <th className="px-2 py-2 text-left">Model</th>
+              <th className="px-2 py-2 text-left">Serial</th>
+              <th className="px-2 py-2 text-left">Specifications</th>
+              <th className="px-2 py-2 text-center">Serviceability</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/50">
+            {items.map((eq, idx) => {
+              const checked = selectedIds.has(eq.id);
+              return (
+                <tr
+                  key={eq.id}
+                  className={`transition-colors hover:bg-primary/5 ${checked ? "bg-primary/5" : ""}`}
+                >
+                  {canEdit && (
+                    <td className="px-2 py-2 text-center">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => onToggleSelect(eq.id)}
+                        className="cursor-pointer accent-primary"
+                      />
+                    </td>
+                  )}
+                  <td className="px-2 py-2 mono text-[11px] text-center tabular-nums text-muted-foreground">
+                    {idx + 1}
+                  </td>
+                  <td className="px-2 py-2">
+                    <Link
+                      to="/inventory/$unitId/$categoryId/$equipmentId"
+                      params={{ unitId, categoryId, equipmentId: eq.id }}
+                      className="mono text-[12px] font-bold uppercase text-foreground hover:text-primary transition-colors"
+                    >
+                      {eq.name}
+                    </Link>
+                  </td>
+                  <td className="px-2 py-2 mono text-[11px] text-foreground/85">{eq.make || "—"}</td>
+                  <td className="px-2 py-2 mono text-[11px] text-foreground/85">{eq.model || "—"}</td>
+                  <td className="px-2 py-2 mono text-[11px] text-foreground/85">{eq.serial_number || "—"}</td>
+                  <td className="px-2 py-2 mono text-[10px] text-muted-foreground max-w-[200px] truncate">
+                    {eq.specifications || "—"}
+                  </td>
+                  <td className="px-2 py-2 text-center">
+                    <span className="inline-flex items-center gap-1.5 mono text-[10px] uppercase">
+                      <span className={`status-dot ${statusClass(eq.serviceability)}`} />
+                      {eq.serviceability ?? "—"}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="shrink-0 px-2.5 py-1 border-t border-border bg-secondary/10">
+        <span className="mono text-[9px] uppercase tracking-wider text-foreground/80">
+          {items.length} resource{items.length !== 1 ? "s" : ""} registered
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function AddDetailsDialog({
   items,
   unitId,
   onSaved,
+  requirePhoto = false,
 }: {
   items: EqItem[];
   unitId: string;
   onSaved: () => void;
+  requirePhoto?: boolean;
 }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -255,6 +376,9 @@ function AddDetailsDialog({
   const [form, setForm] = useState(EMPTY_FORM);
   const [photo, setPhoto] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const pendingItems = items.filter((i) => !i.photo_url);
+  const completedCount = items.length - pendingItems.length;
 
   function handleSelectItem(id: string) {
     setSelectedId(id);
@@ -284,11 +408,14 @@ function AddDetailsDialog({
     if (!form.make.trim()) { toast.error("Make is required."); return; }
     if (!form.model.trim()) { toast.error("Model is required."); return; }
     if (!form.serial_number.trim()) { toast.error("Serial number is required."); return; }
-    if (!photo) { toast.error("Photograph is required."); return; }
+    if (requirePhoto && !photo) { toast.error("Photograph is required."); return; }
 
     setBusy(true);
     try {
-      const photo_url = await uploadFile(photo, `equipment/${unitId}`);
+      let photo_url: string | undefined;
+      if (photo) {
+        photo_url = await uploadFile(photo, `equipment/${unitId}`);
+      }
       const ok = updateOperationalEquipment(selectedId, {
         name: form.name.trim() || undefined,
         make: form.make.trim(),
@@ -296,14 +423,24 @@ function AddDetailsDialog({
         serial_number: form.serial_number.trim(),
         serviceability: form.serviceability as EqItem["serviceability"],
         remarks: form.remarks.trim() || null,
-        photo_url,
+        ...(photo_url ? { photo_url } : {}),
       });
       if (!ok) throw new Error("Equipment not found.");
-      toast.success("Details submitted.");
-      setOpen(false);
+      const itemHadPhoto = Boolean(items.find((i) => i.id === selectedId)?.photo_url);
+      const remaining = requirePhoto && !itemHadPhoto
+        ? Math.max(0, pendingItems.length - 1)
+        : pendingItems.length;
+      toast.success(
+        requirePhoto
+          ? remaining > 0
+            ? `Photo saved. ${remaining} antenna${remaining !== 1 ? "s" : ""} still need photographs.`
+            : "All antenna photographs have been submitted."
+          : "Details submitted.",
+      );
       reset();
       onSaved();
       qc.invalidateQueries({ queryKey: ["eq-detail", selectedId] });
+      if (remaining === 0 && requirePhoto) setOpen(false);
     } catch (err: any) {
       toast.error(err.message ?? "Failed to submit details.");
     } finally {
@@ -324,14 +461,43 @@ function AddDetailsDialog({
         </DialogHeader>
 
         <form onSubmit={submit} className="space-y-4">
+          {requirePhoto && completedCount > 0 && (
+            <p className="mono text-[10px] text-muted-foreground">
+              {completedCount} of {items.length} resource{items.length !== 1 ? "s" : ""} already have photographs.
+            </p>
+          )}
+
           <Field label="Choose Resource">
             <Select value={selectedId} onValueChange={handleSelectItem}>
               <SelectTrigger>
-                <SelectValue placeholder="Select existing resource" />
+                <SelectValue placeholder={requirePhoto ? "Select antenna needing photograph" : "Select existing resource"} />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="max-h-64">
                 {items.length === 0 ? (
                   <div className="px-3 py-2 text-[12px] text-muted-foreground mono">No resources available</div>
+                ) : requirePhoto ? (
+                  <>
+                    {pendingItems.length > 0 && (
+                      <>
+                        <div className="px-3 py-1.5 mono text-[9px] uppercase tracking-wider text-muted-foreground">
+                          Needs photograph ({pendingItems.length})
+                        </div>
+                        {pendingItems.map((item) => (
+                          <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>
+                        ))}
+                      </>
+                    )}
+                    {items.filter((i) => i.photo_url).length > 0 && (
+                      <>
+                        <div className="px-3 py-1.5 mono text-[9px] uppercase tracking-wider text-muted-foreground border-t border-border mt-1">
+                          Already photographed
+                        </div>
+                        {items.filter((i) => i.photo_url).map((item) => (
+                          <SelectItem key={item.id} value={item.id}>{item.name} (update)</SelectItem>
+                        ))}
+                      </>
+                    )}
+                  </>
                 ) : (
                   items.map((item) => (
                     <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>
@@ -389,13 +555,13 @@ function AddDetailsDialog({
                 </Select>
               </Field>
 
-              <Field label="Photograph *">
+              <Field label={requirePhoto ? "Photograph *" : "Photograph (optional)"}>
                 <Input
                   type="file"
                   accept="image/*"
                   onChange={(e) => setPhoto(e.target.files?.[0] ?? null)}
                 />
-                {!photo && (
+                {requirePhoto && !photo && (
                   <p className="mono text-[11px] text-muted-foreground mt-1">
                     An image is required before submitting.
                   </p>
@@ -422,10 +588,14 @@ function AddDetailsDialog({
 
           <Button
             type="submit"
-            disabled={busy || !selectedId || !photo}
+            disabled={busy || !selectedId || (requirePhoto && !photo)}
             className="w-full mono uppercase tracking-wider"
           >
-            {busy ? "Submitting…" : "Submit"}
+            {busy
+              ? "Submitting…"
+              : requirePhoto && pendingItems.length > 1
+                ? "Save & Next Antenna"
+                : "Submit"}
           </Button>
         </form>
       </DialogContent>

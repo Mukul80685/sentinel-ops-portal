@@ -1,19 +1,21 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { User, Upload } from "lucide-react";
+import { Fingerprint, Upload, User } from "lucide-react";
 import { toast } from "sonner";
 import { updateUserAccount, useUserAccount } from "@/lib/userAccountStore";
 import { useSidebarModules } from "./SidebarModulesProvider";
 import { AvatarCropDialog } from "./AvatarCropDialog";
+import {
+  SidebarModalBody,
+  SidebarModalContent,
+  SidebarModalField,
+  SidebarModalHeader,
+  SidebarModalReadOnly,
+  SidebarModalSection,
+} from "./SidebarModalLayout";
 
 export function UserProfileModal() {
   const { activeModule, closeModule } = useSidebarModules();
@@ -76,71 +78,78 @@ export function UserProfileModal() {
   return (
     <>
       <Dialog open={open} onOpenChange={(o) => !o && handleClose()}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="mono uppercase tracking-wider flex items-center gap-2">
-              <User className="h-4 w-4 text-primary" />
-              User Profile
-            </DialogTitle>
-          </DialogHeader>
+        <SidebarModalContent className="max-w-md">
+          <SidebarModalHeader
+            icon={User}
+            title="User Profile"
+            subtitle="Identity and display preferences"
+          />
 
-          <div className="flex flex-col items-center gap-4">
-            <div className="relative">
-              <Avatar className="h-24 w-24 border-2 border-border">
-                {account.avatarDataUrl ? (
-                  <AvatarImage src={account.avatarDataUrl} alt={account.displayName} />
-                ) : null}
-                <AvatarFallback className="bg-secondary mono text-sm">
-                  {initials || <User className="h-10 w-10 text-muted-foreground" />}
-                </AvatarFallback>
-              </Avatar>
-              <Button
-                type="button"
-                size="icon"
-                variant="secondary"
-                className="absolute -bottom-1 -right-1 h-8 w-8 rounded-full"
-                onClick={() => fileRef.current?.click()}
-              >
-                <Upload className="h-3.5 w-3.5" />
-              </Button>
-              <input
-                ref={fileRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => handleFileSelect(e.target.files?.[0])}
-              />
-            </div>
+          <SidebarModalBody className="space-y-4">
+            <SidebarModalSection bodyClassName="flex flex-col items-center gap-4 py-5">
+              <div className="relative">
+                <div className="absolute -inset-1 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 blur-sm" />
+                <Avatar className="relative h-24 w-24 border-2 border-primary/30 shadow-md ring-2 ring-background">
+                  {account.avatarDataUrl ? (
+                    <AvatarImage src={account.avatarDataUrl} alt={account.displayName} />
+                  ) : null}
+                  <AvatarFallback className="bg-muted mono text-base font-semibold text-foreground">
+                    {initials || <User className="h-10 w-10 text-muted-foreground" />}
+                  </AvatarFallback>
+                </Avatar>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="secondary"
+                  className="absolute -bottom-1 -right-1 h-8 w-8 rounded-full border border-border shadow-sm"
+                  onClick={() => fileRef.current?.click()}
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                </Button>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => handleFileSelect(e.target.files?.[0])}
+                />
+              </div>
 
-            <div className="w-full space-y-3">
-              <div>
-                <Label className="mono text-[10px] uppercase tracking-wider">Display Name</Label>
-                <div className="flex gap-2 mt-1">
+              <p className="mono text-center text-[10px] uppercase tracking-wider text-muted-foreground">
+                {account.displayName}
+              </p>
+            </SidebarModalSection>
+
+            <SidebarModalSection title="Display Name" icon={User}>
+              <SidebarModalField label="Shown across the portal">
+                <div className="flex gap-2">
                   <Input
                     value={displayName}
                     onChange={(e) => setDisplayName(e.target.value)}
-                    className="mono text-[11px]"
+                    className="mono text-[11px] bg-background/80"
                   />
-                  <Button type="button" size="sm" className="mono text-[10px] shrink-0" onClick={saveDisplayName}>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="mono shrink-0 text-[10px] uppercase tracking-wider"
+                    onClick={saveDisplayName}
+                  >
                     Save
                   </Button>
                 </div>
-              </div>
+              </SidebarModalField>
+            </SidebarModalSection>
 
-              <div>
-                <Label className="mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                  Login User ID (read-only)
-                </Label>
-                <div className="mono text-[11px] panel px-3 py-2 mt-1 text-muted-foreground">
-                  {account.loginUserId}
-                </div>
-                <p className="text-[9px] text-muted-foreground mt-1">
-                  Change login User ID in Settings — updates here instantly.
-                </p>
-              </div>
-            </div>
-          </div>
-        </DialogContent>
+            <SidebarModalSection title="Login User ID" icon={Fingerprint}>
+              <SidebarModalField
+                label="Read-only identifier"
+                hint="Change login User ID in Settings — updates here instantly."
+              >
+                <SidebarModalReadOnly value={account.loginUserId} />
+              </SidebarModalField>
+            </SidebarModalSection>
+          </SidebarModalBody>
+        </SidebarModalContent>
       </Dialog>
 
       <AvatarCropDialog

@@ -7,6 +7,11 @@ import {
   type GeoRegion,
   type GeoSatellite,
   countVisibleSatellitesForUnit,
+  canonicalSatelliteKey,
+  normalizeSatelliteName,
+  getBeamBreakdown,
+  getVisibleBeams,
+  type VisibilityMatrixSnapshot,
 } from "@/lib/visibilityMatrix";
 import {
   getVisibilityOverlay,
@@ -124,6 +129,51 @@ export function flattenGlobalSatelliteCatalog(): FlatSatelliteRow[] {
   }
 
   return rows.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function satelliteNamesMatch(a: string, b: string): boolean {
+  return (
+    normalizeSatelliteName(a) === normalizeSatelliteName(b) ||
+    canonicalSatelliteKey(a) === canonicalSatelliteKey(b)
+  );
+}
+
+/**
+ * Look up a satellite in the Visibility Matrix catalog (base + overlay, optionally unit-scoped).
+ * Uses canonical name matching so scan-report names like "APSTAR-9" resolve to "Apstar 9".
+ */
+export function findSatelliteInCatalog(
+  satelliteName: string,
+  unitId?: string,
+): FlatSatelliteRow | null {
+  const regions = mergeRegionsWithOverlay(getVisibilityOverlay(), unitId);
+  const rows = flattenSatelliteCatalog(regions);
+  return rows.find((r) => satelliteNamesMatch(r.name, satelliteName)) ?? null;
+}
+
+/**
+ * Build a Visibility Matrix snapshot from the unified catalog (includes overlay imports).
+ */
+export function resolveMatrixVisibilityFromCatalog(
+  unitId: string,
+  satelliteName: string,
+): VisibilityMatrixSnapshot | null {
+  const row = findSatelliteInCatalog(satelliteName, unitId);
+  if (!row) return null;
+  const { satellite: sat, regionId } = row;
+  const { total, beams } = getBeamBreakdown(sat);
+  const visible = getVisibleBeams(unitId, sat.id, regionId);
+  return {
+    satelliteName: sat.name,
+    unitId,
+    regionId,
+    satelliteId: sat.id,
+    totalBeamCount: total,
+    beamInventory: beams,
+    beamsVisibleToUnit: visible,
+    canScan: visible.length > 0,
+    source: "visibility_matrix",
+  };
 }
 
 /** Parse launch date for sorting — NOT string comparison. */

@@ -29,8 +29,8 @@ export function SidebarProfileButton({ active, onClick, className }: Props) {
         {account.avatarDataUrl ? (
           <AvatarImage src={account.avatarDataUrl} alt={account.displayName} />
         ) : null}
-        <AvatarFallback className="bg-secondary text-[8px] mono">
-          {initials ? initials : <User className="h-3 w-3 text-muted-foreground" />}
+        <AvatarFallback className="bg-secondary text-secondary-foreground text-[8px] mono">
+          {initials ? initials : <User className="h-3 w-3 text-secondary-foreground" />}
         </AvatarFallback>
       </Avatar>
       <span className="truncate">{account.displayName}</span>
