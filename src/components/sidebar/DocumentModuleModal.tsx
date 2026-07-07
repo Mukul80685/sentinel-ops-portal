@@ -29,7 +29,6 @@ import {
   ArrowLeft,
   ArrowUpDown,
   Copy,
-  Download,
   FileText,
   Folder,
   FolderPlus,
@@ -49,7 +48,6 @@ import {
   createFolder,
   deleteDocuments,
   deleteFolder,
-  downloadAndView,
   formatFileSize,
   moveDocuments,
   searchDocuments,
@@ -59,6 +57,7 @@ import {
   validateDocumentUpload,
 } from "@/lib/documentRepository";
 import { toggleSelection } from "@/lib/dataTableUtils";
+import { DocumentEditorWindow } from "./DocumentEditorWindow";
 
 type Props = {
   module: DocumentModule;
@@ -79,12 +78,12 @@ function DocumentTile({
   doc,
   selected,
   onToggleSelect,
-  onDownloadAndView,
+  onView,
 }: {
   doc: StoredDocument;
   selected: boolean;
   onToggleSelect: () => void;
-  onDownloadAndView: () => void;
+  onView: () => void;
 }) {
   return (
     <div className="panel p-3 flex flex-col gap-2 min-h-[100px]">
@@ -105,9 +104,9 @@ function DocumentTile({
         variant="outline"
         size="sm"
         className="h-6 text-[9px] mono mt-auto w-full"
-        onClick={onDownloadAndView}
+        onClick={onView}
       >
-        <Download className="h-3 w-3 mr-0.5" /> Download &amp; View
+        <FileText className="h-3 w-3 mr-0.5" /> View in Editor
       </Button>
     </div>
   );
@@ -170,6 +169,7 @@ export function DocumentModuleModal({ module, open, onClose, title, accept }: Pr
   const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
   const [targetFolderId, setTargetFolderId] = useState<string>("__home__");
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>(null);
+  const [viewingDoc, setViewingDoc] = useState<StoredDocument | null>(null);
 
   const activeFolder = store.folders.find((f) => f.id === activeFolderId) ?? null;
 
@@ -200,6 +200,7 @@ export function DocumentModuleModal({ module, open, onClose, title, accept }: Pr
     setTargetFolderId("__home__");
     setSearch("");
     setDeleteTarget(null);
+    setViewingDoc(null);
   }
 
   function handleClose() {
@@ -352,6 +353,10 @@ export function DocumentModuleModal({ module, open, onClose, title, accept }: Pr
             </aside>
 
             <div className="flex-1 flex flex-col min-w-0">
+              {viewingDoc ? (
+                <DocumentEditorWindow doc={viewingDoc} onClose={() => setViewingDoc(null)} />
+              ) : (
+              <>
               <div className="px-4 py-2 border-b flex flex-wrap items-center gap-2 shrink-0">
                 {managerView === "folder" && (
                   <Button type="button" variant="outline" size="sm" className="mono text-[9px] h-8" onClick={goBackToHome}>
@@ -433,12 +438,14 @@ export function DocumentModuleModal({ module, open, onClose, title, accept }: Pr
                         doc={doc}
                         selected={selectedDocIds.has(doc.id)}
                         onToggleSelect={() => setSelectedDocIds((s) => toggleSelection(s, doc.id))}
-                        onDownloadAndView={() => downloadAndView(doc)}
+                        onView={() => setViewingDoc(doc)}
                       />
                     ))}
                   </div>
                 )}
               </div>
+              </>
+              )}
             </div>
           </div>
         </DialogContent>
