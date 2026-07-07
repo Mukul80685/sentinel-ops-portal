@@ -253,7 +253,7 @@ function ServiceabilityPage() {
                     <div key={cat.id} className="panel p-4 flex flex-col gap-3">
                       {/* Header */}
                       <div className="flex items-center gap-2">
-                        <div className="h-7 w-7 grid place-items-center rounded-sm border border-border bg-secondary shrink-0">
+                        <div className="h-7 w-7 grid place-items-center rounded-sm border border-border bg-secondary text-secondary-foreground shrink-0">
                           <Icon className="h-3.5 w-3.5" />
                         </div>
                         <div>
@@ -462,7 +462,7 @@ function UnitDetail({
                         onClick={() => setStatusChangeItem(item)}
                         className="shrink-0 h-7 px-2 mono text-[10px] uppercase tracking-wider
                                    border border-border rounded-sm flex items-center gap-1
-                                   hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+                                   hover:bg-secondary hover:text-secondary-foreground transition-colors text-muted-foreground"
                         title="Change serviceability status"
                       >
                         <RefreshCw className="h-3 w-3" /> Change Status
@@ -585,7 +585,7 @@ function StatusChangeModal({
 
   const targetButtonClass = (t: { value: string }) => {
     const selected = newStatus === t.value;
-    if (!selected) return "border-border hover:bg-secondary text-muted-foreground";
+    if (!selected) return "border-border hover:bg-secondary hover:text-secondary-foreground text-muted-foreground";
     if (t.value === STATUS_OK)      return "bg-emerald-600 border-emerald-600 text-white";
     if (t.value === STATUS_PARTIAL) return "bg-amber-500 border-amber-500 text-white";
     return "bg-destructive border-destructive text-white";

@@ -215,7 +215,7 @@ function StandardModuleNav() {
           <Link
             key={item.key}
             to={resolveTo(item)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] rounded-sm whitespace-nowrap shrink-0 transition-colors text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] rounded-sm whitespace-nowrap shrink-0 transition-colors text-muted-foreground hover:bg-secondary/50 hover:text-secondary-foreground"
           >
             <item.icon className="h-3.5 w-3.5" />
             {item.label}
@@ -937,7 +937,7 @@ export function AppShell({
                       to={backLink.to}
                       search={backLink.search}
                       params={backLink.params}
-                      className="mono text-[11px] h-8 px-3 inline-flex items-center uppercase tracking-wider border border-border rounded-sm hover:bg-secondary/50 hover:text-foreground bg-card/70"
+                      className="mono text-[11px] h-8 px-3 inline-flex items-center uppercase tracking-wider border border-border rounded-sm hover:bg-secondary/50 hover:text-secondary-foreground bg-card/70"
                     >
                       <ArrowLeft className="h-3.5 w-3.5 mr-1" /> Back
                     </Link>
@@ -983,7 +983,7 @@ export function AppShell({
                 {actions}
                 <Link
                   to="/"
-                  className="mono text-[11px] h-8 px-3 inline-flex items-center uppercase tracking-wider border border-border rounded-sm hover:bg-secondary/50 hover:text-foreground bg-card/70"
+                  className="mono text-[11px] h-8 px-3 inline-flex items-center uppercase tracking-wider border border-border rounded-sm hover:bg-secondary/50 hover:text-secondary-foreground bg-card/70"
                 >
                   <Home className="h-3.5 w-3.5 mr-1" /> Home
                 </Link>

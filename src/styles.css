@@ -189,6 +189,10 @@
   .surface-secondary .surface-secondary__inherit {
     color: var(--secondary-foreground);
   }
+  .hover-surface-secondary:hover {
+    background-color: var(--secondary);
+    color: var(--secondary-foreground);
+  }
 
   .status-dot {
     display: inline-block;

@@ -70,7 +70,7 @@ function InventoryCategories() {
               key={c.id}
               to="/inventory/$unitId/$categoryId"
               params={{ unitId, categoryId: c.id }}
-              className="tile flex flex-col items-center justify-center gap-3 aspect-square hover:bg-secondary/60 transition-colors"
+              className="tile flex flex-col items-center justify-center gap-3 aspect-square hover:bg-secondary/60 hover:text-secondary-foreground transition-colors"
             >
               {/* Large icon box */}
               <div className="h-14 w-14 grid place-items-center rounded-sm border border-border bg-secondary text-secondary-foreground">

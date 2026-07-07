@@ -162,7 +162,7 @@ function EquipmentDetail() {
               {form.photo_url ? (
                 <img src={fileUrl(form.photo_url)} alt={form.name} className="w-full h-full object-cover" />
               ) : (
-                <ImageOff className="h-10 w-10 text-muted-foreground" />
+                <ImageOff className="h-10 w-10 text-secondary-foreground" />
               )}
             </div>
             {canEdit && (

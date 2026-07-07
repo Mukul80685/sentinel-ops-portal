@@ -818,7 +818,7 @@ function RegionGrid({
                 key={region.id}
                 type="button"
                 onClick={() => onSelect(region)}
-                className="panel flex flex-col items-center justify-center gap-2 py-5 px-3 min-h-[120px] hover:bg-secondary/60 focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
+                className="panel flex flex-col items-center justify-center gap-2 py-5 px-3 min-h-[120px] hover:bg-secondary/60 hover:text-secondary-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
               >
                 <div className="flex flex-col items-center gap-2">
                   <RegionFlagIcon
@@ -1119,7 +1119,7 @@ function SatelliteTable({
           onClick={requestExport}
           title="Export selected satellites to CSV"
           className="h-7 px-2 inline-flex items-center gap-1 rounded-sm border border-border
-                     hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+                     hover:bg-secondary hover:text-secondary-foreground transition-colors text-muted-foreground"
         >
           <FileOutput className="h-3.5 w-3.5 shrink-0" />
           <span className="mono text-[9px] uppercase font-bold tracking-wide">Export</span>
@@ -1130,7 +1130,7 @@ function SatelliteTable({
               type="button"
               onClick={() => scrollTable("left")}
               title="Scroll left"
-              className="h-7 w-7 grid place-items-center rounded-sm border border-border hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+              className="h-7 w-7 grid place-items-center rounded-sm border border-border hover:bg-secondary hover:text-secondary-foreground transition-colors text-muted-foreground"
             >
               <ChevronLeft className="h-3.5 w-3.5" />
             </button>
@@ -1138,7 +1138,7 @@ function SatelliteTable({
               type="button"
               onClick={() => scrollTable("right")}
               title="Scroll right"
-              className="h-7 w-7 grid place-items-center rounded-sm border border-border hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+              className="h-7 w-7 grid place-items-center rounded-sm border border-border hover:bg-secondary hover:text-secondary-foreground transition-colors text-muted-foreground"
             >
               <ChevronRight className="h-3.5 w-3.5" />
             </button>
@@ -1151,7 +1151,7 @@ function SatelliteTable({
           className={`h-7 w-7 grid place-items-center rounded-sm border transition-colors
                       ${filterOpen
                         ? "border-primary/50 bg-primary/10 text-primary"
-                        : "border-border hover:bg-secondary text-muted-foreground hover:text-foreground"}`}
+                        : "border-border hover:bg-secondary hover:text-secondary-foreground text-muted-foreground"}`}
         >
           <Filter className="h-3.5 w-3.5" />
         </button>
@@ -1354,7 +1354,7 @@ function SatelliteTable({
             <thead>
               <tr>
                 {/* Checkbox column */}
-                <th className="sticky top-0 z-10 bg-secondary px-2 py-1.5 w-8 border-b border-border">
+                <th className="sticky top-0 z-10 bg-secondary text-secondary-foreground px-2 py-1.5 w-8 border-b border-border">
                   <input
                     type="checkbox"
                     checked={selectAll}
@@ -1374,8 +1374,8 @@ function SatelliteTable({
                   { label: "Actions",          cls: "w-16"           },
                 ].map((col) => (
                   <th key={col.label}
-                    className={`sticky top-0 z-10 bg-secondary px-2 py-1.5 text-left
-                                text-muted-foreground font-medium border-b border-border ${col.cls}`}>
+                    className={`sticky top-0 z-10 bg-secondary text-secondary-foreground px-2 py-1.5 text-left
+                                font-medium border-b border-border ${col.cls}`}>
                     {col.label}
                   </th>
                 ))}
@@ -1480,7 +1480,7 @@ function SatelliteTable({
                       <div className="flex items-center gap-1">
                         <button type="button" title="Edit satellite data" onClick={() => setEditingSat(sat)}
                           className="h-6 w-6 grid place-items-center rounded-sm border border-border
-                                     hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground">
+                                     hover:bg-secondary hover:text-secondary-foreground transition-colors text-muted-foreground">
                           <Pencil className="h-3 w-3" />
                         </button>
                         <button type="button" title="Delete satellite entry" onClick={() => setDeleteTarget(sat)}
@@ -1675,9 +1675,9 @@ function SatelliteEditDialog({
               <div className="rounded-sm border border-border overflow-hidden">
                 <table className="w-full text-[11px]">
                   <thead>
-                    <tr className="bg-secondary border-b border-border">
-                      <th className="px-2 py-1 text-left text-muted-foreground font-medium">Beam</th>
-                      <th className="px-2 py-1 text-left text-muted-foreground font-medium w-20">EIRP (dBW)</th>
+                    <tr className="bg-secondary text-secondary-foreground border-b border-border">
+                      <th className="px-2 py-1 text-left text-secondary-foreground font-medium">Beam</th>
+                      <th className="px-2 py-1 text-left text-secondary-foreground font-medium w-20">EIRP (dBW)</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -2060,9 +2060,9 @@ function AddSatelliteDialog({
               <div className="rounded-sm border border-border overflow-hidden">
                 <table className="w-full text-[11px]">
                   <thead>
-                    <tr className="bg-secondary border-b border-border">
-                      <th className="px-2 py-1 text-left text-muted-foreground font-medium">Beam</th>
-                      <th className="px-2 py-1 text-left text-muted-foreground font-medium w-20">EIRP (dBW)</th>
+                    <tr className="bg-secondary text-secondary-foreground border-b border-border">
+                      <th className="px-2 py-1 text-left text-secondary-foreground font-medium">Beam</th>
+                      <th className="px-2 py-1 text-left text-secondary-foreground font-medium w-20">EIRP (dBW)</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">

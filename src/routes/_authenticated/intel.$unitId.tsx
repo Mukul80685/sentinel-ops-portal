@@ -1099,7 +1099,7 @@ function IntelUnitView() {
             type="button"
             onClick={() => navigate({ to: "/control-center", search: { module: "intel" } })}
             className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm border border-border bg-card
-                       hover:bg-secondary/60 hover:border-primary/40 mono text-[10px] uppercase tracking-wider text-foreground
+                       hover:bg-secondary/60 hover:text-secondary-foreground hover:border-primary/40 mono text-[10px] uppercase tracking-wider text-foreground
                        transition-all cursor-pointer"
           >
             <ArrowLeft className="h-3 w-3" /> All Units

@@ -138,7 +138,7 @@ function UnitsAdmin() {
 
       <div className="panel overflow-auto">
         <table className="min-w-full text-sm mono">
-          <thead className="bg-secondary">
+          <thead className="bg-secondary text-secondary-foreground">
             <tr>
               <th className="px-3 py-2 w-8 border-r border-border">
                 <input

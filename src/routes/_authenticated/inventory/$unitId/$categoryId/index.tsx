@@ -191,7 +191,7 @@ function EquipmentList() {
                   {eq.photo_url ? (
                     <img src={fileUrl(eq.photo_url)} alt={eq.name} className="w-full h-full object-cover" />
                   ) : (
-                    <ImageOff className="h-8 w-8 text-muted-foreground" />
+                    <ImageOff className="h-8 w-8 text-secondary-foreground" />
                   )}
                 </div>
                 <div className="p-3">
@@ -290,8 +290,8 @@ function EquipmentTable({
     <div className="panel flex-1 flex flex-col min-h-0 overflow-hidden">
       <div className="flex-1 min-h-0 overflow-auto">
         <table className="w-full border-collapse">
-          <thead className="sticky top-0 z-10 bg-secondary/40 backdrop-blur-sm border-b border-border">
-            <tr className="mono text-[9px] uppercase tracking-wide text-foreground font-bold">
+          <thead className="sticky top-0 z-10 bg-secondary/40 backdrop-blur-sm border-b border-border text-secondary-foreground">
+            <tr className="mono text-[9px] uppercase tracking-wide font-bold">
               {canEdit && <th className="px-2 py-2 w-8" />}
               <th className="px-2 py-2 w-10 text-center">#</th>
               <th className="px-2 py-2 text-left">Name</th>

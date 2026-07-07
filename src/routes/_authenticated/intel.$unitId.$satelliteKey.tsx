@@ -425,8 +425,8 @@ function SatelliteIntelRepository() {
         <div className="panel overflow-x-auto">
           <table className="w-full min-w-max text-[11px] mono">
             <thead>
-              <tr className="bg-secondary border-b border-border text-muted-foreground">
-                <th className="px-2 py-1.5 w-8 sticky top-0 bg-secondary">
+              <tr className="bg-secondary text-secondary-foreground border-b border-border">
+                <th className="px-2 py-1.5 w-8 sticky top-0 bg-secondary text-secondary-foreground">
                   <input type="checkbox" checked={selectAll} onChange={handleSelectAll} className="accent-primary cursor-pointer" />
                 </th>
                 {[

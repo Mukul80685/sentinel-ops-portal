@@ -523,7 +523,7 @@ function EngagementUnit() {
 
                       <td className="px-3 py-2.5 whitespace-nowrap">
                         {r.antenna_id
-                          ? <span className="px-1.5 py-0.5 rounded-sm bg-secondary/60 text-foreground text-[8px] uppercase">
+                          ? <span className="px-1.5 py-0.5 rounded-sm bg-secondary/60 text-secondary-foreground text-[8px] uppercase">
                               {parseLnaType(r.remarks)}
                             </span>
                           : <span className="text-foreground/60">—</span>}

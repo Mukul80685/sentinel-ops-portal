@@ -7,7 +7,6 @@ import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
 import {
   changeAccountPassword,
-  formatAuthorizedUserLabel,
   getCurrentAccountEmail,
   saveAuthorizedUsers,
   updateLoginUserId,
@@ -45,17 +44,30 @@ export function SettingsModal() {
   const [busy, setBusy] = useState(false);
 
   const [gateOpen, setGateOpen] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [formationDate, setFormationDate] = useState("");
   const [formationDateFocused, setFormationDateFocused] = useState(false);
   const [aiUsed, setAiUsed] = useState("");
   const [motto, setMotto] = useState("");
-  const [gateUnlocked, setGateUnlocked] = useState(false);
   const [editUsers, setEditUsers] = useState<AuthorizedUser[]>(authorizedUsers);
+
+  function resetGateFields() {
+    setFormationDate("");
+    setFormationDateFocused(false);
+    setAiUsed("");
+    setMotto("");
+  }
 
   function handleClose() {
     closeModule();
-    setGateUnlocked(false);
     setGateOpen(false);
+    setEditDialogOpen(false);
+    resetGateFields();
+  }
+
+  function handleCloseEditDialog() {
+    setEditDialogOpen(false);
+    setEditUsers([...authorizedUsers]);
   }
 
   function resolveAccountEmail(): string {
@@ -106,9 +118,10 @@ export function SettingsModal() {
 
   function tryUnlockGate() {
     if (verifySecurityGate({ formationDate, aiUsed, motto })) {
-      setGateUnlocked(true);
       setGateOpen(false);
-      setEditUsers([...authorizedUsers]);
+      resetGateFields();
+      setEditUsers(authorizedUsers.map((u) => ({ ...u })));
+      setEditDialogOpen(true);
       toast.success("Security verification passed.");
     } else {
       toast.error("Security verification failed. All answers must be correct.");
@@ -122,7 +135,7 @@ export function SettingsModal() {
     }
     saveAuthorizedUsers(editUsers);
     toast.success("Authorized users list updated.");
-    setGateUnlocked(false);
+    setEditDialogOpen(false);
   }
 
   return (
@@ -212,88 +225,33 @@ export function SettingsModal() {
               </form>
             </SidebarModalSection>
 
-            <SidebarModalSection title={`Authorized Users (${authorizedUsers.length})`} icon={Users}>
-              <div className="mb-3 flex items-center justify-end">
-                {!gateUnlocked ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="mono h-7 border-primary/30 text-[9px] uppercase tracking-wider hover:bg-primary/5"
-                    onClick={() => setGateOpen(true)}
-                  >
-                    Edit List
-                  </Button>
-                ) : null}
-              </div>
-
-              <ul className="space-y-1.5">
-                {authorizedUsers.map((u) => (
-                  <li
-                    key={u.id}
-                    className="mono flex items-center justify-between gap-2 rounded-sm border border-border/70 bg-muted/15 px-2.5 py-2 text-[10px]"
-                  >
-                    <span className="font-medium text-foreground">{formatAuthorizedUserLabel(u)}</span>
-                    <span className="text-muted-foreground">{u.armyNumber}</span>
-                  </li>
-                ))}
-              </ul>
-
-              {gateUnlocked ? (
-                <div className="mt-3 space-y-2 rounded-sm border border-primary/25 bg-primary/[0.04] p-3">
-                  <p className="mono text-[9px] font-semibold uppercase tracking-wider text-primary">
-                    Editing authorized users
-                  </p>
-                  {editUsers.map((u, i) => (
-                    <div key={u.id} className="grid grid-cols-3 gap-1.5">
-                      <Input
-                        value={u.name}
-                        onChange={(e) => {
-                          const next = [...editUsers];
-                          next[i] = { ...u, name: e.target.value };
-                          setEditUsers(next);
-                        }}
-                        className="mono h-7 bg-background/80 text-[10px]"
-                        placeholder="Name"
-                      />
-                      <Input
-                        value={u.rank}
-                        onChange={(e) => {
-                          const next = [...editUsers];
-                          next[i] = { ...u, rank: e.target.value };
-                          setEditUsers(next);
-                        }}
-                        className="mono h-7 bg-background/80 text-[10px]"
-                        placeholder="Rank"
-                      />
-                      <Input
-                        value={u.armyNumber}
-                        onChange={(e) => {
-                          const next = [...editUsers];
-                          next[i] = { ...u, armyNumber: e.target.value };
-                          setEditUsers(next);
-                        }}
-                        className="mono h-7 bg-background/80 text-[10px]"
-                        placeholder="Army No."
-                      />
-                    </div>
-                  ))}
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="mono w-full text-[10px] uppercase tracking-wider"
-                    onClick={saveAuthorizedList}
-                  >
-                    Save Authorized Users
-                  </Button>
-                </div>
-              ) : null}
+            <SidebarModalSection title="Authorized Users" icon={Users}>
+              <p className="mono text-[10px] leading-snug text-muted-foreground">
+                Personnel authorized for password verification are not displayed here for
+                security. To update name, rank, or army number records, complete security
+                verification first.
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mono mt-3 border-primary/30 text-[9px] uppercase tracking-wider hover:bg-primary/5"
+                onClick={() => setGateOpen(true)}
+              >
+                Edit Authorized List
+              </Button>
             </SidebarModalSection>
           </SidebarModalBody>
         </SidebarModalContent>
       </Dialog>
 
-      <Dialog open={gateOpen} onOpenChange={setGateOpen}>
+      <Dialog
+        open={gateOpen}
+        onOpenChange={(o) => {
+          setGateOpen(o);
+          if (!o) resetGateFields();
+        }}
+      >
         <SidebarModalContent className="max-w-md">
           <SidebarModalHeader
             icon={ShieldCheck}
@@ -305,7 +263,7 @@ export function SettingsModal() {
             <SidebarModalSection>
               <SidebarModalField
                 label="When was the Satellite Signal Analysis and Coordination Centre (SSACC) formed?"
-                hint="Month, Year — e.g. March 1998"
+                hint="Month, Year — e.g. June 2026"
               >
                 <Input
                   value={formationDate}
@@ -314,7 +272,7 @@ export function SettingsModal() {
                   onBlur={() => {
                     if (!formationDate.trim()) setFormationDateFocused(false);
                   }}
-                  placeholder={formationDateFocused ? "" : "Example: March 1998"}
+                  placeholder={formationDateFocused ? "" : "Example: June 2026"}
                   className="mono mt-0 text-[11px] bg-background/80"
                 />
               </SidebarModalField>
@@ -349,6 +307,90 @@ export function SettingsModal() {
             >
               Verify
             </Button>
+          </SidebarModalBody>
+        </SidebarModalContent>
+      </Dialog>
+
+      <Dialog
+        open={editDialogOpen}
+        onOpenChange={(o) => {
+          if (!o) handleCloseEditDialog();
+          else setEditDialogOpen(true);
+        }}
+      >
+        <SidebarModalContent className="max-w-lg">
+          <SidebarModalHeader
+            icon={Users}
+            title="Edit Authorized Users"
+            subtitle={`Update ${editUsers.length} personnel record${editUsers.length !== 1 ? "s" : ""} (3–6 required)`}
+          />
+          <SidebarModalBody className="space-y-4">
+            <p className="mono text-[10px] leading-snug text-muted-foreground">
+              These details are used when changing passwords. Edit name, rank, and army number
+              for each authorized user, then save.
+            </p>
+
+            <div className="space-y-2">
+              <div className="mono grid grid-cols-3 gap-1.5 px-0.5 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+                <span>Name</span>
+                <span>Rank</span>
+                <span>Army No.</span>
+              </div>
+              {editUsers.map((u, i) => (
+                <div key={u.id} className="grid grid-cols-3 gap-1.5">
+                  <Input
+                    value={u.name}
+                    onChange={(e) => {
+                      const next = [...editUsers];
+                      next[i] = { ...u, name: e.target.value };
+                      setEditUsers(next);
+                    }}
+                    className="mono h-8 bg-background/80 text-[10px]"
+                    placeholder="Name"
+                  />
+                  <Input
+                    value={u.rank}
+                    onChange={(e) => {
+                      const next = [...editUsers];
+                      next[i] = { ...u, rank: e.target.value };
+                      setEditUsers(next);
+                    }}
+                    className="mono h-8 bg-background/80 text-[10px]"
+                    placeholder="Rank"
+                  />
+                  <Input
+                    value={u.armyNumber}
+                    onChange={(e) => {
+                      const next = [...editUsers];
+                      next[i] = { ...u, armyNumber: e.target.value };
+                      setEditUsers(next);
+                    }}
+                    className="mono h-8 bg-background/80 text-[10px]"
+                    placeholder="Army No."
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mono flex-1 text-[10px] uppercase tracking-wider"
+                onClick={handleCloseEditDialog}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                className="mono flex-1 text-[10px] uppercase tracking-wider"
+                onClick={saveAuthorizedList}
+              >
+                Save Authorized Users
+              </Button>
+            </div>
           </SidebarModalBody>
         </SidebarModalContent>
       </Dialog>

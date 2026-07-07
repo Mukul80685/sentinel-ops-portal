@@ -88,7 +88,7 @@ function UsersAdmin() {
     <AppShell title="User Roles" subtitle="Administration" showBack>
       <div className="panel overflow-auto">
         <table className="min-w-full text-sm mono">
-          <thead className="bg-secondary">
+          <thead className="bg-secondary text-secondary-foreground">
             <tr>
               {["Name", "Email", "Admin", "Operator", "Viewer"].map((h) => (
                 <th

@@ -94,14 +94,14 @@ function SortTh({
   const active = sortKey === col;
   return (
     <th
-      className={`text-left px-3 py-2 text-[10px] uppercase tracking-wider border-r border-border cursor-pointer hover:bg-secondary/60 select-none whitespace-nowrap ${cls ?? ""}`}
+      className={`text-left px-3 py-2 text-[10px] uppercase tracking-wider border-r border-border cursor-pointer hover:bg-secondary/60 select-none whitespace-nowrap text-secondary-foreground ${cls ?? ""}`}
       onClick={() => onSort(col)}
     >
       <span className="inline-flex items-center gap-1">
         {label}
-        <ArrowUpDown className={`h-3 w-3 ${active ? "text-primary" : "text-muted-foreground/50"}`} />
+        <ArrowUpDown className={`h-3 w-3 ${active ? "text-secondary-foreground" : "text-secondary-foreground/50"}`} />
         {active && (
-          <span className="text-[8px] text-primary">{sortDir === "asc" ? "↑" : "↓"}</span>
+          <span className="text-[8px] text-secondary-foreground">{sortDir === "asc" ? "↑" : "↓"}</span>
         )}
       </span>
     </th>
@@ -336,7 +336,7 @@ function PriorityUnit() {
 
           <StickyHorizontalTable className="flex-1 min-h-0">
             <table className="min-w-full text-sm mono">
-              <thead className="bg-secondary sticky top-0 z-10">
+              <thead className="bg-secondary text-secondary-foreground sticky top-0 z-10">
                 <tr>
                   {canEdit && (
                     <th className="w-8 px-2 py-2 border-r border-border">
@@ -656,10 +656,10 @@ function AddAllocation({
               filtered.map((s) => (
                 <div
                   key={s.id}
-                  className={`flex items-center gap-2.5 rounded px-2 py-1.5 transition-colors ${
+                  className={`flex items-center gap-2.5 rounded px-2 py-1.5 transition-colors group ${
                     selected.has(s.id)
                       ? "bg-primary/10 hover:bg-primary/15"
-                      : "hover:bg-secondary"
+                      : "hover:bg-secondary hover:text-secondary-foreground"
                   }`}
                 >
                   <Checkbox
@@ -674,7 +674,7 @@ function AddAllocation({
                     onClick={() => toggleOne(s.id)}
                   >
                     <div className="mono text-[12px] font-bold leading-tight truncate">{s.name}</div>
-                    <div className="mono text-[10px] text-muted-foreground truncate">
+                    <div className="mono text-[10px] text-muted-foreground group-hover:text-secondary-foreground/80 truncate">
                       {s.countryOfOrigin}
                       {s.satellite.position ? ` · ${s.satellite.position}` : ""}
                     </div>
@@ -693,7 +693,7 @@ function AddAllocation({
                     className={`mono text-[11px] font-bold border rounded px-1.5 py-0.5 w-16 shrink-0 focus:outline-none focus:ring-1 focus:ring-primary/50 cursor-pointer ${
                       selected.has(s.id)
                         ? "text-primary bg-primary/10 border-primary/30 hover:bg-primary/15"
-                        : "text-muted-foreground bg-secondary border-border hover:bg-secondary/80"
+                        : "text-secondary-foreground bg-secondary border-border hover:bg-secondary/80"
                     }`}
                     aria-label={`Priority for ${s.name}`}
                   >

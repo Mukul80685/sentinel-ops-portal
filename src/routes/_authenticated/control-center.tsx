@@ -1088,7 +1088,7 @@ function DecisionCore({ insights }: { insights: Insight[] }) {
                              ? cat === "All"
                                ? "border-primary/40 bg-primary/10 text-primary font-bold"
                                : catBadgeCls(cat as InsightCategory) + " font-bold"
-                             : "border-border text-muted-foreground hover:bg-secondary"}`}>
+                             : "border-border text-muted-foreground hover:bg-secondary hover:text-secondary-foreground"}`}>
               {cat}
             </button>
           ))}
@@ -1660,7 +1660,7 @@ function OptimizationEngine() {
         <div className="flex items-center gap-2.5">
           <Zap className="h-3.5 w-3.5 text-primary shrink-0" />
           <span className="mono text-[12px] font-bold uppercase tracking-wider text-foreground">Optimization Engine</span>
-          <span className="mono text-[10px] font-semibold text-foreground bg-secondary border border-border px-1.5 py-0.5 rounded-sm leading-none uppercase tracking-[0.15em]">
+          <span className="mono text-[10px] font-semibold text-secondary-foreground bg-secondary border border-border px-1.5 py-0.5 rounded-sm leading-none uppercase tracking-[0.15em]">
             Unit Ranking
           </span>
         </div>
@@ -1674,8 +1674,8 @@ function OptimizationEngine() {
                     ? s==="OPTIMIZED"?"bg-emerald-500/15 border-emerald-500/40 text-emerald-700"
                     : s==="SUBOPTIMAL"?"bg-amber-400/15 border-amber-400/40 text-amber-600"
                     : s==="MISALLOCATED"?"bg-destructive/12 border-destructive/30 text-destructive"
-                    : "bg-secondary border-border text-foreground"
-                    : "border-border text-foreground hover:bg-secondary/40"
+                    : "bg-secondary border-border text-secondary-foreground"
+                    : "border-border text-foreground hover:bg-secondary/40 hover:text-secondary-foreground"
                 }`}>
                 {s==="ALL" ? "All" : s.charAt(0)+s.slice(1).toLowerCase()}
               </button>

@@ -273,7 +273,7 @@ function displayFrequencyMhz(stored: string): string {
 const TOOLBAR_ICON_BTN =
   "h-9 w-9 grid place-items-center rounded-sm border transition-colors shrink-0";
 const TOOLBAR_ICON_BTN_IDLE =
-  `${TOOLBAR_ICON_BTN} border-border hover:bg-secondary text-muted-foreground hover:text-foreground`;
+  `${TOOLBAR_ICON_BTN} border-border hover:bg-secondary hover:text-secondary-foreground text-muted-foreground`;
 const TOOLBAR_ICON_BTN_ACTIVE =
   `${TOOLBAR_ICON_BTN} border-primary/50 bg-primary/10 text-primary`;
 
