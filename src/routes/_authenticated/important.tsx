@@ -60,7 +60,7 @@ import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/important")({
   beforeLoad: () => {
-    throw redirect({ to: "/control-center", search: ccHubSearch("important") });
+    throw redirect({ to: "/administrator", search: ccHubSearch("important") });
   },
   component: () => null,
 });

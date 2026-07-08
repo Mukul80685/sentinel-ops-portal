@@ -17,6 +17,7 @@ import { Route as AuthenticatedMinutesRouteImport } from './routes/_authenticate
 import { Route as AuthenticatedImportantRouteImport } from './routes/_authenticated/important'
 import { Route as AuthenticatedDiscardedRouteImport } from './routes/_authenticated/discarded'
 import { Route as AuthenticatedControlCenterRouteImport } from './routes/_authenticated/control-center'
+import { Route as AuthenticatedAdministratorRouteImport } from './routes/_authenticated/administrator'
 import { Route as AuthenticatedVisibilityIndexRouteImport } from './routes/_authenticated/visibility.index'
 import { Route as AuthenticatedServiceabilityIndexRouteImport } from './routes/_authenticated/serviceability.index'
 import { Route as AuthenticatedPriorityIndexRouteImport } from './routes/_authenticated/priority/index'
@@ -73,6 +74,12 @@ const AuthenticatedControlCenterRoute =
   AuthenticatedControlCenterRouteImport.update({
     id: '/control-center',
     path: '/control-center',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedAdministratorRoute =
+  AuthenticatedAdministratorRouteImport.update({
+    id: '/administrator',
+    path: '/administrator',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedVisibilityIndexRoute =
@@ -178,6 +185,7 @@ const AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRoute =
 export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
   '/auth': typeof AuthRoute
+  '/administrator': typeof AuthenticatedAdministratorRoute
   '/control-center': typeof AuthenticatedControlCenterRoute
   '/discarded': typeof AuthenticatedDiscardedRoute
   '/important': typeof AuthenticatedImportantRoute
@@ -203,6 +211,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/auth': typeof AuthRoute
+  '/administrator': typeof AuthenticatedAdministratorRoute
   '/control-center': typeof AuthenticatedControlCenterRoute
   '/discarded': typeof AuthenticatedDiscardedRoute
   '/important': typeof AuthenticatedImportantRoute
@@ -231,6 +240,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
+  '/_authenticated/administrator': typeof AuthenticatedAdministratorRoute
   '/_authenticated/control-center': typeof AuthenticatedControlCenterRoute
   '/_authenticated/discarded': typeof AuthenticatedDiscardedRoute
   '/_authenticated/important': typeof AuthenticatedImportantRoute
@@ -260,6 +270,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/auth'
+    | '/administrator'
     | '/control-center'
     | '/discarded'
     | '/important'
@@ -285,6 +296,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/auth'
+    | '/administrator'
     | '/control-center'
     | '/discarded'
     | '/important'
@@ -312,6 +324,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/_authenticated'
     | '/auth'
+    | '/_authenticated/administrator'
     | '/_authenticated/control-center'
     | '/_authenticated/discarded'
     | '/_authenticated/important'
@@ -398,6 +411,13 @@ declare module '@tanstack/react-router' {
       path: '/control-center'
       fullPath: '/control-center'
       preLoaderRoute: typeof AuthenticatedControlCenterRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/administrator': {
+      id: '/_authenticated/administrator'
+      path: '/administrator'
+      fullPath: '/administrator'
+      preLoaderRoute: typeof AuthenticatedAdministratorRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/visibility/': {
@@ -538,6 +558,7 @@ const AuthenticatedIntelUnitIdRouteWithChildren =
   )
 
 interface AuthenticatedRouteRouteChildren {
+  AuthenticatedAdministratorRoute: typeof AuthenticatedAdministratorRoute
   AuthenticatedControlCenterRoute: typeof AuthenticatedControlCenterRoute
   AuthenticatedDiscardedRoute: typeof AuthenticatedDiscardedRoute
   AuthenticatedImportantRoute: typeof AuthenticatedImportantRoute
@@ -563,6 +584,7 @@ interface AuthenticatedRouteRouteChildren {
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
+  AuthenticatedAdministratorRoute: AuthenticatedAdministratorRoute,
   AuthenticatedControlCenterRoute: AuthenticatedControlCenterRoute,
   AuthenticatedDiscardedRoute: AuthenticatedDiscardedRoute,
   AuthenticatedImportantRoute: AuthenticatedImportantRoute,

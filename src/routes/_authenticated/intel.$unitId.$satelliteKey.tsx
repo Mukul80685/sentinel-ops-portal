@@ -253,7 +253,7 @@ function SatelliteIntelRepository() {
       <div className="flex items-center gap-2 mb-4 flex-wrap">
         <button
           type="button"
-          onClick={() => navigate({ to: "/control-center", search: { module: "intel" } })}
+          onClick={() => navigate({ to: "/administrator", search: { module: "intel" } })}
           className="mono text-[11px] uppercase tracking-wider flex items-center gap-1 text-foreground/85 hover:text-primary"
         >
           <ArrowLeft className="h-3.5 w-3.5" /> All Units

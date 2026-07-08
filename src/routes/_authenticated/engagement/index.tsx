@@ -8,7 +8,7 @@ import { formatLiveEngagementSatelliteLabel } from "@/lib/operationalSync";
 
 export const Route = createFileRoute("/_authenticated/engagement/")({
   beforeLoad: () => {
-    throw redirect({ to: "/control-center", search: { module: "engagement" } });
+    throw redirect({ to: "/" });
   },
   component: () => null,
 });

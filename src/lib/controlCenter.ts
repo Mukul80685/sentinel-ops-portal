@@ -1,11 +1,18 @@
 import type { LucideIcon } from "lucide-react";
-import { Activity, Archive, ListOrdered, Star } from "lucide-react";
+import { Archive, Boxes, ListOrdered, Radar, Shield, Star } from "lucide-react";
 
+/** Embedded administrator modules (opened via ?module= on /administrator). */
 export const CC_MODULE_IDS = [
-  "engagement",
   "intel",
   "important",
   "priority",
+] as const;
+
+/** Standalone routes launched from the administrator hub grid. */
+export const ADMIN_HUB_STANDALONE = [
+  { to: "/visibility" as const, title: "Satellite Visibility Matrix", icon: Radar, theme: "visibility" as const },
+  { to: "/inventory" as const, title: "Resource Inventory", icon: Boxes, theme: "inventory" as const },
+  { to: "/serviceability" as const, title: "Serviceability State", icon: Shield, theme: "serviceability" as const },
 ] as const;
 
 export type ControlCenterModuleId = (typeof CC_MODULE_IDS)[number];
@@ -23,13 +30,6 @@ export type ControlCenterModuleMeta = {
 };
 
 export const CONTROL_CENTER_MODULES: ControlCenterModuleMeta[] = [
-  {
-    id: "engagement",
-    title: "Engagement Status",
-    subtitle: "",
-    icon: Activity,
-    description: "Real-time resource utilization and satellite tasking.",
-  },
   {
     id: "intel",
     title: "Intelligence Repository",
@@ -57,12 +57,20 @@ export const CONTROL_CENTER_MODULE_MAP = Object.fromEntries(
   CONTROL_CENTER_MODULES.map((m) => [m.id, m]),
 ) as Record<ControlCenterModuleId, ControlCenterModuleMeta>;
 
-/** Hub search — explicit keys satisfy TanStack Router validated search. */
+/** Hub search — omit undefined keys for stable TanStack Router search params. */
 export function ccHubSearch(module?: ControlCenterModuleId, unit?: string) {
-  return { module, unit };
+  return {
+    ...(module ? { module } : {}),
+    ...(unit ? { unit } : {}),
+  };
 }
 
-/** Back link from a CC submodule drill-down to its hub view */
+/** Back link from an administrator submodule drill-down to its hub view */
 export function ccModuleBackLink(module: ControlCenterModuleId) {
-  return { to: "/control-center" as const, search: ccHubSearch(module) };
+  return { to: "/administrator" as const, search: ccHubSearch(module) };
 }
+
+/** Administrator hub modules shown on the launcher grid (excludes engagement/home). */
+export const ADMINISTRATOR_HUB_MODULES = CONTROL_CENTER_MODULES.filter(
+  (m) => m.id === "intel" || m.id === "priority",
+);

@@ -268,7 +268,7 @@ class EngagementErrorBoundary extends Component<
           title="Engagement Status"
           subtitle="Unit detail"
           showBack
-          backLink={{ to: "/control-center", search: { module: "engagement" } }}
+          backLink={{ to: "/", search: {} }}
           horizontalNav={null}
         >
           <div className="panel p-6 text-center space-y-3">

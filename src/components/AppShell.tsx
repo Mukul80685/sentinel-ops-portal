@@ -15,6 +15,8 @@ import {
   Star,
   Megaphone,
   Info,
+  Activity,
+  Shield,
 } from "lucide-react";
 import { performSignOut, useAuth, useIsAdmin } from "@/lib/auth";
 import { ccHubSearch } from "@/lib/controlCenter";
@@ -25,17 +27,14 @@ import {
 } from "@/components/home/HomeNavIcons";
 import { useSidebarModules } from "@/components/sidebar/SidebarModulesProvider";
 import { SidebarProfileButton } from "@/components/sidebar/SidebarProfileButton";
-import {
-  SidebarModalBody,
-  SidebarModalContent,
-  SidebarModalHeader,
-  SidebarModalSection,
-} from "@/components/sidebar/SidebarModalLayout";
 import { TIMEZONES, type IanaTimezone } from "@/lib/appTimezones";
 import { getActiveResetNotification } from "@/lib/passwordRecovery";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
 } from "@/components/ui/dialog";
 import { Calendar } from "@/components/ui/calendar";
 import {
@@ -215,7 +214,7 @@ function StandardModuleNav() {
           <Link
             key={item.key}
             to={resolveTo(item)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] rounded-sm whitespace-nowrap shrink-0 transition-colors text-muted-foreground hover:bg-secondary/50 hover:text-secondary-foreground"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] rounded-sm whitespace-nowrap shrink-0 transition-colors text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
           >
             <item.icon className="h-3.5 w-3.5" />
             {item.label}
@@ -314,45 +313,50 @@ function DateTimeModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <SidebarModalContent className="max-w-2xl">
-        <SidebarModalHeader
-          icon={Clock}
-          title="Date / Time Control Panel"
-          subtitle="Timezone selection and manual clock override"
-        />
+      <DialogContent className="max-w-2xl p-0 overflow-hidden">
+        <DialogHeader className="px-5 pt-4 pb-3 border-b border-border">
+          <DialogTitle className="mono uppercase tracking-wider text-sm flex items-center gap-2">
+            <Clock className="h-4 w-4" />
+            Date / Time Control Panel
+          </DialogTitle>
+        </DialogHeader>
 
-        <div className="flex max-h-[72vh] flex-col overflow-y-auto sm:flex-row sm:overflow-hidden">
+        <div className="flex flex-col sm:flex-row overflow-y-auto max-h-[70vh]">
           {/* ── LEFT: Calendar ── */}
-          <div className="flex-1 border-b border-border bg-muted/15 p-4 sm:border-b-0 sm:border-r">
-            <div className="label-eyebrow mb-3 text-[10px]">Calendar</div>
+          <div className="flex-1 border-b sm:border-b-0 sm:border-r border-border p-4">
+            <div className="mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground mb-3">
+              Calendar
+            </div>
             <Calendar
               mode="single"
               selected={selectedDate}
               onSelect={setSelectedDate}
-              className="w-full rounded-sm border border-border/60 bg-card/80 p-2 shadow-sm"
+              className="w-full"
             />
           </div>
 
           {/* ── RIGHT: Clock + Timezone ── */}
-          <SidebarModalBody className="max-h-none flex-1 space-y-4 sm:max-h-[72vh]">
+          <div className="flex-1 p-5 flex flex-col gap-5">
             {/* Live clock */}
-            <div className="panel relative overflow-hidden px-4 py-3 shadow-sm">
-              <div className="absolute inset-y-0 left-0 w-1 bg-primary/70" />
-              <div className="label-eyebrow mb-2 text-[10px]">Current Time</div>
-              <div className="mono text-4xl font-bold tabular-nums leading-none tracking-tight text-foreground">
+            <div>
+              <div className="mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground mb-2">
+                Current Time
+              </div>
+              <div className="mono text-4xl font-bold tabular-nums tracking-tight text-foreground leading-none">
                 {tzStamp.time || "──:──:──"}
               </div>
-              <div className="mono mt-1.5 text-[11px] text-muted-foreground">{tzStamp.date}</div>
-              <div className="mono mt-2 text-[10px] text-primary/80">{tzLabel}</div>
+              <div className="mono text-[11px] text-muted-foreground mt-1.5">
+                {tzStamp.date}
+              </div>
             </div>
 
             {/* Selected date display */}
-            {selectedDate ? (
-              <div className="rounded-sm border border-border/70 bg-muted/20 px-3 py-2.5">
+            {selectedDate && (
+              <div className="panel px-3 py-2">
                 <div className="mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
                   Selected Date
                 </div>
-                <div className="mono mt-0.5 text-sm font-semibold">
+                <div className="mono text-sm font-semibold mt-0.5">
                   {selectedDate.toLocaleDateString("en-GB", {
                     weekday: "long",
                     year: "numeric",
@@ -361,12 +365,15 @@ function DateTimeModal({
                   })}
                 </div>
               </div>
-            ) : null}
+            )}
 
             {/* Timezone selector */}
-            <SidebarModalSection title="Time Zone">
+            <div>
+              <Label className="mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                Time Zone
+              </Label>
               <Select value={selectedTz} onValueChange={onTzChange}>
-                <SelectTrigger className="mono bg-background/80 text-[12px]">
+                <SelectTrigger className="mt-1.5 mono text-[12px]">
                   <SelectValue>
                     <span className="truncate">{tzLabel}</span>
                   </SelectValue>
@@ -374,7 +381,7 @@ function DateTimeModal({
                 <SelectContent className="max-h-72">
                   {Object.entries(groupedTz).map(([group, zones]) => (
                     <SelectGroup key={group}>
-                      <SelectLabel className="mono px-2 py-1 text-[10px] uppercase tracking-widest">
+                      <SelectLabel className="mono text-[10px] uppercase tracking-widest px-2 py-1">
                         {group}
                       </SelectLabel>
                       {zones.map((tz) => (
@@ -386,21 +393,17 @@ function DateTimeModal({
                   ))}
                 </SelectContent>
               </Select>
-            </SidebarModalSection>
+            </div>
 
             {/* ── Manual Time Override ── */}
-            <SidebarModalSection
-              title="Manual Time Override"
-              bodyClassName="space-y-3"
-            >
-              {offsetMs !== 0 ? (
-                <div className="mono flex items-center gap-2 rounded-sm border border-amber-500/35 bg-amber-500/10 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-amber-700">
-                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500" />
-                  Override active
-                </div>
-              ) : null}
-
-              <div className="flex flex-wrap items-end gap-2 rounded-sm border border-border/70 bg-muted/15 p-3">
+            <div className="border-t border-border pt-4">
+              <div className="mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground mb-2 flex items-center gap-2">
+                Manual Time Override
+                {offsetMs !== 0 && (
+                  <span className="text-amber-500 font-bold text-[9px] tracking-widest">● ACTIVE</span>
+                )}
+              </div>
+              <div className="flex items-end gap-2">
                 <div className="flex flex-col gap-1">
                   <Label className="mono text-[10px] text-muted-foreground">HH</Label>
                   <Input
@@ -409,14 +412,11 @@ function DateTimeModal({
                     max={23}
                     placeholder="00"
                     value={overrideHH}
-                    onChange={(e) => {
-                      setOverrideHH(e.target.value);
-                      setOverrideErr("");
-                    }}
-                    className="mono h-9 w-14 bg-background/90 text-center text-sm"
+                    onChange={(e) => { setOverrideHH(e.target.value); setOverrideErr(""); }}
+                    className="w-14 mono text-center text-sm h-8"
                   />
                 </div>
-                <span className="mono mb-2 text-lg font-bold text-muted-foreground">:</span>
+                <span className="mono text-lg font-bold mb-1.5 text-muted-foreground">:</span>
                 <div className="flex flex-col gap-1">
                   <Label className="mono text-[10px] text-muted-foreground">MM</Label>
                   <Input
@@ -425,14 +425,11 @@ function DateTimeModal({
                     max={59}
                     placeholder="00"
                     value={overrideMM}
-                    onChange={(e) => {
-                      setOverrideMM(e.target.value);
-                      setOverrideErr("");
-                    }}
-                    className="mono h-9 w-14 bg-background/90 text-center text-sm"
+                    onChange={(e) => { setOverrideMM(e.target.value); setOverrideErr(""); }}
+                    className="w-14 mono text-center text-sm h-8"
                   />
                 </div>
-                <span className="mono mb-2 text-lg font-bold text-muted-foreground">:</span>
+                <span className="mono text-lg font-bold mb-1.5 text-muted-foreground">:</span>
                 <div className="flex flex-col gap-1">
                   <Label className="mono text-[10px] text-muted-foreground">SS</Label>
                   <Input
@@ -441,45 +438,38 @@ function DateTimeModal({
                     max={59}
                     placeholder="00"
                     value={overrideSS}
-                    onChange={(e) => {
-                      setOverrideSS(e.target.value);
-                      setOverrideErr("");
-                    }}
-                    className="mono h-9 w-14 bg-background/90 text-center text-sm"
+                    onChange={(e) => { setOverrideSS(e.target.value); setOverrideErr(""); }}
+                    className="w-14 mono text-center text-sm h-8"
                   />
                 </div>
                 <Button
                   size="sm"
                   onClick={applyOverride}
-                  className="mono mb-0.5 h-9 text-[10px] uppercase tracking-wider"
+                  className="mono text-[10px] uppercase tracking-wider h-8 mb-0.5"
                 >
                   Apply
                 </Button>
               </div>
-
-              {overrideErr ? (
-                <p className="mono text-[10px] text-destructive">{overrideErr}</p>
-              ) : null}
-
-              {offsetMs !== 0 ? (
+              {overrideErr && (
+                <p className="mono text-[10px] text-destructive mt-1">{overrideErr}</p>
+              )}
+              {offsetMs !== 0 && (
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={resetOverride}
-                  className="mono h-8 border-amber-500/40 text-[10px] uppercase tracking-wider text-amber-700 hover:bg-amber-500/10"
+                  className="mono text-[10px] uppercase tracking-wider h-7 mt-2 text-amber-600 border-amber-500/40 hover:bg-amber-500/10"
                 >
                   Reset to System Time
                 </Button>
-              ) : null}
-
-              <p className="mono text-[10px] leading-snug text-muted-foreground">
-                Enter the correct time in the selected timezone. The clock will continue ticking from
-                that point.
+              )}
+              <p className="mono text-[10px] text-muted-foreground mt-2">
+                Enter the correct time in the selected timezone. The clock will continue ticking from that point.
               </p>
-            </SidebarModalSection>
-          </SidebarModalBody>
+            </div>
+          </div>
         </div>
-      </SidebarModalContent>
+      </DialogContent>
     </Dialog>
   );
 }
@@ -517,7 +507,7 @@ function SidebarResetNotice() {
 
 /**
  * Primary sidebar — support / utility navigation only.
- * Operational modules (Control Center, Visibility, Inventory, Serviceability) are on the homepage.
+ * Satellite Monitoring Dashboard (home) and Administrator workspace use the context toggle below.
  */
 function PrimaryNavSidebar({
   pathname,
@@ -533,7 +523,15 @@ function PrimaryNavSidebar({
     select: (s) => (s.location.search as { module?: string }).module,
   });
   const importantActive =
-    pathname === "/control-center" && ccModule === "important";
+    pathname === "/administrator" && ccModule === "important";
+
+  const isHomePage = pathname === "/";
+  const isAdministratorWorkspace =
+    pathname === "/administrator" ||
+    pathname === "/visibility" ||
+    pathname.startsWith("/inventory") ||
+    pathname === "/serviceability" ||
+    pathname.startsWith("/serviceability/");
 
   const profileBtnCls = (active: boolean) =>
     `${HOME_SIDEBAR_BTN} mono text-[10px] uppercase tracking-wide whitespace-nowrap cursor-pointer ${
@@ -556,9 +554,27 @@ function PrimaryNavSidebar({
       </div>
       <div className="home-sidebar-sep shrink-0" />
 
-      {/* MAIN — utility navigation + satellite banner */}
-      <div className="flex-1 flex flex-col min-h-0">
-        <nav className="py-2 px-1.5 flex flex-col gap-1 shrink-0 home-sidebar-nav">
+      {/* MAIN — utility navigation + satellite banner (banner pinned above bottom controls) */}
+      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+        <nav className="py-2 px-1.5 flex flex-col gap-1 shrink-0 home-sidebar-nav overflow-y-auto min-h-0">
+          {isHomePage && (
+            <SidebarLink
+              to="/administrator"
+              label="Administrator"
+              icon={Shield}
+              active={false}
+              iconTheme="serviceability"
+            />
+          )}
+          {isAdministratorWorkspace && (
+            <SidebarLink
+              to="/"
+              label="Satellite Monitoring Dashboard"
+              icon={Activity}
+              active={false}
+              iconTheme="engagement"
+            />
+          )}
           <SidebarModalButton
             label="Satellites"
             icon={Orbit}
@@ -581,7 +597,7 @@ function PrimaryNavSidebar({
             iconTheme="reports"
           />
           <SidebarLink
-            to="/control-center"
+            to="/administrator"
             search={ccHubSearch("important")}
             label="Important Frequencies"
             icon={Star}
@@ -597,14 +613,14 @@ function PrimaryNavSidebar({
           />
         </nav>
 
-        <SidebarSatelliteBanner />
-
         <div className="flex-1 min-h-0" aria-hidden="true" />
+
+        <SidebarSatelliteBanner />
       </div>
 
       <div className="home-sidebar-sep shrink-0" />
       {/* BOTTOM — Settings, Sign Out */}
-      <div className="px-2 pt-1.5 pb-2.5 flex flex-col gap-1.5 shrink-0">
+      <div className="home-sidebar-bottom relative z-10 px-2 pt-1.5 pb-2.5 flex flex-col gap-1.5 shrink-0">
         <SidebarResetNotice />
         <button
           type="button"
@@ -793,24 +809,20 @@ function SecondarySidebar({
 export function AppShell({
   title,
   subtitle,
-  pageTitle,
   headerIcon,
   headerTitleClassName,
   showBack = false,
   backLink,
   isHome = false,
+  homeTitle,
   hideSidebar = false,
   sidebarVariant = "primary",
   horizontalNav,
   actions,
-  /** When true, main becomes a flex column so children can fill remaining viewport height. */
-  fillMain = false,
   children,
 }: {
   title?: string;
   subtitle?: string;
-  /** Page-level title shown under the constant module identity in the header. */
-  pageTitle?: string;
   headerIcon?: ReactNode;
   /** Override default module title styling (e.g. smaller, no truncate). */
   headerTitleClassName?: string;
@@ -822,13 +834,14 @@ export function AppShell({
     params?: Record<string, string>;
   };
   isHome?: boolean;
+  /** Overrides the default SSACC title when isHome is true. */
+  homeTitle?: string;
   hideSidebar?: boolean;
   /** "primary" = support nav (default). "secondary" = inventory admin layout. */
   sidebarVariant?: "primary" | "secondary";
   /** Pass `null` to suppress horizontal nav entirely. Omit for default StandardModuleNav. */
   horizontalNav?: ReactNode | null;
   actions?: ReactNode;
-  fillMain?: boolean;
   children: ReactNode;
 }) {
   const { user } = useAuth();
@@ -857,7 +870,7 @@ export function AppShell({
       <aside
         className={`${
           hideSidebar ? "hidden" : "hidden md:flex"
-        } shrink-0 flex-col border-r border-border w-56 lg:w-[15.5rem] home-sidebar`}
+        } shrink-0 flex-col border-r border-border w-56 lg:w-[15.5rem] home-sidebar overflow-hidden`}
       >
         {sidebarVariant === "secondary" ? (
           <SecondarySidebar
@@ -899,7 +912,7 @@ export function AppShell({
                              text-[clamp(0.78rem,1.55vw+0.35rem,1.9rem)] max-w-full text-center"
                   style={{ textShadow: "0 1px 6px rgba(255,255,255,0.8)" }}
                 >
-                  Satellite Signal Analysis and Coordination Center
+                  {homeTitle ?? "Satellite Signal Analysis and Coordination Center"}
                 </h1>
                 <span className="home-title-divider">────────◆──◆──◆────────</span>
               </div>
@@ -937,7 +950,7 @@ export function AppShell({
                       to={backLink.to}
                       search={backLink.search}
                       params={backLink.params}
-                      className="mono text-[11px] h-8 px-3 inline-flex items-center uppercase tracking-wider border border-border rounded-sm hover:bg-secondary/50 hover:text-secondary-foreground bg-card/70"
+                      className="mono text-[11px] h-8 px-3 inline-flex items-center uppercase tracking-wider border border-border rounded-sm hover:bg-secondary/50 hover:text-foreground bg-card/70"
                     >
                       <ArrowLeft className="h-3.5 w-3.5 mr-1" /> Back
                     </Link>
@@ -969,21 +982,13 @@ export function AppShell({
                 >
                   {title ?? "Module"}
                 </h1>
-                {pageTitle && (
-                  <p
-                    className="mono text-[10px] sm:text-[11px] font-semibold tracking-[0.14em] uppercase text-foreground/75 truncate mt-0.5"
-                    style={{ textShadow: "0 1px 4px rgba(255,255,255,0.65)" }}
-                  >
-                    {pageTitle}
-                  </p>
-                )}
               </div>
 
               <div className="flex items-center justify-end gap-2">
                 {actions}
                 <Link
                   to="/"
-                  className="mono text-[11px] h-8 px-3 inline-flex items-center uppercase tracking-wider border border-border rounded-sm hover:bg-secondary/50 hover:text-secondary-foreground bg-card/70"
+                  className="mono text-[11px] h-8 px-3 inline-flex items-center uppercase tracking-wider border border-border rounded-sm hover:bg-secondary/50 hover:text-foreground bg-card/70"
                 >
                   <Home className="h-3.5 w-3.5 mr-1" /> Home
                 </Link>
@@ -995,15 +1000,7 @@ export function AppShell({
         {/* Sidebar is the sole module navigation — no duplicate horizontal strip */}
         {horizontalNav}
 
-        <main
-          className={`flex-1 min-h-0 ${
-            fillMain
-              ? "flex flex-col overflow-hidden p-4 sm:p-6"
-              : isHome
-                ? "overflow-hidden p-3 sm:p-4 lg:p-5 xl:p-6"
-                : "overflow-y-auto overflow-x-hidden p-4 sm:p-6"
-          }`}
-        >
+        <main className={`flex-1 min-h-0 overflow-hidden ${isHome ? "p-3 sm:p-4 lg:p-5 xl:p-6" : "overflow-y-auto overflow-x-hidden p-4 sm:p-6"}`}>
           {children}
         </main>
       </div>

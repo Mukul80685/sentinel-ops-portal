@@ -229,34 +229,38 @@
   }
 
   .home-module-tile {
-    background: linear-gradient(180deg, var(--card) 0%, oklch(from var(--card) calc(l - 0.03) c h) 100%);
-    border: 1px solid var(--border);
+    background: oklch(from var(--card) l c h / 0.82);
+    backdrop-filter: blur(12px) saturate(1.4);
+    -webkit-backdrop-filter: blur(12px) saturate(1.4);
+    border: 1px solid oklch(1 0 0 / 0.18);
     border-radius: 1.25rem;
     transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease;
     box-shadow:
-      inset 0 2px 0 oklch(1 0 0 / 0.07),
-      inset 0 -2px 0 oklch(0 0 0 / 0.04),
-      0 4px 0 oklch(0 0 0 / 0.07),
-      0 10px 28px oklch(0 0 0 / 0.1);
+      inset 0 2px 0 oklch(1 0 0 / 0.12),
+      inset 0 -2px 0 oklch(0 0 0 / 0.06),
+      0 4px 0 oklch(0 0 0 / 0.10),
+      0 12px 32px oklch(0 0 0 / 0.18);
   }
   .home-module-tile:hover {
     transform: translateY(-3px);
-    border-color: oklch(0.82 0.03 145);
-    background: linear-gradient(180deg, oklch(0.97 0.02 145) 0%, oklch(0.93 0.025 145) 100%);
+    border-color: oklch(0.82 0.03 145 / 0.6);
+    background: oklch(0.97 0.015 145 / 0.88);
     box-shadow:
-      inset 0 2px 0 oklch(1 0 0 / 0.1),
-      0 2px 0 oklch(0 0 0 / 0.05),
-      0 14px 32px oklch(0 0 0 / 0.14);
+      inset 0 2px 0 oklch(1 0 0 / 0.15),
+      0 2px 0 oklch(0 0 0 / 0.06),
+      0 16px 36px oklch(0 0 0 / 0.22);
   }
   .home-module-tile:active {
     transform: translateY(1px);
     box-shadow:
-      inset 0 2px 6px oklch(0 0 0 / 0.08),
-      0 1px 0 oklch(0 0 0 / 0.06);
+      inset 0 2px 6px oklch(0 0 0 / 0.10),
+      0 1px 0 oklch(0 0 0 / 0.07);
   }
 
-  /* Glassmorphic 3D module icon badges — home dashboard only */
-  .home-dashboard .home-icon-badge {
+  /* Glassmorphic 3D module icon badges — home dashboard + administrator hub + monitoring dashboard */
+  .home-dashboard .home-icon-badge,
+  .administrator-hub .home-icon-badge,
+  .satellite-monitoring-dashboard .home-icon-badge {
     position: relative;
     isolation: isolate;
     overflow: hidden;
@@ -271,7 +275,8 @@
     transition: transform 0.2s ease, box-shadow 0.2s ease;
   }
 
-  .home-dashboard .home-icon-badge::before {
+  .home-dashboard .home-icon-badge::before,
+  .administrator-hub .home-icon-badge::before {
     content: "";
     position: absolute;
     inset: 0;
@@ -287,7 +292,8 @@
     z-index: 0;
   }
 
-  .home-dashboard .home-icon-badge::after {
+  .home-dashboard .home-icon-badge::after,
+  .administrator-hub .home-icon-badge::after {
     content: "";
     position: absolute;
     inset: 0;
@@ -298,7 +304,9 @@
   }
 
   .home-dashboard .group:hover .home-icon-badge,
-  .home-dashboard .group\/tab:hover .home-icon-badge {
+  .home-dashboard .group\/tab:hover .home-icon-badge,
+  .administrator-hub .group:hover .home-icon-badge,
+  .administrator-hub .group\/tab:hover .home-icon-badge {
     box-shadow:
       inset 0 1px 0 oklch(1 0 0 / 0.5),
       inset 0 -1px 0 oklch(0 0 0 / 0.1),
@@ -307,7 +315,8 @@
       0 6px 12px oklch(0 0 0 / 0.06);
   }
 
-  .home-dashboard .home-icon-badge__glyph {
+  .home-dashboard .home-icon-badge__glyph,
+  .administrator-hub .home-icon-badge__glyph {
     position: relative;
     z-index: 1;
     filter:
@@ -315,7 +324,8 @@
       drop-shadow(0 2px 2px oklch(0 0 0 / 0.18));
   }
 
-  .home-dashboard .home-icon-badge--engagement {
+  .home-dashboard .home-icon-badge--engagement,
+  .administrator-hub .home-icon-badge--engagement {
     border-color: oklch(0.65 0.16 155 / 0.60);
     background: linear-gradient(
       160deg,
@@ -325,7 +335,8 @@
     );
   }
 
-  .home-dashboard .home-icon-badge--intel {
+  .home-dashboard .home-icon-badge--intel,
+  .administrator-hub .home-icon-badge--intel {
     border-color: oklch(0.62 0.18 265 / 0.60);
     background: linear-gradient(
       160deg,
@@ -335,7 +346,8 @@
     );
   }
 
-  .home-dashboard .home-icon-badge--priority {
+  .home-dashboard .home-icon-badge--priority,
+  .administrator-hub .home-icon-badge--priority {
     border-color: oklch(0.62 0.20 25 / 0.55);
     background: linear-gradient(
       160deg,
@@ -345,7 +357,8 @@
     );
   }
 
-  .home-dashboard .home-icon-badge--visibility {
+  .home-dashboard .home-icon-badge--visibility,
+  .administrator-hub .home-icon-badge--visibility {
     border-color: oklch(0.66 0.16 225 / 0.60);
     background: linear-gradient(
       160deg,
@@ -355,7 +368,8 @@
     );
   }
 
-  .home-dashboard .home-icon-badge--inventory {
+  .home-dashboard .home-icon-badge--inventory,
+  .administrator-hub .home-icon-badge--inventory {
     border-color: oklch(0.68 0.17 60 / 0.60);
     background: linear-gradient(
       160deg,
@@ -365,7 +379,8 @@
     );
   }
 
-  .home-dashboard .home-icon-badge--serviceability {
+  .home-dashboard .home-icon-badge--serviceability,
+  .administrator-hub .home-icon-badge--serviceability {
     border-color: oklch(0.60 0.04 250 / 0.55);
     background: linear-gradient(
       160deg,
@@ -394,6 +409,10 @@
       oklch(0.250 0.058 145) 100%
     );
     box-shadow: inset -2px 0 6px oklch(0 0 0 / 0.18), inset -1px 0 0 oklch(0.42 0.06 145 / 0.35);
+  }
+
+  .home-sidebar-bottom {
+    background: oklch(0.250 0.058 145);
   }
 
   /* Thin separator lines inside sidebar */

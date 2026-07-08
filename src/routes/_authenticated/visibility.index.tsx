@@ -81,7 +81,6 @@ import {
 } from "recharts";
 import { listUnits } from "@/lib/queries";
 import {
-  GEO_REGIONS,
   REGION_BEAMS,
   seedRand,
   getBeamBreakdown,
@@ -98,17 +97,12 @@ import {
   removeSatelliteFromUnitOverlay,
   VISIBILITY_OVERLAY_EVENT,
 } from "@/lib/visibilityOverlay";
-import {
-  mergeRegionsWithOverlay,
-  mergeUnitOnlyRegions,
-  useVisibleSatelliteCounts,
-  useUnitImportedCounts,
-} from "@/lib/satelliteCatalog";
+import { mergeRegionsWithOverlay, useVisibleSatelliteCounts } from "@/lib/satelliteCatalog";
 import { INT_UNITS } from "@/lib/intelRepository";
 import { unitTileTitle, UNIT_SLOTS, type UnitSlot } from "@/lib/priorityAllocation";
 import { resolveIntUnitSlug } from "@/lib/operationalSync";
 import { UnitAdvancedFeatures } from "@/components/UnitAdvancedFeatures";
-import { RegionFlagIcon } from "@/components/visibility/RegionFlagIcon";
+import { useModuleUnits } from "@/hooks/useModuleUnits";
 import {
   buildIntScanLookupForUnit,
   isSatelliteInIntRoster,
@@ -285,12 +279,13 @@ export const Route = createFileRoute("/_authenticated/visibility/")({
 function VisibilityPage() {
   const { unit: searchUnit, satellite: searchSatellite, region: searchRegion } = Route.useSearch();
 
-  const { engagements, intelRows, equipment, units: dbUnits } = useOperationalState();
+  const { engagements, intelRows, equipment } = useOperationalState();
+  const { units: visibleDbUnits } = useModuleUnits("visibility");
 
   // Units come from the operational store (SSOT) — dynamic, no fixed roster.
   const localUnits = useMemo<VisibilityUnit[]>(
     () =>
-      dbUnits.map((u: any) => {
+      visibleDbUnits.map((u: { id: string; code: string; name: string; description?: string | null }) => {
         const slug = resolveIntUnitSlug(u.id, u.code) ?? u.id;
         const seed = INT_UNITS.find((s) => s.id === slug);
         return {
@@ -300,7 +295,7 @@ function VisibilityPage() {
           location: seed?.location ?? u.description ?? "—",
         };
       }),
-    [dbUnits],
+    [visibleDbUnits],
   );
 
   // Three-level hierarchy: unit → region → satellite
@@ -346,24 +341,11 @@ function VisibilityPage() {
     if (activeSat?.id === satId) setActiveSat(null);
   }
 
-  // Seed units (alpha…hotel) show the base catalog; newly created units show
-  // only their own imported data so they never inherit the base inventory.
-  const isSeedUnit = useMemo(
-    () => selectedUnitId ? (UNIT_SLOTS as readonly string[]).includes(selectedUnitId) : false,
-    [selectedUnitId],
-  );
-
   const mergedRegions = useMemo(
-    () => {
-      if (!selectedUnitId) return [];
-      return isSeedUnit
-        ? mergeRegionsWithOverlay(getVisibilityOverlay(), selectedUnitId)
-        : mergeUnitOnlyRegions(selectedUnitId);
-    },
+    () => mergeRegionsWithOverlay(getVisibilityOverlay(), selectedUnitId ?? undefined),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [overlayVersion, selectedUnitId, isSeedUnit],
+    [overlayVersion, selectedUnitId],
   );
-
 
   const activeRegion = useMemo(
     () => mergedRegions.find((r) => r.id === activeRegionId) ?? null,
@@ -480,14 +462,13 @@ function VisibilityPage() {
         </div>
       )}
 
-      {/* ── Level 2: Region selection ────────────────────────────────────── */}
+      {/* ── Level 2: Region selection (inside a unit) ────────────────────── */}
       {selectedUnitId && !activeRegion && (
         <RegionGrid
           regions={mergedRegions}
           onSelect={(r) => setActiveRegionId(r.id)}
           unit={selectedUnit}
           onBackToUnits={() => { setSelectedUnitId(null); setActiveRegionId(null); }}
-          onImport={handleAddSat}
         />
       )}
 
@@ -668,28 +649,14 @@ function UnitGrid({
   units: VisibilityUnit[];
   onSelect: (u: VisibilityUnit) => void;
 }) {
-  const seedIds = useMemo(
-    () => units.filter((u) => (UNIT_SLOTS as readonly string[]).includes(u.id)).map((u) => u.id),
-    [units],
-  );
-  const nonSeedIds = useMemo(
-    () => units.filter((u) => !(UNIT_SLOTS as readonly string[]).includes(u.id)).map((u) => u.id),
-    [units],
-  );
-
-  // Seed units: use deterministic visible-beam counts (base catalog).
-  // New units: count only explicitly imported satellites so no data is inherited.
-  const seedCounts = useVisibleSatelliteCounts(seedIds);
-  const importedCounts = useUnitImportedCounts(nonSeedIds);
+  const visibleCounts = useVisibleSatelliteCounts(units.map((u) => u.id));
 
   return (
     <div className="flex flex-col flex-1 min-h-0 h-full">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 flex-1 min-h-0 auto-rows-fr overflow-y-auto">
         {units.map((u) => {
-          const isSeed = (UNIT_SLOTS as readonly string[]).includes(u.id);
-          const title = isSeed ? unitTileTitle(u.id as UnitSlot) : u.name;
-          const count = isSeed ? (seedCounts[u.id] ?? 0) : (importedCounts[u.id] ?? 0);
-          const isEmpty = !isSeed && count === 0;
+          const title = (UNIT_SLOTS as readonly string[]).includes(u.id) ? unitTileTitle(u.id as UnitSlot) : u.name;
+          const count = visibleCounts[u.id] ?? 0;
 
           return (
             <div key={u.id} className="relative group/tile min-h-[9rem]">
@@ -706,24 +673,14 @@ function UnitGrid({
                     {u.location}
                   </div>
                 </div>
-
-                {isEmpty ? (
-                  <div className="flex flex-col items-center justify-center flex-1 py-2 min-h-[3rem] gap-1">
-                    <span className="mono text-[11px] text-muted-foreground uppercase tracking-wider">
-                      No satellites added
-                    </span>
-                    <span className="mono text-[10px] text-muted-foreground">0 Records</span>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center justify-center flex-1 py-2 min-h-[3rem]">
-                    <span className="mono text-[26px] sm:text-[32px] font-bold text-primary leading-none tabular-nums">
-                      {count}
-                    </span>
-                    <span className="mono text-[10px] sm:text-[11px] text-muted-foreground mt-1 uppercase tracking-wider">
-                      Satellite{count !== 1 ? "s" : ""}
-                    </span>
-                  </div>
-                )}
+                <div className="flex flex-col items-center justify-center flex-1 py-2 min-h-[3rem]">
+                  <span className="mono text-[26px] sm:text-[32px] font-bold text-primary leading-none tabular-nums">
+                    {count}
+                  </span>
+                  <span className="mono text-[10px] sm:text-[11px] text-muted-foreground mt-1 uppercase tracking-wider">
+                    Satellite{count !== 1 ? "s" : ""}
+                  </span>
+                </div>
               </button>
             </div>
           );
@@ -732,7 +689,7 @@ function UnitGrid({
 
       {/* ── Advanced Features — shared across all modules ── */}
       <div className="shrink-0">
-        <UnitAdvancedFeatures />
+        <UnitAdvancedFeatures scope="visibility" />
       </div>
     </div>
   );
@@ -745,30 +702,24 @@ const REGION_ICON: Record<string, React.ReactNode> = {
   "africa":      <Globe   className="h-9 w-9 text-muted-foreground" />,
 };
 
-// ─── Region grid — data-driven: active tiles + available-to-import list ──────
+// ─── Region grid — icon-driven country/region selection ───────────────────────
 
 function RegionGrid({
   regions,
   onSelect,
   unit,
   onBackToUnits,
-  onImport,
 }: {
   regions: Region[];
   onSelect: (r: Region) => void;
   unit?: VisibilityUnit | null;
   onBackToUnits?: () => void;
-  /** Called with (regionId, sat) when the user imports from the available list. */
-  onImport?: (regionId: string, sat: GeoSatellite) => void;
 }) {
-  // Regions split by whether they have any satellite data for this unit.
-  const activeRegions = regions.filter((r) => r.satellites.length > 0);
-  const availableRegions = regions.filter((r) => r.satellites.length === 0);
-  const totalSats = activeRegions.reduce((sum, r) => sum + r.satellites.length, 0);
+  const totalSats = regions.reduce((sum, r) => sum + r.satellites.length, 0);
 
   return (
     <div className="space-y-5">
-      {/* Unit context header */}
+      {/* Unit context header — back to units + breadcrumb */}
       {unit && onBackToUnits && (
         <div className="flex items-center gap-3">
           <Button
@@ -783,112 +734,48 @@ function RegionGrid({
           <div className="flex items-center gap-1.5 text-[12px] mono text-muted-foreground">
             <SatIcon className="h-3.5 w-3.5" />
             <span>{unit.name}</span>
-            <ChevronRight className="h-3.5 w-3.5" />
-            <span className="text-foreground font-bold uppercase">
-              {activeRegions.length > 0 ? "Select Region" : "Import Satellite Data"}
+            <span>/</span>
+            <span className="text-foreground font-bold uppercase">Select Region</span>
+          </div>
+        </div>
+      )}
+
+      {/* Country / region tiles */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        {regions.map((region) => (
+          <button
+            key={region.id}
+            type="button"
+            onClick={() => onSelect(region)}
+            className="panel flex flex-col items-center justify-center gap-3 py-7 px-3 min-h-[130px] hover:bg-secondary/60 focus:outline-none focus:ring-1 focus:ring-primary transition-colors group"
+          >
+            {region.flagCode ? (
+              <img
+                src={`https://flagcdn.com/w40/${region.flagCode}.png`}
+                srcSet={`https://flagcdn.com/w80/${region.flagCode}.png 2x`}
+                alt={region.label}
+                className="w-14 h-9 object-cover rounded-sm border border-border"
+                loading="lazy"
+              />
+            ) : region.emoji ? (
+              <span className="text-4xl leading-none select-none" role="img" aria-label={region.label}>
+                {region.emoji}
+              </span>
+            ) : (
+              REGION_ICON[region.id] ?? <Globe className="h-9 w-9 text-muted-foreground" />
+            )}
+            <span className="mono text-[11px] font-bold uppercase tracking-widest text-center leading-tight">
+              {region.label}
             </span>
-          </div>
-        </div>
-      )}
+          </button>
+        ))}
+      </div>
 
-      {/* ── Empty hero: no data imported yet ───────────────────────────── */}
-      {activeRegions.length === 0 && (
-        <div className="panel p-6 flex flex-col items-center gap-3 text-center border border-dashed">
-          <Radar className="h-10 w-10 text-muted-foreground opacity-40" />
-          <div>
-            <div className="mono text-sm font-bold uppercase tracking-wide">
-              No Satellite Visibility Data Available
-            </div>
-            <div className="mono text-[11px] text-muted-foreground mt-1.5 max-w-sm">
-              Import satellite visibility data for one or more regions using the list below.
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Active region tiles ─────────────────────────────────────────── */}
-      {activeRegions.length > 0 && (
-        <div className="space-y-2">
-          <div className="label-eyebrow tracking-[0.15em] text-muted-foreground">
-            Active Regions — {activeRegions.length} region{activeRegions.length !== 1 ? "s" : ""} imported
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            {activeRegions.map((region) => (
-              <button
-                key={region.id}
-                type="button"
-                onClick={() => onSelect(region)}
-                className="panel flex flex-col items-center justify-center gap-2 py-5 px-3 min-h-[120px] hover:bg-secondary/60 hover:text-secondary-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
-              >
-                <div className="flex flex-col items-center gap-2">
-                  <RegionFlagIcon
-                    flagCode={region.flagCode}
-                    label={region.label}
-                    emoji={region.emoji}
-                    fallback={REGION_ICON[region.id] ?? <Globe className="h-7 w-7 text-muted-foreground" />}
-                    variant="tile"
-                  />
-                  <span className="mono text-[11px] font-bold uppercase tracking-widest text-center leading-tight">
-                    {region.label}
-                  </span>
-                </div>
-                <div className="mono text-[10px] text-primary font-bold tabular-nums">
-                  {region.satellites.length} satellite{region.satellites.length !== 1 ? "s" : ""}
-                </div>
-              </button>
-            ))}
-          </div>
-
-          {/* Total KPI */}
-          <div className="border-t border-border pt-4 flex flex-col items-center gap-1">
-            <div className="label-eyebrow tracking-[0.2em]">Total Target Country Satellites</div>
-            <div className="mono text-4xl font-bold text-foreground tabular-nums">{totalSats}</div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Available regions (not yet imported) ───────────────────────── */}
-      {availableRegions.length > 0 && (
-        <div className="space-y-2">
-          <div className="label-eyebrow tracking-[0.15em] text-muted-foreground">
-            {activeRegions.length > 0 ? "Available Regions to Import" : "Available Regions"}
-          </div>
-          <div className="panel overflow-hidden">
-            <div className="divide-y divide-border">
-              {availableRegions.map((region) => (
-                <div
-                  key={region.id}
-                  className="flex items-center gap-3 px-4 py-3 hover:bg-secondary/30 transition-colors"
-                >
-                  {/* Flag / emoji */}
-                  <div className="w-10 shrink-0 flex items-center justify-center">
-                    <RegionFlagIcon
-                      flagCode={region.flagCode}
-                      label={region.label}
-                      emoji={region.emoji ?? "🌐"}
-                      variant="row"
-                    />
-                  </div>
-
-                  <div className="flex-1 min-w-0">
-                    <div className="mono text-[12px] font-bold uppercase tracking-wide">
-                      {region.label}
-                    </div>
-                    <div className="mono text-[10px] text-muted-foreground">No data imported</div>
-                  </div>
-
-                  {onImport && (
-                    <ImportCsvButton
-                      regionId={region.id}
-                      onImport={(sat) => onImport(region.id, sat)}
-                    />
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Total KPI — centered summary block */}
+      <div className="border-t border-border pt-5 flex flex-col items-center gap-1.5">
+        <div className="label-eyebrow tracking-[0.2em]">Total Target Country Satellites</div>
+        <div className="mono text-4xl font-bold text-foreground tabular-nums">{totalSats}</div>
+      </div>
     </div>
   );
 }
@@ -1119,7 +1006,7 @@ function SatelliteTable({
           onClick={requestExport}
           title="Export selected satellites to CSV"
           className="h-7 px-2 inline-flex items-center gap-1 rounded-sm border border-border
-                     hover:bg-secondary hover:text-secondary-foreground transition-colors text-muted-foreground"
+                     hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
         >
           <FileOutput className="h-3.5 w-3.5 shrink-0" />
           <span className="mono text-[9px] uppercase font-bold tracking-wide">Export</span>
@@ -1130,7 +1017,7 @@ function SatelliteTable({
               type="button"
               onClick={() => scrollTable("left")}
               title="Scroll left"
-              className="h-7 w-7 grid place-items-center rounded-sm border border-border hover:bg-secondary hover:text-secondary-foreground transition-colors text-muted-foreground"
+              className="h-7 w-7 grid place-items-center rounded-sm border border-border hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
             >
               <ChevronLeft className="h-3.5 w-3.5" />
             </button>
@@ -1138,7 +1025,7 @@ function SatelliteTable({
               type="button"
               onClick={() => scrollTable("right")}
               title="Scroll right"
-              className="h-7 w-7 grid place-items-center rounded-sm border border-border hover:bg-secondary hover:text-secondary-foreground transition-colors text-muted-foreground"
+              className="h-7 w-7 grid place-items-center rounded-sm border border-border hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
             >
               <ChevronRight className="h-3.5 w-3.5" />
             </button>
@@ -1151,7 +1038,7 @@ function SatelliteTable({
           className={`h-7 w-7 grid place-items-center rounded-sm border transition-colors
                       ${filterOpen
                         ? "border-primary/50 bg-primary/10 text-primary"
-                        : "border-border hover:bg-secondary hover:text-secondary-foreground text-muted-foreground"}`}
+                        : "border-border hover:bg-secondary text-muted-foreground hover:text-foreground"}`}
         >
           <Filter className="h-3.5 w-3.5" />
         </button>
@@ -1354,7 +1241,7 @@ function SatelliteTable({
             <thead>
               <tr>
                 {/* Checkbox column */}
-                <th className="sticky top-0 z-10 bg-secondary text-secondary-foreground px-2 py-1.5 w-8 border-b border-border">
+                <th className="sticky top-0 z-10 bg-secondary px-2 py-1.5 w-8 border-b border-border">
                   <input
                     type="checkbox"
                     checked={selectAll}
@@ -1374,8 +1261,8 @@ function SatelliteTable({
                   { label: "Actions",          cls: "w-16"           },
                 ].map((col) => (
                   <th key={col.label}
-                    className={`sticky top-0 z-10 bg-secondary text-secondary-foreground px-2 py-1.5 text-left
-                                font-medium border-b border-border ${col.cls}`}>
+                    className={`sticky top-0 z-10 bg-secondary px-2 py-1.5 text-left
+                                text-muted-foreground font-medium border-b border-border ${col.cls}`}>
                     {col.label}
                   </th>
                 ))}
@@ -1480,7 +1367,7 @@ function SatelliteTable({
                       <div className="flex items-center gap-1">
                         <button type="button" title="Edit satellite data" onClick={() => setEditingSat(sat)}
                           className="h-6 w-6 grid place-items-center rounded-sm border border-border
-                                     hover:bg-secondary hover:text-secondary-foreground transition-colors text-muted-foreground">
+                                     hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground">
                           <Pencil className="h-3 w-3" />
                         </button>
                         <button type="button" title="Delete satellite entry" onClick={() => setDeleteTarget(sat)}
@@ -1675,9 +1562,9 @@ function SatelliteEditDialog({
               <div className="rounded-sm border border-border overflow-hidden">
                 <table className="w-full text-[11px]">
                   <thead>
-                    <tr className="bg-secondary text-secondary-foreground border-b border-border">
-                      <th className="px-2 py-1 text-left text-secondary-foreground font-medium">Beam</th>
-                      <th className="px-2 py-1 text-left text-secondary-foreground font-medium w-20">EIRP (dBW)</th>
+                    <tr className="bg-secondary border-b border-border">
+                      <th className="px-2 py-1 text-left text-muted-foreground font-medium">Beam</th>
+                      <th className="px-2 py-1 text-left text-muted-foreground font-medium w-20">EIRP (dBW)</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -2060,9 +1947,9 @@ function AddSatelliteDialog({
               <div className="rounded-sm border border-border overflow-hidden">
                 <table className="w-full text-[11px]">
                   <thead>
-                    <tr className="bg-secondary text-secondary-foreground border-b border-border">
-                      <th className="px-2 py-1 text-left text-secondary-foreground font-medium">Beam</th>
-                      <th className="px-2 py-1 text-left text-secondary-foreground font-medium w-20">EIRP (dBW)</th>
+                    <tr className="bg-secondary border-b border-border">
+                      <th className="px-2 py-1 text-left text-muted-foreground font-medium">Beam</th>
+                      <th className="px-2 py-1 text-left text-muted-foreground font-medium w-20">EIRP (dBW)</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">

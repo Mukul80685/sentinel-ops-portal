@@ -12,7 +12,7 @@ import {
 import { computeUnitCapability } from "@/lib/liveEngagementModel";
 import { canUnitScanSatellite } from "@/lib/intelIntegrity";
 import { isSatelliteInIntRoster } from "@/lib/intelAnalysisData";
-import { INT_UNITS } from "@/lib/intelRepository";
+import { INT_UNITS } from "@/lib/intelUnits";
 
 export type OperationalSyncIssueCode = "A" | "B" | "C" | "D" | "E";
 

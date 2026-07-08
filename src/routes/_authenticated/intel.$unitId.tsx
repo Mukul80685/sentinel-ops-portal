@@ -18,7 +18,7 @@ import {
   formatIntelCompactDate,
   hasIntelData,
 } from "@/lib/intelAnalysisData";
-import { INT_UNITS } from "@/lib/intelRepository";
+import { INT_UNITS } from "@/lib/intelUnits";
 import { resolveIntUnitSlug, resolveOperationalUnitId } from "@/lib/operationalSync";
 import { ENGAGEMENTS_ALL_KEY, fetchAllEngagements } from "@/lib/engagementEngine";
 import { removeOperationalIntelRows } from "@/lib/operationalStore";
@@ -49,6 +49,18 @@ import {
   buildCsv,
   downloadCsv,
 } from "@/lib/dataTableUtils";
+import { useCanEdit } from "@/lib/auth";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { toast } from "sonner";
 
 // ── Scan report override storage ────────────────────────────────────────────
 // Stores user-imported aggregate rows so the scan report table reflects them.
@@ -690,19 +702,6 @@ function SatelliteSetupDialog({
   );
 }
 
-import { useCanEdit } from "@/lib/auth";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { toast } from "sonner";
-
 export const Route = createFileRoute("/_authenticated/intel/$unitId")({
   validateSearch: (search: Record<string, unknown>) => ({
     satellite: typeof search.satellite === "string" ? search.satellite : undefined,
@@ -1084,6 +1083,10 @@ function IntelUnitView() {
 
   const unitLabel = INT_UNITS.some((u) => u.id === unitId) ? `Unit ${unit.code}` : unit.name;
 
+  // DECISION: Treat cleared units like new units — show upload onboarding whenever no rows remain.
+  const showScanUploadOnboarding =
+    !isLoading && scanOverrides.length === 0 && mergedTableRows.length === 0;
+
   return (
     <AppShell
       title="Intelligence Repository"
@@ -1097,7 +1100,7 @@ function IntelUnitView() {
         <div className="shrink-0 flex items-center justify-between">
           <button
             type="button"
-            onClick={() => navigate({ to: "/control-center", search: { module: "intel" } })}
+            onClick={() => navigate({ to: "/administrator", search: { module: "intel" } })}
             className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm border border-border bg-card
                        hover:bg-secondary/60 hover:text-secondary-foreground hover:border-primary/40 mono text-[10px] uppercase tracking-wider text-foreground
                        transition-all cursor-pointer"
@@ -1145,8 +1148,8 @@ function IntelUnitView() {
           }}
         />
 
-        {!dataAvailable && scanOverrides.length === 0 ? (
-          /* ── Onboarding — first Scan Report upload for a new unit ── */
+        {showScanUploadOnboarding ? (
+          /* ── Onboarding — first Scan Report upload for a new or cleared unit ── */
           <div className="panel p-8 flex flex-col items-center justify-center text-center gap-4 flex-1">
             <div className="h-14 w-14 grid place-items-center rounded-md border border-primary/30 bg-primary/10">
               <FileSpreadsheet className="h-7 w-7 text-primary" />

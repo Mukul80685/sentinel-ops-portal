@@ -4,13 +4,14 @@ import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { HomeNavIconBadge } from "@/components/home/HomeNavIcons";
 import { Empty } from "@/components/Empty";
-import { listUnits, listCategories, listAllEquipmentDetailed } from "@/lib/queries";
+import { listCategories, listAllEquipmentDetailed } from "@/lib/queries";
 import type { OpServiceability } from "@/lib/operationalDataset";
+import { UnitAdvancedFeatures } from "@/components/UnitAdvancedFeatures";
+import { useModuleUnits } from "@/hooks/useModuleUnits";
 import {
   insertFaultDetail,
   updateOperationalEquipment,
 } from "@/lib/operationalStore";
-import { UnitAdvancedFeatures } from "@/components/UnitAdvancedFeatures";
 import { useCanEdit } from "@/lib/auth";
 import {
   Dialog,
@@ -174,7 +175,7 @@ function ServiceabilityPage() {
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
   const [activeCatStat, setActiveCatStat]   = useState<CatStatEntry | null>(null);
 
-  const { data: units = [] }      = useQuery({ queryKey: ["units"],      queryFn: listUnits });
+  const { units = [] }      = useModuleUnits("serviceability");
   const { data: categories = [] } = useQuery({ queryKey: ["categories"], queryFn: listCategories });
 
   const { data: equipment = [] } = useQuery({
@@ -337,7 +338,7 @@ function ServiceabilityPage() {
             )}
 
             {/* ── Advanced Features — shared across all modules ── */}
-            <UnitAdvancedFeatures />
+            <UnitAdvancedFeatures scope="serviceability" />
           </section>
         </div>
       )}

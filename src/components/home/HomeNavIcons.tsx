@@ -65,28 +65,33 @@ export function HomeNavIconBadge({
   icon: Icon,
   theme,
   size = "md",
+  /** Force inline gradient badge (sidebar-style) at any size — no parent wrapper required. */
+  solid = false,
 }: {
   icon: LucideIcon;
   theme: HomeIconTheme;
   size?: keyof typeof SIZE_CLASSES;
+  solid?: boolean;
 }) {
   const { box, icon: iconSz } = SIZE_CLASSES[size];
-  const isHomeSurface = size === "lg" || size === "xl";
+  const isHomeSurface = !solid && (size === "lg" || size === "xl");
+
+  if (!isHomeSurface) {
+    return (
+      <span
+        className={`grid place-items-center shrink-0 border transition-transform duration-200 group-hover:scale-105 group-hover/tab:scale-105 ${box} ${THEME_BOX[theme]}`}
+      >
+        <Icon className={`${iconSz} ${THEME_ICON[theme]}`} strokeWidth={2.25} />
+      </span>
+    );
+  }
 
   return (
     <span
-      className={
-        isHomeSurface
-          ? `home-icon-badge home-icon-badge--${theme} grid place-items-center shrink-0 transition-transform duration-200 group-hover:scale-105 group-hover/tab:scale-105 ${box}`
-          : `grid place-items-center shrink-0 border transition-transform duration-200 group-hover:scale-105 ${box} ${THEME_BOX[theme]}`
-      }
+      className={`home-icon-badge home-icon-badge--${theme} grid place-items-center shrink-0 transition-transform duration-200 group-hover:scale-105 group-hover/tab:scale-105 ${box}`}
     >
       <Icon
-        className={
-          isHomeSurface
-            ? `home-icon-badge__glyph ${iconSz} ${THEME_ICON[theme]}`
-            : `${iconSz} ${THEME_ICON[theme]}`
-        }
+        className={`home-icon-badge__glyph ${iconSz} ${THEME_ICON[theme]}`}
         strokeWidth={2.25}
       />
     </span>

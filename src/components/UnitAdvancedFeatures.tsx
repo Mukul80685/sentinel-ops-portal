@@ -1,11 +1,11 @@
 /**
  * Shared "Advanced Features" control — identical across all five main modules.
  * Add Unit asks ONLY for Unit Name + Unit Location (module-specific data is
- * entered later inside the unit). Delete Unit performs a true cascading delete.
+ * entered later inside the unit). Delete Unit is scoped to the host module only.
  */
 
 import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Plus, Settings2, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -28,14 +28,23 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { listUnits, type Unit } from "@/lib/queries";
-import { addOperationalUnit, purgeUnitCompletely } from "@/lib/operationalStore";
+import { addOperationalUnit } from "@/lib/operationalStore";
+import {
+  MODULE_SCOPE_LABELS,
+  purgeUnitFromModule,
+  type ModuleScope,
+} from "@/lib/moduleUnitRegistry";
+import { useModuleUnits } from "@/hooks/useModuleUnits";
+import type { Unit } from "@/lib/queries";
 
 export function UnitAdvancedFeatures({
+  scope,
   onUnitsChanged,
   align = "end",
   noTopMargin = false,
 }: {
+  /** Which module hosts this control — delete only affects this vertical. */
+  scope: ModuleScope;
   /** Called after a unit is added or deleted so the host page can refresh local state. */
   onUnitsChanged?: () => void;
   /** Horizontal alignment of the trigger button. */
@@ -44,7 +53,7 @@ export function UnitAdvancedFeatures({
   noTopMargin?: boolean;
 }) {
   const queryClient = useQueryClient();
-  const { data: units = [] } = useQuery({ queryKey: ["units"], queryFn: listUnits });
+  const { units } = useModuleUnits(scope);
 
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -52,6 +61,8 @@ export function UnitAdvancedFeatures({
   const [unitName, setUnitName] = useState("");
   const [unitLocation, setUnitLocation] = useState("");
   const [pendingDelete, setPendingDelete] = useState<Unit | null>(null);
+
+  const moduleLabel = MODULE_SCOPE_LABELS[scope];
 
   function refresh() {
     queryClient.invalidateQueries({ queryKey: ["units"] });
@@ -82,9 +93,9 @@ export function UnitAdvancedFeatures({
 
   function confirmDelete() {
     if (!pendingDelete) return;
-    const ok = purgeUnitCompletely(pendingDelete.id);
+    const ok = purgeUnitFromModule(pendingDelete.id, scope);
     if (ok) {
-      toast.success(`Unit "${pendingDelete.name}" and all associated data permanently deleted.`);
+      toast.success(`Unit "${pendingDelete.name}" removed from ${moduleLabel}.`);
     } else {
       toast.error("Unit could not be deleted.");
     }
@@ -193,7 +204,7 @@ export function UnitAdvancedFeatures({
             <DialogTitle className="mono uppercase tracking-wide">Delete Unit</DialogTitle>
           </DialogHeader>
           <p className="text-xs text-muted-foreground">
-            Select the unit to permanently delete.
+            Select the unit to remove from {moduleLabel} only.
           </p>
           <div className="flex flex-col gap-1.5 max-h-72 overflow-y-auto">
             {units.map((u) => (
@@ -220,13 +231,12 @@ export function UnitAdvancedFeatures({
       <AlertDialog open={!!pendingDelete} onOpenChange={(o) => !o && setPendingDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Permanently delete unit?</AlertDialogTitle>
+            <AlertDialogTitle>Remove unit from {moduleLabel}?</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to permanently delete{" "}
-              <span className="font-semibold text-foreground">{pendingDelete?.name}</span> and all
-              associated data? This removes the unit tile, all uploaded data, equipment records,
-              satellite records, metrics, serviceability information and repository entries.
-              This action cannot be undone.
+              Are you sure you want to remove{" "}
+              <span className="font-semibold text-foreground">{pendingDelete?.name}</span> from{" "}
+              {moduleLabel} only? This module&apos;s data for this unit will be cleared. The unit
+              will remain available in all other features.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -235,7 +245,7 @@ export function UnitAdvancedFeatures({
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={confirmDelete}
             >
-              Delete Permanently
+              Remove from Module
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

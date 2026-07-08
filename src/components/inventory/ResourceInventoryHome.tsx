@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
 import { HomeNavIconBadge } from "@/components/home/HomeNavIcons";
 import { UnitAdvancedFeatures } from "@/components/UnitAdvancedFeatures";
+import { useModuleUnits } from "@/hooks/useModuleUnits";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -28,7 +29,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { listAllEquipment, listCategories, listUnits, type Unit } from "@/lib/queries";
+import { listAllEquipment, listCategories, type Unit } from "@/lib/queries";
 import { insertOperationalEquipment } from "@/lib/operationalStore";
 
 // ── Add-Equipment dynamic form types ─────────────────────────────────────────
@@ -70,7 +71,7 @@ export function ResourceInventoryHome() {
   const navigate = useNavigate();
   const qc = useQueryClient();
 
-  const { data: units = [], isLoading } = useQuery({ queryKey: ["units"], queryFn: listUnits });
+  const { units = [], isLoading } = useModuleUnits("inventory");
   const { data: categories = [] } = useQuery({ queryKey: ["cats"], queryFn: listCategories });
   const { data: allEquipment = [] } = useQuery({
     queryKey: ["inv-all-equipment"],
@@ -253,7 +254,7 @@ export function ResourceInventoryHome() {
 
         {/* ── Advanced Features — shared across all modules ── */}
         <div className="shrink-0">
-          <UnitAdvancedFeatures />
+          <UnitAdvancedFeatures scope="inventory" />
         </div>
       </div>
 

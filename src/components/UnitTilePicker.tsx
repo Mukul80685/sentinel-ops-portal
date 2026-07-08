@@ -1,8 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
 import { UnitAdvancedFeatures } from "@/components/UnitAdvancedFeatures";
-import { listUnits } from "@/lib/queries";
+import { useModuleUnits } from "@/hooks/useModuleUnits";
 import {
   allocationSlotForUnit,
   unitTileTitle,
@@ -13,7 +12,7 @@ import {
 
 function UnitTileGrid({ basePath, fill }: { basePath: string; fill?: boolean }) {
   const navigate = useNavigate();
-  const { data: units = [] } = useQuery({ queryKey: ["units"], queryFn: listUnits });
+  const { units } = useModuleUnits("priority");
 
   const unitSlots = units.map((u) => allocationSlotForUnit(u));
   const counts = useAllocationCounts(unitSlots);
@@ -76,7 +75,7 @@ function UnitTileGrid({ basePath, fill }: { basePath: string; fill?: boolean }) 
 
       {/* ── Advanced Features — shared across all modules ── */}
       <div className="shrink-0">
-        <UnitAdvancedFeatures />
+        <UnitAdvancedFeatures scope="priority" />
       </div>
     </div>
   );

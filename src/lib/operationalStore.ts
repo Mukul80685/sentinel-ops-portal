@@ -208,10 +208,8 @@ export function removeOperationalUnit(unitId: string): boolean {
 }
 
 /**
- * True cascading delete — removes the unit AND every per-unit record stored
- * anywhere in localStorage: equipment, engagements, intel rows, visibility
- * overlay entries, priority allocations, intel imports/setup/overrides, and
- * frequency-action entries. After this, the unit no longer exists anywhere.
+ * @deprecated Prefer purgeUnitFromModule for feature-scoped deletes.
+ * Full cascading delete — removes the unit from the global store AND every module.
  */
 export function purgeUnitCompletely(unitId: string): boolean {
   const ds = getOperationalDataset();
