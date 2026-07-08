@@ -4,7 +4,7 @@
  */
 
 import {
-  flattenSatelliteCatalog,
+  flattenGlobalSatelliteCatalog,
   parseLaunchDate,
   type FlatSatelliteRow,
 } from "@/lib/satelliteCatalog";
@@ -362,7 +362,7 @@ function buildSeedRowsFixed(slot: UnitSlot): PriorityAllocationRow[] {
   const tiers = REGION_TIERS[slot];
   // Dynamically created units have no seed data — they start empty.
   if (!tiers) return [];
-  const catalog = flattenSatelliteCatalog();
+  const catalog = flattenGlobalSatelliteCatalog();
   const cap = UNIT_SAT_CAP[slot] ?? 36;
 
   const ranked = catalog

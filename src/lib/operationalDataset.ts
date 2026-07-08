@@ -13,7 +13,7 @@ import {
   TARGET_ACTIVE_SCANS,
 } from "@/lib/operationalConstants";
 import { UNIT_LOCATIONS, type UnitSlot } from "@/lib/priorityAllocation";
-import { flattenSatelliteCatalog } from "@/lib/satelliteCatalog";
+import { flattenGlobalSatelliteCatalog } from "@/lib/satelliteCatalog";
 
 export type OpServiceability =
   | "Operational"
@@ -176,7 +176,7 @@ function serviceabilityForMockSeed(
 }
 
 function visibleSatNames(slot: UnitSlot): string[] {
-  return flattenSatelliteCatalog()
+  return flattenGlobalSatelliteCatalog()
     .filter((row) => canUnitScanSatellite(row.name, slot))
     .map((row) => row.name);
 }
@@ -293,7 +293,7 @@ export function generateOperationalDataset(): OperationalDataset {
     const activeSatNames = activeSatNamesForSlot(u.slot);
     for (const name of new Set([...visNames, ...activeSatNames])) {
       if (!satellitesMap.has(name.toLowerCase())) {
-        const row = flattenSatelliteCatalog().find((r) => r.name === name);
+        const row = flattenGlobalSatelliteCatalog().find((r) => r.name === name);
         const pos = parseFloat((row?.satellite.position ?? "0").replace(/[^\d.-]/g, "")) || 0;
         satellitesMap.set(name.toLowerCase(), {
           id: `op-sat-${name.toLowerCase().replace(/\s+/g, "-")}`,

@@ -1,7 +1,5 @@
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ENGAGEMENTS_ALL_KEY } from "@/lib/engagementEngine";
-import { INTEL_RECORDS_ALL_KEY } from "@/lib/queries";
 import { resetOperationalDataSourceCache } from "@/lib/operationalDataSource";
 import {
   ensureOperationalDataset,
@@ -9,6 +7,7 @@ import {
   resetOperationalDataset,
 } from "@/lib/operationalStore";
 import { OPERATIONAL_DATASET_VERSION } from "@/lib/operationalConstants";
+import { invalidateOperationalQueries } from "@/lib/operationalRefresh";
 
 /**
  * OperationalStoreGate
@@ -46,13 +45,9 @@ export function OperationalStoreGate() {
 
     window.dispatchEvent(new Event(OPERATIONAL_STORE_EVENT));
 
-    // Refresh all domains that read units, categories, equipment, engagements.
-    void qc.invalidateQueries({ queryKey: ["units"] });
+    invalidateOperationalQueries(qc);
     void qc.invalidateQueries({ queryKey: ["cats"] });
     void qc.invalidateQueries({ queryKey: ["categories"] });
-    void qc.invalidateQueries({ queryKey: ENGAGEMENTS_ALL_KEY });
-    void qc.invalidateQueries({ queryKey: INTEL_RECORDS_ALL_KEY });
-    void qc.invalidateQueries({ queryKey: ["equipment-all"] });
     void qc.invalidateQueries({ queryKey: ["equipment-all-cat"] });
     void qc.invalidateQueries({
       predicate: (q) => {

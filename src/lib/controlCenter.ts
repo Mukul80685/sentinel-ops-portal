@@ -70,6 +70,30 @@ export function ccModuleBackLink(module: ControlCenterModuleId) {
   return { to: "/administrator" as const, search: ccHubSearch(module) };
 }
 
+/** Paths that belong to the Administrator workspace (not the satellite monitoring dashboard). */
+export function isAdministratorModulePath(pathname: string): boolean {
+  return (
+    pathname === "/administrator" ||
+    pathname === "/visibility" ||
+    pathname.startsWith("/inventory") ||
+    pathname === "/serviceability" ||
+    pathname.startsWith("/serviceability/") ||
+    pathname.startsWith("/intel") ||
+    pathname.startsWith("/priority")
+  );
+}
+
+/** Home button target — administrator hub for admin modules, dashboard otherwise. */
+export function resolveAppShellHomeLink(pathname: string): {
+  to: string;
+  search?: Record<string, unknown>;
+} {
+  if (isAdministratorModulePath(pathname)) {
+    return { to: "/administrator" };
+  }
+  return { to: "/" };
+}
+
 /** Administrator hub modules shown on the launcher grid (excludes engagement/home). */
 export const ADMINISTRATOR_HUB_MODULES = CONTROL_CENTER_MODULES.filter(
   (m) => m.id === "intel" || m.id === "priority",

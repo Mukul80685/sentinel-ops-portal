@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   buildOperationalFleetState,
   type OperationalFleetState,
@@ -14,14 +14,16 @@ import {
   fetchAllEngagements,
   ENGAGEMENTS_ALL_KEY,
 } from "@/lib/engagementEngine";
-import { useQuery } from "@tanstack/react-query";
+import { ensureOperationalDataset } from "@/lib/operationalStore";
 import {
-  OPERATIONAL_STORE_EVENT,
-  ensureOperationalDataset,
-} from "@/lib/operationalStore";
+  invalidateOperationalQueries,
+  subscribeOperationalSync,
+} from "@/lib/operationalRefresh";
 
 export function useOperationalState() {
   const [ready, setReady] = useState(false);
+  /** Bumps when priority/visibility/module overlays change (localStorage SSOT). */
+  const [derivedRevision, setDerivedRevision] = useState(0);
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -30,39 +32,45 @@ export function useOperationalState() {
   }, []);
 
   useEffect(() => {
-    const sync = () => {
-      void queryClient.invalidateQueries({ queryKey: ["units"] });
-      void queryClient.invalidateQueries({ queryKey: ["equipment-all"] });
-      void queryClient.invalidateQueries({ queryKey: ENGAGEMENTS_ALL_KEY });
-      void queryClient.invalidateQueries({ queryKey: INTEL_RECORDS_ALL_KEY });
+    const refresh = () => {
+      setDerivedRevision((n) => n + 1);
+      invalidateOperationalQueries(queryClient);
     };
-    window.addEventListener(OPERATIONAL_STORE_EVENT, sync);
-    return () => window.removeEventListener(OPERATIONAL_STORE_EVENT, sync);
+    return subscribeOperationalSync(refresh);
   }, [queryClient]);
 
-  const { data: units = [] } = useQuery({
+  const unitsQuery = useQuery({
     queryKey: ["units"],
     queryFn: listUnits,
     enabled: ready,
+    staleTime: 0,
   });
 
-  const { data: equipment = [] } = useQuery({
+  const equipmentQuery = useQuery({
     queryKey: ["equipment-all"],
     queryFn: listAllEquipment,
     enabled: ready,
+    staleTime: 0,
   });
 
-  const { data: engagements = [] } = useQuery({
+  const engagementsQuery = useQuery({
     queryKey: ENGAGEMENTS_ALL_KEY,
     queryFn: fetchAllEngagements,
     enabled: ready,
+    staleTime: 0,
   });
 
-  const { data: intelRows = [] } = useQuery({
+  const intelQuery = useQuery({
     queryKey: INTEL_RECORDS_ALL_KEY,
     queryFn: listAllIntelRecords,
     enabled: ready,
+    staleTime: 0,
   });
+
+  const units = unitsQuery.data ?? [];
+  const equipment = equipmentQuery.data ?? [];
+  const engagements = engagementsQuery.data ?? [];
+  const intelRows = intelQuery.data ?? [];
 
   const fleetState: OperationalFleetState | null = useMemo(() => {
     if (!ready) return null;
@@ -74,7 +82,21 @@ export function useOperationalState() {
       engagements,
       intelRows,
     });
-  }, [ready, units, equipment, engagements, intelRows]);
+    // derivedRevision forces rebuild when priority/visibility overlays change
+  }, [ready, units, equipment, engagements, intelRows, derivedRevision]);
+
+  const isLoading =
+    !ready ||
+    unitsQuery.isLoading ||
+    equipmentQuery.isLoading ||
+    engagementsQuery.isLoading ||
+    intelQuery.isLoading;
+
+  const isFetching =
+    unitsQuery.isFetching ||
+    equipmentQuery.isFetching ||
+    engagementsQuery.isFetching ||
+    intelQuery.isFetching;
 
   return {
     fleetState,
@@ -82,6 +104,8 @@ export function useOperationalState() {
     equipment,
     engagements,
     intelRows,
-    isLoading: !ready,
+    isLoading,
+    isFetching,
+    derivedRevision,
   };
 }

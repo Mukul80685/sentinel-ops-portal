@@ -29,6 +29,8 @@ import {
 import { buildCsv, downloadCsv, downloadExcel, toggleSelection, allSelected } from "@/lib/dataTableUtils";
 import { useSidebarModules } from "./SidebarModulesProvider";
 import type { GeoSatellite } from "@/lib/visibilityMatrix";
+import { formatSatelliteTransponders } from "@/lib/visibilityMatrix";
+import { formatLaunchDateDisplay } from "@/lib/launchDateFormat";
 import { removeSatelliteFromOverlay } from "@/lib/visibilityOverlay";
 
 const EXPORT_HEADERS = ["Satellite Name", "Country of Origin", "Date of Launch"];
@@ -56,9 +58,9 @@ function SatelliteDetailDialog({
         {sat && (
           <div className="grid grid-cols-2 gap-2 text-[11px] mono">
             <Info label="Country of Origin" value={country} />
-            <Info label="Launch Date" value={sat.launchDate} />
+            <Info label="Launch Date" value={formatLaunchDateDisplay(sat.launchDate)} />
             <Info label="Position" value={sat.position} />
-            <Info label="Transponders" value={sat.transponders} />
+            <Info label="Frequency Bands" value={formatSatelliteTransponders(sat)} />
             <Info label="Beam Coverage" value={sat.beamCoverage} className="col-span-2" />
           </div>
         )}
@@ -266,7 +268,7 @@ export function SatellitesModuleModal() {
                       </button>
                     </td>
                     <td className="py-1.5 bg-white text-foreground font-medium">{row.countryOfOrigin}</td>
-                    <td className="py-1.5 bg-white text-foreground font-medium">{row.launchDate}</td>
+                    <td className="py-1.5 bg-white text-foreground font-medium">{formatLaunchDateDisplay(row.launchDate)}</td>
                     <td className="py-1.5 bg-white">
                       <button
                         type="button"

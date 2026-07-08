@@ -82,7 +82,7 @@ function StatRow({ label, value, color }: { label: string; value: string; color?
 
 export function IntelRepositoryView() {
   const locationKey = useRouterState({
-    select: (s) => `${s.location.pathname}${s.location.search}`,
+    select: (s) => s.location.href,
   });
 
   const { data: engagements = [] } = useQuery({

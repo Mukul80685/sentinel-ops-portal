@@ -19,7 +19,7 @@ import {
   Shield,
 } from "lucide-react";
 import { performSignOut, useAuth, useIsAdmin } from "@/lib/auth";
-import { ccHubSearch } from "@/lib/controlCenter";
+import { ccHubSearch, resolveAppShellHomeLink } from "@/lib/controlCenter";
 import {
   renderSidebarIcon,
   HOME_SIDEBAR_BTN,
@@ -815,6 +815,7 @@ export function AppShell({
   backLink,
   isHome = false,
   homeTitle,
+  homeLink: homeLinkProp,
   hideSidebar = false,
   sidebarVariant = "primary",
   horizontalNav,
@@ -836,6 +837,8 @@ export function AppShell({
   isHome?: boolean;
   /** Overrides the default SSACC title when isHome is true. */
   homeTitle?: string;
+  /** Overrides contextual Home navigation (defaults from current route). */
+  homeLink?: { to: string; search?: Record<string, unknown> };
   hideSidebar?: boolean;
   /** "primary" = support nav (default). "secondary" = inventory admin layout. */
   sidebarVariant?: "primary" | "secondary";
@@ -848,6 +851,7 @@ export function AppShell({
   const isAdmin = useIsAdmin();
   const router = useRouter();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const homeLink = homeLinkProp ?? resolveAppShellHomeLink(pathname);
 
   // Timezone selection persists for the session; defaults to IST
   const [selectedTz, setSelectedTz] = useState<string>("Asia/Kolkata");
@@ -987,7 +991,8 @@ export function AppShell({
               <div className="flex items-center justify-end gap-2">
                 {actions}
                 <Link
-                  to="/"
+                  to={homeLink.to}
+                  search={homeLink.search}
                   className="mono text-[11px] h-8 px-3 inline-flex items-center uppercase tracking-wider border border-border rounded-sm hover:bg-secondary/50 hover:text-foreground bg-card/70"
                 >
                   <Home className="h-3.5 w-3.5 mr-1" /> Home

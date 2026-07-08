@@ -14,6 +14,7 @@ export interface GeoSatellite {
   transponders: string;
   cBandTransponders?: string;
   kuBandTransponders?: string;
+  kaBandTransponders?: string;
   beamCoverage: string;
   beamCoverageImageUrl?: string;
   beams?: string[];
@@ -228,26 +229,54 @@ export function getBeamBreakdown(sat: GeoSatellite): { total: number; beams: str
 /** Parse transponder counts — shared by Visibility Metrics and Priority & Allocation. */
 export function parseSatelliteTransponders(
   sat: GeoSatellite,
-): { total: number; cBand?: string; kuBand?: string } {
+): { total: number; cBand?: string; kuBand?: string; kaBand?: string } {
   const cNum = sat.cBandTransponders ? parseInt(sat.cBandTransponders) || 0 : 0;
   const kuNum = sat.kuBandTransponders ? parseInt(sat.kuBandTransponders) || 0 : 0;
-  if (cNum || kuNum) {
+  const kaNum = sat.kaBandTransponders ? parseInt(sat.kaBandTransponders) || 0 : 0;
+  if (cNum || kuNum || kaNum) {
     return {
-      total: cNum + kuNum,
+      total: cNum + kuNum + kaNum,
       cBand: cNum > 0 ? String(cNum) : undefined,
       kuBand: kuNum > 0 ? String(kuNum) : undefined,
+      kaBand: kaNum > 0 ? String(kaNum) : undefined,
     };
   }
   const totalMatch = sat.transponders.match(/^(\d+)/);
   const total = totalMatch ? parseInt(totalMatch[1]) : 0;
   const tl = sat.transponders.toLowerCase();
+  if (tl.includes("c") && tl.includes("ku") && tl.includes("ka")) {
+    const third = Math.floor(total / 3);
+    const rem = total - third * 2;
+    return { total, cBand: String(third), kuBand: String(third), kaBand: String(rem) };
+  }
   if (tl.includes("c") && tl.includes("ku")) {
     const half = Math.floor(total / 2);
     return { total, cBand: String(half), kuBand: String(total - half) };
   }
+  if (tl.includes("ku") && tl.includes("ka")) {
+    const half = Math.floor(total / 2);
+    return { total, kuBand: String(half), kaBand: String(total - half) };
+  }
+  if (tl.includes("ka")) return { total, kaBand: String(total) };
   if (tl.includes("ku")) return { total, kuBand: String(total) };
   if (tl.includes("c")) return { total, cBand: String(total) };
   return { total };
+}
+
+/** Build transponder label from band counts — e.g. "19 C-band / 18 Ku-band / 6 Ka-band". */
+export function buildTranspondersLabel(
+  cBand?: string,
+  kuBand?: string,
+  kaBand?: string,
+): string {
+  const parts: string[] = [];
+  const c = parseInt(cBand ?? "") || 0;
+  const ku = parseInt(kuBand ?? "") || 0;
+  const ka = parseInt(kaBand ?? "") || 0;
+  if (c > 0) parts.push(`${c} C-band`);
+  if (ku > 0) parts.push(`${ku} Ku-band`);
+  if (ka > 0) parts.push(`${ka} Ka-band`);
+  return parts.length > 0 ? parts.join(" / ") : "—";
 }
 
 /** Human-readable transponder label — e.g. "19 C-band + 19 Ku-band". */
@@ -256,6 +285,7 @@ export function formatSatelliteTransponders(sat: GeoSatellite): string {
   const parts: string[] = [];
   if (tp.cBand) parts.push(`${tp.cBand} C-band`);
   if (tp.kuBand) parts.push(`${tp.kuBand} Ku-band`);
+  if (tp.kaBand) parts.push(`${tp.kaBand} Ka-band`);
   if (parts.length > 0) return parts.join(" + ");
   return sat.transponders || "—";
 }

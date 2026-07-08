@@ -18,6 +18,7 @@ import {
   unitScopeKey,
   VISIBILITY_OVERLAY_EVENT,
   getUnitImportedSatCount,
+  type VisibilityOverlay,
 } from "@/lib/visibilityOverlay";
 import { useEffect, useState } from "react";
 import { INT_UNITS } from "@/lib/intelUnits";
@@ -83,6 +84,29 @@ export function flattenSatelliteCatalog(
   );
 }
 
+/** Resolve overlay edits — global, unit-scoped, or any unit edit for this satellite id. */
+function resolveEditedSatellite(
+  sat: GeoSatellite,
+  overlay: VisibilityOverlay,
+  preferUnitId?: string,
+): GeoSatellite {
+  if (preferUnitId) {
+    const unitEdit = overlay.editedSats[unitScopeKey(preferUnitId, sat.id)];
+    if (unitEdit) return unitEdit;
+  }
+
+  const globalEdit = overlay.editedSats[sat.id];
+  if (globalEdit) return globalEdit;
+
+  for (const [key, edited] of Object.entries(overlay.editedSats)) {
+    if (!key.includes("::")) continue;
+    const editSatId = key.slice(key.indexOf("::") + 2);
+    if (editSatId === sat.id) return edited;
+  }
+
+  return sat;
+}
+
 /**
  * Global satellite catalog for the "Add Satellite" picker.
  *
@@ -102,11 +126,11 @@ export function flattenGlobalSatelliteCatalog(): FlatSatelliteRow[] {
   const seen = new Set<string>();
   const rows: FlatSatelliteRow[] = [];
 
-  function addRow(sat: GeoSatellite, regionId: string) {
+  function addRow(sat: GeoSatellite, regionId: string, unitId?: string) {
     if (deleted.has(sat.id) || seen.has(sat.id)) return;
     seen.add(sat.id);
     const region = regionById.get(regionId);
-    const resolved = overlay.editedSats[sat.id] ?? sat;
+    const resolved = resolveEditedSatellite(sat, overlay, unitId);
     rows.push({
       id: resolved.id,
       name: resolved.name,
@@ -124,8 +148,14 @@ export function flattenGlobalSatelliteCatalog(): FlatSatelliteRow[] {
 
   // 2. All overlay additions — global (key = regionId) and unit-scoped (key = unitId::regionId)
   for (const [key, sats] of Object.entries(overlay.addedSats)) {
-    const regionId = key.includes("::") ? key.split("::").slice(1).join("::") : key;
-    for (const sat of sats) addRow(sat, regionId);
+    if (key.includes("::")) {
+      const sep = key.indexOf("::");
+      const unitId = key.slice(0, sep);
+      const regionId = key.slice(sep + 2);
+      for (const sat of sats) addRow(sat, regionId, unitId);
+    } else {
+      for (const sat of sats) addRow(sat, key);
+    }
   }
 
   return rows.sort((a, b) => a.name.localeCompare(b.name));
@@ -180,10 +210,10 @@ export function resolveMatrixVisibilityFromCatalog(
 export function parseLaunchDate(value: string): number | null {
   const trimmed = value.trim();
   if (!trimmed || trimmed === "—") return null;
+  const m = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
   const iso = Date.parse(trimmed);
   if (!Number.isNaN(iso)) return iso;
-  const m = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (m) return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
   return null;
 }
 
@@ -216,10 +246,10 @@ export function sortSatelliteRows(
 }
 
 export function useSatelliteCatalog(): FlatSatelliteRow[] {
-  const [rows, setRows] = useState(() => flattenSatelliteCatalog());
+  const [rows, setRows] = useState(() => flattenGlobalSatelliteCatalog());
 
   useEffect(() => {
-    const refresh = () => setRows(flattenSatelliteCatalog());
+    const refresh = () => setRows(flattenGlobalSatelliteCatalog());
     refresh();
     window.addEventListener(VISIBILITY_OVERLAY_EVENT, refresh);
     return () => window.removeEventListener(VISIBILITY_OVERLAY_EVENT, refresh);

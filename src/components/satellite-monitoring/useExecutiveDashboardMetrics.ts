@@ -6,7 +6,15 @@ import {
 import { useOperationalState } from "@/hooks/useOperationalState";
 
 export function useExecutiveDashboardMetrics() {
-  const { fleetState, units, equipment, engagements, intelRows, isLoading } = useOperationalState();
+  const {
+    fleetState,
+    units,
+    equipment,
+    engagements,
+    intelRows,
+    isLoading,
+    derivedRevision,
+  } = useOperationalState();
 
   return useMemo(() => {
     if (!fleetState || units.length === 0) {
@@ -45,5 +53,5 @@ export function useExecutiveDashboardMetrics() {
       totalActiveSatellites,
       avgOptimizationScore,
     };
-  }, [fleetState, units, equipment, engagements, intelRows, isLoading]);
+  }, [fleetState, units, equipment, engagements, intelRows, isLoading, derivedRevision]);
 }

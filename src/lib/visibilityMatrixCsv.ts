@@ -4,6 +4,7 @@
  */
 import type { GeoSatellite } from "@/lib/visibilityMatrix";
 import { parseCsvLine } from "@/lib/dataTableUtils";
+import { normalizeLaunchDateForStorage } from "@/lib/launchDateFormat";
 
 export { parseCsvLine };
 
@@ -84,13 +85,13 @@ export function parseSatelliteImportCell(cell: string): { name: string; orbitTyp
 export function parseLaunchImportCell(cell: string): string {
   const t = normalizeVisibilityCsvCell(cell);
   if (!t) return "—";
-  if (/^\d{4}$/.test(t)) return `${t}-01-01`;
-  return t;
+  return normalizeLaunchDateForStorage(t);
 }
 
 export function parseTranspondersImportCell(cell: string): {
   cBand?: string;
   kuBand?: string;
+  kaBand?: string;
   transponders: string;
 } {
   const parts = splitVisibilityDetailParts(cell);
@@ -98,26 +99,31 @@ export function parseTranspondersImportCell(cell: string): {
 
   let cBand: string | undefined;
   let kuBand: string | undefined;
+  let kaBand: string | undefined;
 
   for (const p of parts.slice(1)) {
     const cMatch = p.match(/^(\d+)\s+C(?:\b|-)/i);
     const kuMatch = p.match(/^(\d+)\s+Ku(?:\b|-)/i);
+    const kaMatch = p.match(/^(\d+)\s+Ka(?:\b|-)/i);
     if (cMatch) cBand = cMatch[1];
     if (kuMatch) kuBand = kuMatch[1];
+    if (kaMatch) kaBand = kaMatch[1];
   }
 
-  if (!cBand && !kuBand && parts.length === 1) {
+  if (!cBand && !kuBand && !kaBand && parts.length === 1) {
     return { transponders: parts[0] };
   }
 
   const segments = [
     cBand ? `${cBand} C-band` : "",
     kuBand ? `${kuBand} Ku-band` : "",
+    kaBand ? `${kaBand} Ka-band` : "",
   ].filter(Boolean);
 
   return {
     cBand,
     kuBand,
+    kaBand,
     transponders: segments.length > 0 ? segments.join(" / ") : parts[0] || "—",
   };
 }
@@ -193,6 +199,7 @@ export function parseVisibilityMatrixRow(
     transponders: tp.transponders,
     cBandTransponders: tp.cBand,
     kuBandTransponders: tp.kuBand,
+    kaBandTransponders: tp.kaBand,
     beamCoverage: "—",
     beams: beams.length > 0 ? beams : undefined,
     visibilityNotes: vis.visibilityNotes || undefined,

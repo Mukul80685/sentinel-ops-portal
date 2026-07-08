@@ -87,6 +87,8 @@ import {
   getVisibleBeams,
   findGeoSatelliteEntry,
   normalizeSatelliteName,
+  parseSatelliteTransponders,
+  buildTranspondersLabel,
   type GeoSatellite,
   type GeoRegion,
 } from "@/lib/visibilityMatrix";
@@ -94,6 +96,7 @@ import {
   getVisibilityOverlay,
   addSatelliteToUnitRegion,
   editSatelliteInUnitOverlay,
+  editSatelliteInOverlay,
   removeSatelliteFromUnitOverlay,
   VISIBILITY_OVERLAY_EVENT,
 } from "@/lib/visibilityOverlay";
@@ -109,6 +112,12 @@ import {
   type IntScanLookupEntry,
 } from "@/lib/intelAnalysisData";
 import { useOperationalState } from "@/hooks/useOperationalState";
+import {
+  formatLaunchDateDisplay,
+  launchDateYear,
+  normalizeLaunchDateForInput,
+  normalizeLaunchDateForStorage,
+} from "@/lib/launchDateFormat";
 
 // ─── Static unit roster for visibility layer (shared naming with INT) ─────────
 
@@ -167,29 +176,6 @@ function getBeamEirp(beam: string, satId: string, stored?: Record<string, number
   return 42 + Math.floor(rand() * 10); // fallback
 }
 
-// Parse transponder counts from a GeoSatellite into structured numbers
-function parseTransponders(sat: GeoSatellite): { total: number; cBand?: string; kuBand?: string } {
-  const cNum  = sat.cBandTransponders  ? (parseInt(sat.cBandTransponders)  || 0) : 0;
-  const kuNum = sat.kuBandTransponders ? (parseInt(sat.kuBandTransponders) || 0) : 0;
-  if (cNum || kuNum) {
-    return {
-      total: cNum + kuNum,
-      cBand:  cNum  > 0 ? String(cNum)  : undefined,
-      kuBand: kuNum > 0 ? String(kuNum) : undefined,
-    };
-  }
-  const totalMatch = sat.transponders.match(/^(\d+)/);
-  const total = totalMatch ? parseInt(totalMatch[1]) : 0;
-  const tl = sat.transponders.toLowerCase();
-  if (tl.includes("c") && tl.includes("ku")) {
-    const half = Math.floor(total / 2);
-    return { total, cBand: String(half), kuBand: String(total - half) };
-  }
-  if (tl.includes("ku")) return { total, kuBand: String(total) };
-  if (tl.includes("c"))  return { total, cBand:  String(total) };
-  return { total };
-}
-
 /** Join export sub-parts on one line using ASCII separators (Excel-safe). */
 function exportDetailLine(total: string, details: string[]): string {
   const parts = [total, ...details.filter(Boolean)];
@@ -202,10 +188,11 @@ function formatSatelliteExportCell(sat: GeoSatellite): string {
 }
 
 function formatTranspondersExportCell(sat: GeoSatellite): string {
-  const tp = parseTransponders(sat);
+  const tp = parseSatelliteTransponders(sat);
   const details: string[] = [];
   if (tp.cBand) details.push(`${tp.cBand} C`);
   if (tp.kuBand) details.push(`${tp.kuBand} Ku`);
+  if (tp.kaBand) details.push(`${tp.kaBand} Ka`);
   if (details.length === 0 && sat.transponders?.trim()) {
     details.push(sat.transponders.trim());
   }
@@ -240,7 +227,7 @@ function buildSatelliteExportRow(
   return [
     formatSatelliteExportCell(sat),
     sat.position,
-    sat.launchDate.slice(0, 4),
+    formatLaunchDateDisplay(sat.launchDate),
     formatTranspondersExportCell(sat),
     formatBeamsExportCell(sat),
     formatVisibleBeamsExportCell(sat, exportUnitId, exportRegionId),
@@ -332,6 +319,8 @@ function VisibilityPage() {
   function handleEditSat(updated: GeoSatellite) {
     if (!selectedUnitId) return;
     editSatelliteInUnitOverlay(selectedUnitId, updated);
+    // Mirror metadata to global overlay so sidebar + downstream modules stay in sync.
+    editSatelliteInOverlay(updated);
   }
 
   function handleDeleteSat(regionId: string, satId: string) {
@@ -390,9 +379,9 @@ function VisibilityPage() {
       engagements,
       intelRows,
       equipment,
-      dbUnits,
+      units,
     );
-  }, [selectedUnitId, engagements, intelRows, equipment, dbUnits]);
+  }, [selectedUnitId, engagements, intelRows, equipment, units]);
 
   useEffect(() => {
     if (!searchUnit && !searchSatellite && !searchRegion) return;
@@ -506,7 +495,7 @@ function VisibilityPage() {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px] mono">
                 <InfoTile label="Orbit Type"    value="GEO" />
                 <InfoTile label="Position"      value={activeSat.position} />
-                <InfoTile label="Launched"      value={activeSat.launchDate} />
+                <InfoTile label="Launched"      value={formatLaunchDateDisplay(activeSat.launchDate)} />
                 <InfoTile label="Visibility"    value={`${mock.currentPct}%`} />
               </div>
               <div className="grid grid-cols-2 md:grid-cols-2 gap-2 text-[11px] mono">
@@ -902,7 +891,7 @@ function SatelliteTable({
       if (f.orbit && (s.orbitType ?? "GEO").toUpperCase() !== f.orbit.toUpperCase()) return false;
       if (f.position && !s.position.toLowerCase().includes(f.position.toLowerCase())) return false;
       if (f.coverage && !s.beamCoverage.toLowerCase().includes(f.coverage.toLowerCase())) return false;
-      const year = parseInt(s.launchDate.slice(0, 4)) || 0;
+      const year = launchDateYear(s.launchDate) ?? 0;
       if (f.launchYearFrom && year < parseInt(f.launchYearFrom)) return false;
       if (f.launchYearTo   && year > parseInt(f.launchYearTo))   return false;
       return true;
@@ -1254,7 +1243,7 @@ function SatelliteTable({
                   { label: "#",                cls: "w-7"            },
                   { label: "Satellite",        cls: "min-w-[130px]"  },
                   { label: "Orbital Position", cls: "min-w-[110px]"  },
-                  { label: "Launch",           cls: "w-14"           },
+                  { label: "Launch Date",      cls: "w-24"           },
                   { label: "Transponders",     cls: "min-w-[100px]"  },
                   { label: "Beams",            cls: "min-w-[120px]"  },
                   { label: "Visible Beams",    cls: "min-w-[220px]"  },
@@ -1270,7 +1259,7 @@ function SatelliteTable({
             </thead>
             <tbody className="divide-y divide-border">
               {filteredSats.map((sat, idx) => {
-                const tp = parseTransponders(sat);
+                const tp = parseSatelliteTransponders(sat);
                 const { total: bt, beams } = getBeamBreakdown(sat);
                 const visibleBeams = getVisibleBeams(unitId, sat.id, regionId);
                 const checked = selectedIds.has(sat.id);
@@ -1327,12 +1316,13 @@ function SatelliteTable({
                     </td>
 
                     <td className="px-2 py-1.5 text-foreground font-bold">{sat.position}</td>
-                    <td className="px-2 py-1.5 text-foreground">{sat.launchDate.slice(0, 4)}</td>
+                    <td className="px-2 py-1.5 text-foreground">{formatLaunchDateDisplay(sat.launchDate)}</td>
 
                     <td className="px-2 py-1.5">
                       <div className="font-bold text-foreground">{tp.total}</div>
                       {tp.cBand  && <div className="text-[10px] text-muted-foreground">· {tp.cBand} C</div>}
                       {tp.kuBand && <div className="text-[10px] text-muted-foreground">· {tp.kuBand} Ku</div>}
+                      {tp.kaBand && <div className="text-[10px] text-muted-foreground">· {tp.kaBand} Ka</div>}
                     </td>
 
                     <td className="px-2 py-1.5">
@@ -1439,7 +1429,7 @@ function SatelliteEditDialog({
 }) {
   const [form, setForm] = useState({
     orbitType: "GEO", name: "", position: "", launchDate: "",
-    cBand: "", kuBand: "", beamCoverage: "", visibilityNotes: "",
+    cBand: "", kuBand: "", kaBand: "", beamCoverage: "", visibilityNotes: "",
   });
   const [fpPreview, setFpPreview] = useState("");
   // Per-beam EIRP entries: {beam: label, eirp: string value}
@@ -1447,13 +1437,15 @@ function SatelliteEditDialog({
 
   useEffect(() => {
     if (satellite) {
+      const tp = parseSatelliteTransponders(satellite);
       setForm({
         orbitType:       satellite.orbitType ?? "GEO",
         name:            satellite.name,
         position:        satellite.position,
-        launchDate:      satellite.launchDate,
-        cBand:           satellite.cBandTransponders ?? "",
-        kuBand:          satellite.kuBandTransponders ?? "",
+        launchDate:      normalizeLaunchDateForInput(satellite.launchDate),
+        cBand:           satellite.cBandTransponders ?? tp.cBand ?? "",
+        kuBand:          satellite.kuBandTransponders ?? tp.kuBand ?? "",
+        kaBand:          satellite.kaBandTransponders ?? tp.kaBand ?? "",
         beamCoverage:    satellite.beamCoverage,
         visibilityNotes: satellite.visibilityNotes ?? "",
       });
@@ -1485,20 +1477,17 @@ function SatelliteEditDialog({
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!satellite) return;
-    const cNum  = parseInt(form.cBand)  || 0;
-    const kuNum = parseInt(form.kuBand) || 0;
-    const transponders =
-      [cNum  > 0 ? `${cNum} C-band` : "", kuNum > 0 ? `${kuNum} Ku-band` : ""]
-        .filter(Boolean).join(" / ") || satellite.transponders;
+    const transponders = buildTranspondersLabel(form.cBand, form.kuBand, form.kaBand);
     onSave({
       ...satellite,
       orbitType:          form.orbitType,
       name:               form.name.trim(),
       position:           form.position.trim(),
-      launchDate:         form.launchDate,
-      transponders,
+      launchDate:         normalizeLaunchDateForStorage(form.launchDate),
+      transponders:       transponders === "—" ? satellite.transponders : transponders,
       cBandTransponders:  form.cBand.trim()  || undefined,
       kuBandTransponders: form.kuBand.trim() || undefined,
+      kaBandTransponders: form.kaBand.trim() || undefined,
       beamCoverage:       form.beamCoverage.trim(),
       visibilityNotes:    form.visibilityNotes.trim() || undefined,
       footprintImageUrl:  fpPreview || undefined,
@@ -1540,10 +1529,11 @@ function SatelliteEditDialog({
           </div>
 
           <div className="space-y-2">
-            <div className="label-eyebrow">Transponders</div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="label-eyebrow">Transponders (Frequency Bands)</div>
+            <div className="grid grid-cols-3 gap-3">
               <SatField label="C-band count"><Input value={form.cBand}  onChange={(e) => setForm({ ...form, cBand: e.target.value })}  placeholder="e.g. 20" /></SatField>
               <SatField label="Ku-band count"><Input value={form.kuBand} onChange={(e) => setForm({ ...form, kuBand: e.target.value })} placeholder="e.g. 18" /></SatField>
+              <SatField label="Ka-band count"><Input value={form.kaBand} onChange={(e) => setForm({ ...form, kaBand: e.target.value })} placeholder="e.g. 12" /></SatField>
             </div>
           </div>
 
@@ -1766,6 +1756,7 @@ const EMPTY_SAT_FORM = {
   launchDate: "",
   cBand: "",
   kuBand: "",
+  kaBand: "",
   beamCoverage: "",
 };
 
@@ -1815,11 +1806,8 @@ function AddSatelliteDialog({
     setBeamEirpEntries(regionPool.map((b) => ({ beam: b, eirp: "" })));
   }
 
-  function buildTranspondersLabel() {
-    const parts: string[] = [];
-    if (form.cBand.trim()) parts.push(`${form.cBand.trim()} C-band`);
-    if (form.kuBand.trim()) parts.push(`${form.kuBand.trim()} Ku-band`);
-    return parts.length > 0 ? parts.join(" / ") : "—";
+  function buildTranspondersLabelFromForm() {
+    return buildTranspondersLabel(form.cBand, form.kuBand, form.kaBand);
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -1831,10 +1819,11 @@ function AddSatelliteDialog({
       name: form.name.trim(),
       orbitType: form.orbitType,
       position: form.position.trim() || "—",
-      launchDate: form.launchDate || "—",
-      transponders: buildTranspondersLabel(),
+      launchDate: normalizeLaunchDateForStorage(form.launchDate),
+      transponders: buildTranspondersLabelFromForm(),
       cBandTransponders: form.cBand.trim() || undefined,
       kuBandTransponders: form.kuBand.trim() || undefined,
+      kaBandTransponders: form.kaBand.trim() || undefined,
       beamCoverage: form.beamCoverage.trim() || "—",
       beamCoverageImageUrl: coveragePreview || undefined,
       beamEirp: buildBeamEirpRecord(),
@@ -1910,10 +1899,10 @@ function AddSatelliteDialog({
             </SatField>
           </div>
 
-          {/* Transponders — independent C and Ku fields */}
+          {/* Transponders — C, Ku, and Ka frequency bands */}
           <div className="space-y-2">
-            <div className="label-eyebrow">Transponders</div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="label-eyebrow">Transponders (Frequency Bands)</div>
+            <div className="grid grid-cols-3 gap-3">
               <SatField label="C-band">
                 <Input
                   value={form.cBand}
@@ -1926,6 +1915,13 @@ function AddSatelliteDialog({
                   value={form.kuBand}
                   onChange={(e) => setForm({ ...form, kuBand: e.target.value })}
                   placeholder="e.g. 16"
+                />
+              </SatField>
+              <SatField label="Ka-band">
+                <Input
+                  value={form.kaBand}
+                  onChange={(e) => setForm({ ...form, kaBand: e.target.value })}
+                  placeholder="e.g. 12"
                 />
               </SatField>
             </div>
