@@ -6,8 +6,9 @@ import {
   OptimizationScoreLegend,
 } from "@/components/satellite-monitoring/ExecutiveProgressRing";
 import { useExecutiveDashboardMetrics } from "@/components/satellite-monitoring/useExecutiveDashboardMetrics";
+import { DASHBOARD_PANEL_LABELS, DASHBOARD_PANEL_PURPOSE, type DashboardPanel } from "@/lib/dashboardLabels";
 
-export type DashboardPanel = "engagement" | "activity" | "optimization";
+export type { DashboardPanel };
 
 const TILE_CLASS =
   "home-module-tile relative flex flex-col items-center justify-center gap-4 sm:gap-5 lg:gap-6 " +
@@ -15,26 +16,13 @@ const TILE_CLASS =
 
 type TileConfig = {
   panel: DashboardPanel;
-  title: string;
   accent: string;
 };
 
 const TILES: TileConfig[] = [
-  {
-    panel: "engagement",
-    title: "Engagement Status",
-    accent: "bg-gradient-to-r from-transparent via-emerald-500 to-transparent",
-  },
-  {
-    panel: "activity",
-    title: "Unit Activity Matrix",
-    accent: "bg-gradient-to-r from-transparent via-sky-500 to-transparent",
-  },
-  {
-    panel: "optimization",
-    title: "Optimization Engine",
-    accent: "bg-gradient-to-r from-transparent via-amber-500 to-transparent",
-  },
+  { panel: "engagement", accent: "bg-gradient-to-r from-transparent via-emerald-500 to-transparent" },
+  { panel: "activity", accent: "bg-gradient-to-r from-transparent via-sky-500 to-transparent" },
+  { panel: "optimization", accent: "bg-gradient-to-r from-transparent via-amber-500 to-transparent" },
 ];
 
 export function ExecutiveDashboardOverview() {
@@ -67,9 +55,10 @@ function ExecutiveTile({
       to="/"
       search={{ panel: tile.panel }}
       className={TILE_CLASS}
+      title={DASHBOARD_PANEL_PURPOSE[tile.panel]}
     >
       <span className="mono text-xs sm:text-sm md:text-base font-bold uppercase tracking-[0.12em] text-foreground leading-snug group-hover:text-primary transition-colors">
-        {tile.title}
+        {DASHBOARD_PANEL_LABELS[tile.panel]}
       </span>
 
       <TileBody panel={tile.panel} metrics={metrics} />
@@ -99,7 +88,7 @@ function TileBody({
       <div className="flex flex-col items-center gap-3">
         <ExecutiveProgressRing value={metrics.avgEngagement} mode="engagement" />
         <p className="mono text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground text-center max-w-[14rem] leading-snug">
-          Average Engagement Across All Units
+          Average Resource Engagement Across All Units
         </p>
       </div>
     );

@@ -7,6 +7,8 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { ENGAGEMENTS_ALL_KEY } from "@/lib/engagementEngine";
 import { INTEL_RECORDS_ALL_KEY } from "@/lib/queries";
+import { INTEL_CELL_EDITS_EVENT } from "@/lib/intelCellStore";
+import { INTEL_FREQ_EVENT } from "@/lib/intelFrequencyActions";
 import { OPERATIONAL_STORE_EVENT } from "@/lib/operationalConstants";
 import { PRIORITY_ALLOCATION_EVENT } from "@/lib/priorityAllocation";
 import { VISIBILITY_OVERLAY_EVENT } from "@/lib/visibilityOverlay";
@@ -22,6 +24,8 @@ export const OPERATIONAL_SYNC_EVENTS = [
   VISIBILITY_OVERLAY_EVENT,
   MODULE_UNITS_EVENT,
   OPERATIONAL_DERIVED_REFRESH_EVENT,
+  INTEL_CELL_EDITS_EVENT,
+  INTEL_FREQ_EVENT,
 ] as const;
 
 export function invalidateOperationalQueries(queryClient: QueryClient): void {

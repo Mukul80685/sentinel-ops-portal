@@ -123,8 +123,10 @@
       ]
     },
     "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
+  "oneClick": false,
+  "perMachine": true,
+  "allowElevation": true,
+  "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "SSACC"

@@ -1,10 +1,9 @@
-import { createFileRoute, Link, redirect } from "@tanstack/react-router";
-import { useMemo } from "react";
+import { Link, createFileRoute, redirect } from "@tanstack/react-router";
 import { Empty } from "@/components/Empty";
 import { loadRingPalette, useEngagementRingVisuals } from "@/lib/engagementRingVisuals";
 import { INT_UNITS } from "@/lib/intelRepository";
-import { useOperationalState } from "@/hooks/useOperationalState";
-import { formatLiveEngagementSatelliteLabel } from "@/lib/operationalSync";
+import { useDashboardData } from "@/hooks/useDashboardData";
+import { DASHBOARD_PANEL_LABELS } from "@/lib/dashboardLabels";
 
 export const Route = createFileRoute("/_authenticated/engagement/")({
   beforeLoad: () => {
@@ -13,71 +12,70 @@ export const Route = createFileRoute("/_authenticated/engagement/")({
   component: () => null,
 });
 
+/** Resource Engagement Status — committed RF resources only (no scan progress). */
 export function EngagementDashboardView() {
-  const { fleetState, units } = useOperationalState();
+  const { engagement, isLoading } = useDashboardData();
 
-  const rows = useMemo(() => {
-    if (!fleetState) return [];
-    return units.map((u) => {
-      const state = fleetState.byUnitId.get(u.id)!;
-      const cap = state.capability;
-      const satDisplay = formatLiveEngagementSatelliteLabel(cap.snapshot.satellites, 2);
-      return { unit: u, cap, satDisplay, state };
-    });
-  }, [units, fleetState]);
+  const totalActive = engagement.totalActiveScans;
 
-  const totalActive = fleetState?.totalActiveScans ?? 0;
+  if (isLoading) {
+    return (
+      <div className="py-12 text-center mono text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+        Loading {DASHBOARD_PANEL_LABELS.engagement.toLowerCase()}…
+      </div>
+    );
+  }
 
-  if (units.length === 0) {
+  if (engagement.units.length === 0) {
     return <Empty title="No units registered" />;
   }
 
   return (
     <>
       <div className="panel mb-3 px-3 py-2 flex items-center gap-4 flex-wrap">
-        <FleetStat label="Units" value={units.length} />
+        <FleetStat label="Units" value={engagement.units.length} />
         <div className="h-4 w-px bg-border hidden sm:block" />
-        <FleetStat label="Active Scans" value={totalActive} accent />
+        <FleetStat label="Resources Engaged" value={totalActive} accent />
+        <div className="h-4 w-px bg-border hidden sm:block" />
+        <FleetStat label="Avg Engagement" value={`${engagement.avgOccupancy}%`} />
       </div>
 
       <div className="grid gap-2.5 grid-cols-2 sm:grid-cols-4">
-        {rows.map(({ unit, cap, satDisplay }) => (
+        {engagement.units.map((row) => (
           <Link
-            key={unit.id}
+            key={row.unitId}
             to="/engagement/$unitId"
-            params={{ unitId: unit.id }}
+            params={{ unitId: row.unitId }}
             className="panel flex flex-col items-center gap-2 px-3 py-3 overflow-hidden
                        hover:border-primary/45 hover:bg-primary/5 transition-all no-underline cursor-pointer"
           >
             <div className="text-center w-full min-w-0">
               <div className="mono text-[13px] font-bold uppercase tracking-tight text-foreground leading-tight">
-                Unit {unitDisplayCode(unit.code)}
+                Unit {unitDisplayCode(row.unitCode)}
               </div>
               <div className="mono text-[10px] font-semibold text-foreground mt-1 truncate">
-                {unitLocation(unit)}
+                {unitLocation(row.unitCode)}
               </div>
             </div>
 
-            <EngagementRing pct={cap.occupancyPct} compact />
+            <EngagementRing pct={row.occupancyPct} compact />
 
             <div className="w-full min-h-0">
-              {cap.snapshot.satellites.length === 0 ? (
+              {row.activeSatellites.length === 0 ? (
                 <div className="mono text-[10px] font-bold uppercase tracking-wider text-foreground text-center">
-                  {cap.feasibilityStatus === "NON_OPERATIONAL"
-                    ? "Non-operational"
-                    : "No active scans"}
+                  {row.feasibilityStatus === "NON_OPERATIONAL" ? "Non-operational" : "No resources engaged"}
                 </div>
               ) : (
                 <div className="text-center min-w-0">
                   <p
                     className="mono text-[10px] font-semibold text-foreground leading-snug truncate"
-                    title={cap.snapshot.satellites.map((s) => s.name).join(", ")}
+                    title={row.activeSatellites.join(", ")}
                   >
-                    {satDisplay.label}
+                    {row.satelliteDisplay.label}
                   </p>
-                  {satDisplay.total > 0 && (
+                  {row.satelliteDisplay.total > 0 && (
                     <p className="mono text-[9px] font-semibold text-foreground mt-0.5">
-                      {satDisplay.total} active
+                      {row.rfResourcesEngaged} resource{row.rfResourcesEngaged === 1 ? "" : "s"} engaged
                     </p>
                   )}
                 </div>
@@ -94,10 +92,10 @@ function unitDisplayCode(code: string): string {
   return code.replace(/^GATE[-\s]?/i, "").trim() || code;
 }
 
-function unitLocation(unit: { code: string; description?: string | null }): string {
-  const code = unitDisplayCode(unit.code);
-  const intUnit = INT_UNITS.find((u) => u.code === code);
-  return intUnit?.location ?? unit.description ?? "—";
+function unitLocation(code: string): string {
+  const displayCode = unitDisplayCode(code);
+  const intUnit = INT_UNITS.find((u) => u.code === displayCode);
+  return intUnit?.location ?? "—";
 }
 
 function FleetStat({ label, value, accent }: { label: string; value: string | number; accent?: boolean }) {
@@ -106,7 +104,9 @@ function FleetStat({ label, value, accent }: { label: string; value: string | nu
       <span className={`mono text-[15px] font-bold leading-none ${accent ? "text-primary" : "text-foreground"}`}>
         {value}
       </span>
-      <span className="mono text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground leading-none">{label}</span>
+      <span className="mono text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground leading-none">
+        {label}
+      </span>
     </div>
   );
 }
@@ -123,14 +123,7 @@ function EngagementRing({ pct, compact }: { pct: number; compact?: boolean }) {
     <div className="le-progress-ring relative" style={{ width: size, height: size }}>
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90">
         {defs}
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={r}
-          stroke={trackStroke}
-          strokeWidth={stroke}
-          fill="none"
-        />
+        <circle cx={size / 2} cy={size / 2} r={r} stroke={trackStroke} strokeWidth={stroke} fill="none" />
         <circle
           cx={size / 2}
           cy={size / 2}

@@ -3,25 +3,22 @@ import { Link } from "@tanstack/react-router";
 import { ArrowLeft } from "lucide-react";
 import { EngagementDashboardView } from "@/routes/_authenticated/engagement/index";
 import { ExecutiveDashboardOverview } from "@/components/satellite-monitoring/ExecutiveDashboardOverview";
-import type { DashboardPanel } from "@/components/satellite-monitoring/ExecutiveDashboardOverview";
+import type { DashboardPanel } from "@/lib/dashboardLabels";
+import { DASHBOARD_PANEL_LABELS } from "@/lib/dashboardLabels";
 
 const UnitActivitySnapshot = lazy(() =>
-  import("@/routes/_authenticated/administrator").then((m) => ({
+  import("@/components/satellite-monitoring/UnitActivitySnapshot").then((m) => ({
     default: m.UnitActivitySnapshot,
   })),
 );
 
 const OptimizationEngine = lazy(() =>
-  import("@/routes/_authenticated/administrator").then((m) => ({
+  import("@/components/satellite-monitoring/OptimizationEngine").then((m) => ({
     default: m.OptimizationEngine,
   })),
 );
 
-const PANEL_TITLES: Record<DashboardPanel, string> = {
-  engagement: "Engagement Status",
-  activity: "Unit Activity Matrix",
-  optimization: "Optimization Engine",
-};
+const PANEL_TITLES: Record<DashboardPanel, string> = DASHBOARD_PANEL_LABELS;
 
 function isDashboardPanel(v: string | undefined): v is DashboardPanel {
   return v === "engagement" || v === "activity" || v === "optimization";

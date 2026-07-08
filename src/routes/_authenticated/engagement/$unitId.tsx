@@ -35,7 +35,7 @@ import {
   computeUnitCapability,
 } from "@/lib/liveEngagementModel";
 import { INT_UNITS } from "@/lib/intelRepository";
-import { ccModuleBackLink } from "@/lib/controlCenter";
+import { DASHBOARD_PANEL_LABELS, dashboardPanelBackLink } from "@/lib/dashboardLabels";
 import { loadRingPalette, useEngagementRingVisuals } from "@/lib/engagementRingVisuals";
 import { AlertTriangle, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -265,10 +265,10 @@ class EngagementErrorBoundary extends Component<
     if (this.state.error) {
       return (
         <AppShell
-          title="Engagement Status"
+          title={DASHBOARD_PANEL_LABELS.engagement}
           subtitle="Unit detail"
           showBack
-          backLink={{ to: "/", search: {} }}
+          backLink={dashboardPanelBackLink("engagement")}
           horizontalNav={null}
         >
           <div className="panel p-6 text-center space-y-3">
@@ -433,18 +433,23 @@ function EngagementUnit() {
     return intUnit?.location ?? (unit as any)?.description ?? undefined;
   })();
 
-  const SCAN_HEADERS = [
-    "#", "Satellite", "Polarization",
-    "Antenna", "LNA/LNB", "Demodulator", "Processor",
-    "Freq. Scanned", "Freq. Analyzed", "Freq. Pending",
+  const RESOURCE_HEADERS = [
+    "#",
+    "Satellite",
+    "Polarization",
+    "Antenna",
+    "LNA/LNB",
+    "Demodulator",
+    "Processor",
+    "Allocation Status",
     "",
   ];
 
   return (
     <AppShell
-      title="Engagement Status"
+      title={DASHBOARD_PANEL_LABELS.engagement}
       showBack
-      backLink={ccModuleBackLink("engagement")}
+      backLink={dashboardPanelBackLink("engagement")}
       horizontalNav={null}
     >
 
@@ -459,11 +464,11 @@ function EngagementUnit() {
         }
       />
 
-      {/* Satellite Scanning – Under Progress */}
+      {/* Engaged resources — active monitoring sessions (no scan statistics) */}
       <div className="panel overflow-hidden mb-3">
         <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-secondary/20">
           <span className="mono text-[10.5px] font-bold uppercase tracking-wider text-foreground">
-            Satellite Scanning – Under Progress
+            Engaged Resources — Active Monitoring
           </span>
           <span className="mono text-[7.5px] uppercase tracking-[0.15em] text-foreground/70">
             {validatedActiveRows.length} sessions
@@ -472,17 +477,19 @@ function EngagementUnit() {
 
         {validatedActiveRows.length === 0 ? (
           <div className="px-4 py-5 text-center mono text-[9px] text-foreground/70 uppercase tracking-wider">
-            No active scanning sessions
+            No resources currently engaged
           </div>
         ) : (
           <div className="overflow-auto" style={{ maxHeight: 320 }}>
             <table className="w-full mono text-[11px]">
               <thead className="sticky top-0 z-10 bg-card border-b border-border">
                 <tr>
-                  {SCAN_HEADERS.map((h) => (
-                    <th key={h || "actions"}
+                  {RESOURCE_HEADERS.map((h) => (
+                    <th
+                      key={h || "actions"}
                       className="text-left px-3 py-2 text-[8px] uppercase tracking-wider text-foreground
-                                 font-bold whitespace-nowrap border-r border-border/50 last:border-r-0">
+                                 font-bold whitespace-nowrap border-r border-border/50 last:border-r-0"
+                    >
                       {h}
                     </th>
                   ))}
@@ -490,15 +497,20 @@ function EngagementUnit() {
               </thead>
               <tbody className="divide-y divide-border">
                 {validatedActiveRows.map((r: any, idx: number) => {
-                  const { isPending } = resourceCompleteness(r);
+                  const { isPending, missing } = resourceCompleteness(r);
                   const analysis =
                     analysisByEngId.get(r.id) ?? computeSatelliteAnalysis(r, intelRows);
-                  const hasResources = !isPending;
+                  const allocationLabel = isPending
+                    ? "Pending Allocation"
+                    : engagementDisplayStatus(r.status, false, analysis.pending);
 
                   return (
-                    <tr key={r.id} className={`transition-colors ${
-                      isPending ? "bg-amber-500/5 hover:bg-amber-500/10" : "hover:bg-secondary/20"
-                    }`}>
+                    <tr
+                      key={r.id}
+                      className={`transition-colors ${
+                        isPending ? "bg-amber-500/5 hover:bg-amber-500/10" : "hover:bg-secondary/20"
+                      }`}
+                    >
                       <td className="px-3 py-2.5 text-foreground/70">{idx + 1}</td>
 
                       <td className="px-3 py-2.5 font-bold text-foreground whitespace-nowrap">
@@ -516,17 +528,21 @@ function EngagementUnit() {
                       </td>
 
                       <td className="px-3 py-2.5 whitespace-nowrap">
-                        {r.antenna?.name
-                          ? <span className="text-foreground">{r.antenna.name}</span>
-                          : <span className="text-destructive italic text-[9px]">missing</span>}
+                        {r.antenna?.name ? (
+                          <span className="text-foreground">{r.antenna.name}</span>
+                        ) : (
+                          <span className="text-destructive italic text-[9px]">missing</span>
+                        )}
                       </td>
 
                       <td className="px-3 py-2.5 whitespace-nowrap">
-                        {r.antenna_id
-                          ? <span className="px-1.5 py-0.5 rounded-sm bg-secondary/60 text-secondary-foreground text-[8px] uppercase">
-                              {parseLnaType(r.remarks)}
-                            </span>
-                          : <span className="text-foreground/60">—</span>}
+                        {r.antenna_id ? (
+                          <span className="px-1.5 py-0.5 rounded-sm bg-secondary/60 text-secondary-foreground text-[8px] uppercase">
+                            {parseLnaType(r.remarks)}
+                          </span>
+                        ) : (
+                          <span className="text-foreground/60">—</span>
+                        )}
                       </td>
 
                       <td className="px-3 py-2.5 whitespace-nowrap">
@@ -534,7 +550,9 @@ function EngagementUnit() {
                           <div className="flex flex-col gap-0.5">
                             <span className="text-foreground">{r.demodulator.name}</span>
                             {parseDemodType(r.remarks) !== "—" && (
-                              <span className="text-[8px] text-foreground/70 uppercase">{parseDemodType(r.remarks)}</span>
+                              <span className="text-[8px] text-foreground/70 uppercase">
+                                {parseDemodType(r.remarks)}
+                              </span>
                             )}
                           </div>
                         ) : (
@@ -543,19 +561,20 @@ function EngagementUnit() {
                       </td>
 
                       <td className="px-3 py-2.5 text-foreground whitespace-nowrap">
-                        {r.server?.name
-                          ? r.server.name
-                          : <span className="text-destructive italic text-[9px]">missing</span>}
+                        {r.server?.name ? (
+                          r.server.name
+                        ) : (
+                          <span className="text-destructive italic text-[9px]">missing</span>
+                        )}
                       </td>
 
-                      <td className="px-3 py-2.5 text-foreground font-semibold whitespace-nowrap">
-                        {hasResources ? analysis.scanned.toLocaleString() : "—"}
-                      </td>
-                      <td className="px-3 py-2.5 text-foreground font-semibold whitespace-nowrap">
-                        {hasResources ? analysis.analyzed.toLocaleString() : "—"}
-                      </td>
-                      <td className="px-3 py-2.5 text-foreground font-semibold whitespace-nowrap">
-                        {hasResources ? analysis.pending.toLocaleString() : "—"}
+                      <td className="px-3 py-2.5 whitespace-nowrap">
+                        <StatusBadge label={allocationLabel} />
+                        {isPending && missing.length > 0 && (
+                          <div className="mono text-[8px] text-amber-700 mt-0.5">
+                            Missing: {missing.join(", ")}
+                          </div>
+                        )}
                       </td>
 
                       <td className="px-2 py-2.5">

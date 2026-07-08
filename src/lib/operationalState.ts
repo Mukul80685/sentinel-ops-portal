@@ -17,7 +17,7 @@ import {
   type UnitSlot,
 } from "@/lib/priorityAllocation";
 import { mergeRegionsWithOverlay } from "@/lib/satelliteCatalog";
-import { countVisibleSatellitesForUnit } from "@/lib/visibilityMatrix";
+import { countVisibleSatellitesForUnit, normalizeSatelliteName } from "@/lib/visibilityMatrix";
 
 export type UnitOperationalState = {
   unitDbId: string;
@@ -212,6 +212,146 @@ function severityFromScore(score: number): OptFactorEntry["severity"] {
   return "ok";
 }
 
+/** P1=high, P2=medium, P3=low — weights for priority alignment scoring. */
+const PRIORITY_TIER_WEIGHT: Record<number, number> = { 1: 100, 2: 65, 3: 35 };
+
+/**
+ * Prioritization score — Satellite Priority & Allocation SSOT.
+ * Monitoring high-priority (P1) satellites raises the score;
+ * monitoring mostly low-priority (P3) or missing P1 allocations lowers it.
+ */
+function computePriorityAlignmentScore(state: UnitOperationalState): {
+  score: number;
+  issues: string[];
+} {
+  const intSlug = state.intUnitSlug;
+  if (!intSlug) {
+    return { score: 45, issues: ["No priority allocation slot for this unit"] };
+  }
+
+  const allocations = getAllocationsForUnit(intSlug);
+  if (allocations.length === 0) {
+    return { score: 45, issues: ["No priority allocations configured for this unit"] };
+  }
+
+  const activeNames = new Set(
+    state.capability.assignments.map((a) => normalizeSatelliteName(a.name)),
+  );
+
+  let activeWeighted = 0;
+  let activeCount = 0;
+  const unmonitoredP1: string[] = [];
+  let p1Total = 0;
+  let p3Active = 0;
+
+  for (const row of allocations) {
+    const tier = Math.min(Math.max(Math.round(row.priority), 1), 3);
+    const norm = normalizeSatelliteName(row.satelliteName);
+    const weight = PRIORITY_TIER_WEIGHT[tier] ?? 35;
+
+    if (tier === 1) p1Total++;
+    if (activeNames.has(norm)) {
+      activeWeighted += weight;
+      activeCount++;
+      if (tier === 3) p3Active++;
+    } else if (tier === 1) {
+      unmonitoredP1.push(row.satelliteName);
+    }
+  }
+
+  const coverageRatio =
+    allocations.length > 0 ? activeNames.size / allocations.length : 0;
+  const priorityQuality = activeCount > 0 ? activeWeighted / activeCount : 0;
+
+  let score = Math.round(coverageRatio * 45 + (priorityQuality / 100) * 55);
+
+  if (unmonitoredP1.length > 0) {
+    score = Math.max(0, score - unmonitoredP1.length * 10);
+  }
+  if (activeCount > 0 && p3Active / activeCount > 0.6) {
+    score = Math.max(0, score - 12);
+  }
+
+  const issues: string[] = [];
+  if (unmonitoredP1.length > 0) {
+    issues.push(
+      `${unmonitoredP1.length} high-priority (P1) satellite(s) allocated but not actively monitored`,
+    );
+  }
+  if (activeCount > 0 && p3Active / activeCount > 0.6) {
+    issues.push("Majority of active scans are low-priority (P3) satellites");
+  }
+  if (activeCount === 0) {
+    issues.push("No allocated satellites are actively being scanned");
+  } else if (issues.length === 0) {
+    const p1Monitored = allocations.filter(
+      (r) =>
+        Math.round(r.priority) === 1 &&
+        activeNames.has(normalizeSatelliteName(r.satelliteName)),
+    ).length;
+    issues.push(
+      `${activeCount} active · P1 monitored ${p1Monitored}/${p1Total} · ${allocations.length} allocated`,
+    );
+  }
+
+  return { score, issues };
+}
+
+/**
+ * Resource utilization score — Resource Inventory SSOT.
+ * Antenna/receiver/SDR chain capacity and equipment loading.
+ */
+function computeResourceUtilizationScore(
+  state: UnitOperationalState,
+  unitEquipment: any[],
+): { score: number; issues: string[] } {
+  const cap = state.capability;
+  const maxCapacity = Math.max(cap.maxPossibleScans, 1);
+  const satelliteLoad = cap.activeChains;
+
+  const chain = countServiceableChainCapacity(unitEquipment);
+  const totalEq = unitEquipment.length;
+  const operational = unitEquipment.filter(
+    (e) => e.serviceability === "Operational",
+  ).length;
+
+  const antennas = unitEquipment.filter((e) =>
+    (e.category?.name ?? "").toLowerCase().includes("antenna"),
+  );
+  const operationalAntennas = antennas.filter(
+    (e) => e.serviceability === "Operational",
+  ).length;
+
+  const chainUtil =
+    maxCapacity > 0 ? Math.min(100, (satelliteLoad / maxCapacity) * 100) : 0;
+  const equipmentUtil = totalEq > 0 ? (operational / totalEq) * 100 : 50;
+  const antennaUtil =
+    antennas.length > 0 ? (operationalAntennas / antennas.length) * 100 : equipmentUtil;
+
+  let score: number;
+  if (cap.feasibilityStatus === "NON_OPERATIONAL") {
+    score = 15;
+  } else if (cap.feasibilityStatus === "DEGRADED") {
+    score = Math.round((chainUtil * 0.5 + equipmentUtil * 0.3 + antennaUtil * 0.2) * 0.75);
+  } else {
+    score = Math.round(chainUtil * 0.5 + equipmentUtil * 0.3 + antennaUtil * 0.2);
+  }
+
+  const issues: string[] = [];
+  if (cap.feasibilityStatus === "NON_OPERATIONAL") {
+    issues.push("Unit non-operational — no active scanning capacity");
+  } else {
+    issues.push(
+      `${operationalAntennas}/${antennas.length} antennas · ${chain.totalChains} chain(s) · ${satelliteLoad}/${maxCapacity} scan slots`,
+    );
+    if (satelliteLoad > maxCapacity) {
+      issues.push(`Overloaded — ${satelliteLoad - maxCapacity} scans above capacity`);
+    }
+  }
+
+  return { score, issues };
+}
+
 /** Optimization score from live operational state — Resource, Prioritization, Serviceability. */
 export function buildUnitOptimizationData(
   state: UnitOperationalState,
@@ -221,56 +361,11 @@ export function buildUnitOptimizationData(
   const maxCapacity = Math.max(cap.maxPossibleScans, 1);
   const satelliteLoad = cap.activeChains;
 
-  const resourceScore =
-    cap.feasibilityStatus === "NON_OPERATIONAL"
-      ? 15
-      : cap.feasibilityStatus === "DEGRADED"
-        ? Math.round(cap.occupancyPct * 0.75)
-        : cap.occupancyPct;
-  const resourceIssues: string[] = [];
-  if (cap.feasibilityStatus === "NON_OPERATIONAL") {
-    resourceIssues.push("Unit non-operational — no active scanning capacity");
-  } else if (satelliteLoad > maxCapacity) {
-    resourceIssues.push(
-      `${satelliteLoad} active scans vs ${maxCapacity} optimal capacity — overloaded`,
-    );
-  } else {
-    resourceIssues.push(
-      `${satelliteLoad}/${maxCapacity} capacity utilized (${cap.occupancyPct}% occupancy)`,
-    );
-  }
+  const { score: resourceScore, issues: resourceIssues } =
+    computeResourceUtilizationScore(state, unitEquipment);
 
-  let priorityScore = 70;
-  const priorityIssues: string[] = [];
-  if (state.visibleSatellites > 0 && state.allocatedSatellites > 0) {
-    const coverageRatio =
-      Math.min(state.allocatedSatellites, state.visibleSatellites) /
-      state.visibleSatellites;
-    const activeRatio =
-      state.allocatedSatellites > 0
-        ? Math.min(state.activeSatellites, state.allocatedSatellites) /
-          state.allocatedSatellites
-        : 0;
-    priorityScore = Math.round((coverageRatio * 0.5 + activeRatio * 0.5) * 100);
-    if (state.activeSatellites < state.allocatedSatellites) {
-      priorityIssues.push(
-        `${state.allocatedSatellites - state.activeSatellites} allocated satellites not actively scanned`,
-      );
-    }
-    if (state.allocatedSatellites < state.visibleSatellites * 0.5) {
-      priorityIssues.push("Less than half of visible satellites are priority-allocated");
-    }
-    if (priorityIssues.length === 0) {
-      priorityIssues.push(
-        `${state.activeSatellites} active of ${state.allocatedSatellites} allocated (${state.visibleSatellites} visible)`,
-      );
-    }
-  } else if (state.allocatedSatellites === 0) {
-    priorityScore = 45;
-    priorityIssues.push("No priority allocations configured for this unit");
-  } else {
-    priorityIssues.push("Priority alignment within acceptable range");
-  }
+  const { score: priorityScore, issues: priorityIssues } =
+    computePriorityAlignmentScore(state);
 
   const chain = countServiceableChainCapacity(unitEquipment);
   const totalEq = unitEquipment.length;

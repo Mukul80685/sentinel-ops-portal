@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/AppShell";
 import { SatelliteMonitoringDashboard } from "@/components/satellite-monitoring/SatelliteMonitoringDashboard";
-import type { DashboardPanel } from "@/components/satellite-monitoring/ExecutiveDashboardOverview";
+import type { DashboardPanel } from "@/lib/dashboardLabels";
 
 const DASHBOARD_PANELS = new Set<DashboardPanel>(["engagement", "activity", "optimization"]);
 
