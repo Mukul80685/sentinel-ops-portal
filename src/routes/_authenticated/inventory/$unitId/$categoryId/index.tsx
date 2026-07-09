@@ -21,11 +21,12 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useState } from "react";
 import { toast } from "sonner";
-import { Boxes, ClipboardList, ImageOff, Trash2 } from "lucide-react";
+import { Boxes, ClipboardList, Download, ImageOff, Trash2 } from "lucide-react";
 import { HomeNavIconBadge } from "@/components/home/HomeNavIcons";
 import { fileUrl, uploadFile } from "@/lib/storage";
 import { getUnitById, listCategories, listEquipmentForUnit, statusClass } from "@/lib/queries";
-import { toggleSelection, allSelected } from "@/lib/dataTableUtils";
+import { buildCsv, downloadCsv, toggleSelection, allSelected } from "@/lib/dataTableUtils";
+import { adminExportFilename } from "@/lib/adminExportNaming";
 
 export const Route = createFileRoute("/_authenticated/inventory/$unitId/$categoryId/")({
   component: EquipmentList,
@@ -92,6 +93,41 @@ function EquipmentList() {
     toast.success(`${count} item(s) deleted.`);
   }
 
+  function exportEquipment(list: typeof items) {
+    if (list.length === 0) {
+      toast.error("No records to export.");
+      return;
+    }
+    const headers = [
+      "Name",
+      "Make",
+      "Model",
+      "Serial Number",
+      "Serviceability",
+      "Specifications",
+      "Remarks",
+    ];
+    const rows = list.map((eq: {
+      name: string;
+      make: string;
+      model: string;
+      serial_number: string;
+      serviceability: string;
+      specifications?: string | null;
+      remarks?: string | null;
+    }) => [
+      eq.name,
+      eq.make,
+      eq.model,
+      eq.serial_number,
+      eq.serviceability,
+      eq.specifications ?? "",
+      eq.remarks ?? "",
+    ]);
+    downloadCsv(adminExportFilename("inventory"), buildCsv(headers, rows));
+    toast.success(`${list.length} record${list.length !== 1 ? "s" : ""} exported.`);
+  }
+
   const unitLetter = meta?.unit?.code?.split("-").pop() ?? "";
   const unitLabel = meta?.unit
     ? (unitLetter.length === 1 ? `Unit ${unitLetter}` : meta.unit.name)
@@ -109,8 +145,27 @@ function EquipmentList() {
       showBack
       horizontalNav={null}
       actions={
-        canEdit ? (
-          <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2">
+          {items.length > 0 && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mono h-7 text-[10px] uppercase tracking-wider"
+              onClick={() =>
+                exportEquipment(
+                  selectedIds.size > 0
+                    ? items.filter((eq: { id: string }) => selectedIds.has(eq.id))
+                    : items,
+                )
+              }
+            >
+              <Download className="h-3.5 w-3.5 mr-1" />
+              Export
+            </Button>
+          )}
+          {canEdit ? (
+            <>
             {items.length > 0 && (
               <label className="flex items-center gap-1.5 cursor-pointer mono text-[11px] text-muted-foreground select-none">
                 <input
@@ -128,8 +183,9 @@ function EquipmentList() {
               onSaved={refresh}
               requirePhoto={showAntennaGallery}
             />
-          </div>
-        ) : null
+            </>
+          ) : null}
+        </div>
       }
     >
       {selectedIds.size > 0 && (

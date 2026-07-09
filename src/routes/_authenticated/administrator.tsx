@@ -13,6 +13,12 @@ import {
   IntelRepositoryView,
   PriorityAllocationView,
 } from "@/components/control-center/ControlCenterModuleViews";
+import { BackupRestore } from "@/components/BackupRestore";
+import type { ModuleSnapshotId } from "@/lib/moduleSnapshots/types";
+
+function isModuleSnapshotId(module: ControlCenterModuleId): module is ModuleSnapshotId {
+  return module === "intel" || module === "priority";
+}
 
 export const Route = createFileRoute("/_authenticated/administrator")({
   component: AdministratorPage,
@@ -163,6 +169,7 @@ function AdministratorPage() {
       horizontalNav={null}
     >
       <View />
+      {isModuleSnapshotId(module) ? <BackupRestore module={module} /> : null}
     </AppShell>
   );
 }

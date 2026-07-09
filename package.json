@@ -127,6 +127,7 @@
   "perMachine": true,
   "allowElevation": true,
   "allowToChangeInstallationDirectory": true,
+   "deleteAppDataOnUninstall": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "SSACC"

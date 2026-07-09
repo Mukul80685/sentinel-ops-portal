@@ -47,6 +47,7 @@ import {
   toggleSelection,
   allSelected,
 } from "@/lib/dataTableUtils";
+import { adminExportFilename } from "@/lib/adminExportNaming";
 import {
   INT_UNITS,
   EMPTY_INTEL_FILTER,
@@ -179,11 +180,10 @@ function SatelliteIntelRepository() {
     setSelectedIds(new Set());
   }
 
-  function exportRecords(recs: IntelRecord[], label: string) {
+  function exportRecords(recs: IntelRecord[]) {
     if (recs.length === 0) return toast.info("No records to export");
     const csv = buildCsv(EXPORT_HEADERS, recordsToExportRows(recs));
-    const slug = satelliteName.replace(/\s+/g, "-").toLowerCase();
-    downloadCsv(`intel-${slug}-${label}.csv`, csv);
+    downloadCsv(adminExportFilename("intel"), csv);
     toast.success(`Exported ${recs.length} record${recs.length !== 1 ? "s" : ""}`);
   }
 
@@ -314,11 +314,11 @@ function SatelliteIntelRepository() {
         <Button variant="outline" size="sm" className="h-8 mono text-[11px] uppercase tracking-wider" onClick={() => fileRef.current?.click()}>
           <Upload className="h-3.5 w-3.5 mr-1" /> Import CSV / Excel
         </Button>
-        <Button variant="outline" size="sm" className="h-8 mono text-[11px] uppercase tracking-wider" onClick={() => exportRecords(satelliteRecords, "all")}>
+        <Button variant="outline" size="sm" className="h-8 mono text-[11px] uppercase tracking-wider" onClick={() => exportRecords(satelliteRecords)}>
           <Download className="h-3.5 w-3.5 mr-1" /> Export All
         </Button>
         {isFiltered && (
-          <Button variant="outline" size="sm" className="h-8 mono text-[11px] uppercase tracking-wider" onClick={() => exportRecords(filtered, "filtered")}>
+          <Button variant="outline" size="sm" className="h-8 mono text-[11px] uppercase tracking-wider" onClick={() => exportRecords(filtered)}>
             <Download className="h-3.5 w-3.5 mr-1" /> Export Filtered
           </Button>
         )}
@@ -398,7 +398,7 @@ function SatelliteIntelRepository() {
       {selectedIds.size > 0 && (
         <div className="panel p-2 mb-3 flex flex-wrap items-center gap-2">
           <span className="mono text-[11px] text-foreground">{selectedIds.size} record{selectedIds.size !== 1 ? "s" : ""} selected</span>
-          <Button size="sm" variant="outline" className="h-7 mono text-[10px] uppercase" onClick={() => exportRecords(filtered.filter((r) => selectedIds.has(r.id)), "selected")}>
+          <Button size="sm" variant="outline" className="h-7 mono text-[10px] uppercase" onClick={() => exportRecords(filtered.filter((r) => selectedIds.has(r.id)))}>
             <Download className="h-3 w-3 mr-1" /> Export Selected
           </Button>
           <Button size="sm" variant="outline" className="h-7 mono text-[10px] uppercase" onClick={handleSelectAll}>

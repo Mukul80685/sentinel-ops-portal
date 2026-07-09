@@ -60,6 +60,7 @@ import {
   toggleSelection,
   allSelected,
 } from "@/lib/dataTableUtils";
+import { adminExportFilename } from "@/lib/adminExportNaming";
 import {
   VISIBILITY_MATRIX_CSV_HEADERS,
   parseVisibilityMatrixRow,
@@ -944,7 +945,7 @@ function SatelliteTable({
       setExportConfirmOpen(false);
       return;
     }
-    exportSats(list, "selected");
+    exportSats(list);
     setExportConfirmOpen(false);
   }
 
@@ -960,14 +961,14 @@ function SatelliteTable({
     setDeleteTarget(null);
   }
 
-  function exportSats(list: GeoSatellite[], label: string) {
+  function exportSats(list: GeoSatellite[]) {
     if (list.length === 0) { toast.error("No records to export."); return; }
     const csv = buildCsv(
       [...VISIBILITY_MATRIX_CSV_HEADERS],
       list.map((s) => buildSatelliteExportRow(s, unitId, regionId)),
       true,
     );
-    downloadCsv(`${regionLabel.toLowerCase().replace(/\s+/g, "_")}_${label}.csv`, csv);
+    downloadCsv(adminExportFilename("visibility"), csv);
     toast.success(`${list.length} record${list.length !== 1 ? "s" : ""} exported.`);
   }
 

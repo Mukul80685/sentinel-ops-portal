@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
 import { ccModuleBackLink } from "@/lib/controlCenter";
 import { exportCsv, getUnitById } from "@/lib/queries";
+import { adminExportFilename } from "@/lib/adminExportNaming";
 import { useCanEdit } from "@/lib/auth";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
@@ -210,7 +211,7 @@ function PriorityUnit() {
       toast.error("No records to export.");
       return;
     }
-    exportCsv(allocationRowsToCsv(sortedRows), `priority-${unit?.code ?? unitId}.csv`);
+    exportCsv(allocationRowsToCsv(sortedRows), adminExportFilename("priority"));
     toast.success("CSV exported.");
   }
 
