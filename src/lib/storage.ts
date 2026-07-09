@@ -35,6 +35,56 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
+/** Resize/compress equipment photos so up to 20 antenna images fit per unit in localStorage. */
+async function compressEquipmentPhoto(file: File): Promise<File> {
+  if (!file.type.startsWith("image/")) return file;
+
+  return new Promise((resolve) => {
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      const maxW = 800;
+      const maxH = 600;
+      let { width, height } = img;
+      const scale = Math.min(maxW / width, maxH / height, 1);
+      width = Math.max(1, Math.round(width * scale));
+      height = Math.max(1, Math.round(height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        resolve(file);
+        return;
+      }
+      ctx.drawImage(img, 0, 0, width, height);
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) {
+            resolve(file);
+            return;
+          }
+          const base = file.name.replace(/\.[^.]+$/, "") || "photo";
+          resolve(
+            new File([blob], `${base}.jpg`, {
+              type: "image/jpeg",
+              lastModified: Date.now(),
+            }),
+          );
+        },
+        "image/jpeg",
+        0.72,
+      );
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(file);
+    };
+    img.src = objectUrl;
+  });
+}
+
 /** Resize/compress large photos so many antenna images fit in localStorage. */
 async function compressImageIfNeeded(file: File): Promise<File> {
   if (!file.type.startsWith("image/")) return file;
@@ -83,7 +133,9 @@ async function compressImageIfNeeded(file: File): Promise<File> {
 
 /** Store a file locally and return its virtual path key. */
 export async function uploadFile(file: File, prefix: string): Promise<string> {
-  const processed = await compressImageIfNeeded(file);
+  const processed = prefix.startsWith("equipment/")
+    ? await compressEquipmentPhoto(file)
+    : await compressImageIfNeeded(file);
   const path = `${prefix}/${Date.now()}-${processed.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
   const dataUrl = await readFileAsDataUrl(processed);
   const files = loadFiles();
@@ -93,12 +145,29 @@ export async function uploadFile(file: File, prefix: string): Promise<string> {
   } catch (err) {
     if (err instanceof DOMException && err.name === "QuotaExceededError") {
       throw new Error(
-        "Storage limit reached — too many images saved. Delete unused photos or use smaller image files.",
+        "Storage limit reached — too many images saved. Delete unused antenna photos or use smaller image files.",
       );
     }
     throw err;
   }
   return path;
+}
+
+/** Remove a previously stored local file path (no-op for external URLs). */
+export function deleteStoredFile(path: string): void {
+  if (
+    !path ||
+    path.startsWith("data:") ||
+    path.startsWith("http://") ||
+    path.startsWith("https://") ||
+    path.startsWith("blob:")
+  ) {
+    return;
+  }
+  const files = loadFiles();
+  if (!(path in files)) return;
+  delete files[path];
+  saveFiles(files);
 }
 
 /** Resolve a stored path (or passthrough URL) to a browser-usable src URL. */

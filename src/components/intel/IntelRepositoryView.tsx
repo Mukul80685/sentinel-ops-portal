@@ -2,6 +2,8 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, Database } from "lucide-react";
+import { loadScanOverrides } from "@/lib/intelScanStorage";
+import { intelStorageSlug } from "@/lib/intelStorageKeys";
 import { listAllIntelRecords, listAllEquipment, INTEL_RECORDS_ALL_KEY } from "@/lib/queries";
 import { INT_UNITS } from "@/lib/intelUnits";
 import {
@@ -33,35 +35,24 @@ function loadSuppressedSatSet(unitSlug: string): Set<string> {
 function summarizeScanOverrides(
   unitSlug: string,
 ): ReturnType<typeof summarizeIntelSatelliteRows> | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = localStorage.getItem(`intel-scan-overrides-${unitSlug}`);
-    if (!raw) return null;
-    const overrides = JSON.parse(raw) as {
-      totalScanned: number;
-      analyzed: number;
-      productivityScore: number | null;
-      updatedOn: string;
-    }[];
-    if (!Array.isArray(overrides) || overrides.length === 0) return null;
-    const totalScanned = overrides.reduce((s, o) => s + (o.totalScanned || 0), 0);
-    const productive = overrides.reduce(
-      (s, o) => s + Math.floor((o.analyzed || 0) * ((o.productivityScore ?? 0) / 100)),
-      0,
-    );
-    let lastReportIso: string | null = null;
-    let maxTs = -Infinity;
-    for (const o of overrides) {
-      const t = new Date(o.updatedOn).getTime();
-      if (!isNaN(t) && t > maxTs) {
-        maxTs = t;
-        lastReportIso = o.updatedOn;
-      }
+  const slug = intelStorageSlug(unitSlug);
+  const overrides = loadScanOverrides(slug);
+  if (overrides.length === 0) return null;
+  const totalScanned = overrides.reduce((s, o) => s + (o.totalScanned || 0), 0);
+  const productive = overrides.reduce(
+    (s, o) => s + Math.floor((o.analyzed || 0) * ((o.productivityScore ?? 0) / 100)),
+    0,
+  );
+  let lastReportIso: string | null = null;
+  let maxTs = -Infinity;
+  for (const o of overrides) {
+    const t = new Date(o.updatedOn).getTime();
+    if (!isNaN(t) && t > maxTs) {
+      maxTs = t;
+      lastReportIso = o.updatedOn;
     }
-    return { hasData: true, satellites: overrides.length, totalScanned, productive, lastReportIso };
-  } catch {
-    return null;
   }
+  return { hasData: true, satellites: overrides.length, totalScanned, productive, lastReportIso };
 }
 
 function StatRow({ label, value, color }: { label: string; value: string; color?: "emerald" }) {

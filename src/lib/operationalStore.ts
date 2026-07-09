@@ -12,6 +12,12 @@ import {
 } from "@/lib/operationalDataset";
 import { OPERATIONAL_DATASET_VERSION, OPERATIONAL_STORE_EVENT, OPERATIONAL_STORE_KEY } from "@/lib/operationalConstants";
 import { UNIT_SLOTS, type UnitSlot } from "@/lib/priorityAllocation";
+import { rebindUnitEngagementHardware } from "@/lib/engagementEngine";
+import { deleteStoredFile } from "@/lib/storage";
+import {
+  antennaEquipmentLimitMessage,
+  canAddAntennaEquipment,
+} from "@/lib/inventoryAntennaLimits";
 
 /** Minimum fleet equipment rows — stale cached datasets below this are regenerated. */
 const MIN_FLEET_EQUIPMENT = 300;
@@ -104,6 +110,10 @@ export function insertOperationalEquipment(input: NewOperationalEquipment): OpEq
   const cat = ds.categories.find((c) => c.id === input.category_id);
   if (!unit || !cat) return null;
 
+  if (cat.id === "op-cat-antenna" && !canAddAntennaEquipment(input.unit_id)) {
+    throw new Error(antennaEquipmentLimitMessage(input.unit_id));
+  }
+
   const seq =
     ds.equipment.filter((e) => e.unit_id === input.unit_id && e.category_id === input.category_id).length + 1;
 
@@ -146,9 +156,18 @@ export function updateOperationalEquipment(
 
 export function removeOperationalEquipment(equipmentId: string): boolean {
   const ds = getOperationalDataset();
+  const eq = ds.equipment.find((e) => e.id === equipmentId);
   const before = ds.equipment.length;
   ds.equipment = ds.equipment.filter((e) => e.id !== equipmentId);
   if (ds.equipment.length === before) return false;
+
+  for (const engagement of ds.engagements) {
+    if (engagement.antenna_id === equipmentId) engagement.antenna_id = null;
+    if (engagement.demodulator_id === equipmentId) engagement.demodulator_id = null;
+    if (engagement.processing_server_id === equipmentId) engagement.processing_server_id = null;
+  }
+
+  if (eq?.photo_url) deleteStoredFile(eq.photo_url);
   persistUserMutation(ds);
   clearEquipmentAttachments(equipmentId);
   clearFaultDetailsForEquipment(equipmentId);
@@ -518,6 +537,18 @@ export function insertOperationalEngagement(input: NewOperationalEngagement): Op
 
 export function getOperationalIntelRows(): OpIntelRow[] {
   return getOperationalDataset().intelRows ?? [];
+}
+
+/** Rebind engagement hardware IDs to current unit inventory and persist when changed. */
+export function rebindAndPersistUnitEngagements(unitDbId: string): number {
+  const ds = getOperationalDataset();
+  const rebound = rebindUnitEngagementHardware(
+    unitDbId,
+    ds.equipment,
+    ds.engagements,
+  );
+  if (rebound > 0) persistUserMutation(ds);
+  return rebound;
 }
 
 export function removeOperationalIntelRows(ids: string[]): number {

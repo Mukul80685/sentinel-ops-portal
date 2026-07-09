@@ -54,6 +54,14 @@ function hideUnitInModule(unitId: string, scope: ModuleScope): void {
   saveHiddenSet(scope, set);
 }
 
+/** Restore unit visibility in a module after data is re-imported. */
+export function unhideUnitInModule(unitId: string, scope: ModuleScope): void {
+  const set = loadHiddenSet(scope);
+  if (!set.delete(unitId)) return;
+  saveHiddenSet(scope, set);
+  dispatchModuleUnitsChange(scope);
+}
+
 export function isUnitHiddenInModule(unitId: string, scope: ModuleScope): boolean {
   return loadHiddenSet(scope).has(unitId);
 }

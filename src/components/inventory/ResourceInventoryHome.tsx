@@ -31,6 +31,10 @@ import {
 } from "@/components/ui/select";
 import { listAllEquipment, listCategories, type Unit } from "@/lib/queries";
 import { insertOperationalEquipment } from "@/lib/operationalStore";
+import {
+  canAddAntennaEquipment,
+  antennaEquipmentLimitMessage,
+} from "@/lib/inventoryAntennaLimits";
 
 // ── Add-Equipment dynamic form types ─────────────────────────────────────────
 type EqDraft = {
@@ -106,6 +110,11 @@ export function ResourceInventoryHome() {
     }
     const category = categories.find((c) => c.name === eqCategory);
     if (!category) { toast.error("Category not found."); return; }
+
+    if (eqCategory === "Antenna" && !canAddAntennaEquipment(addEqTarget.unit.id)) {
+      toast.error(antennaEquipmentLimitMessage(addEqTarget.unit.id));
+      return;
+    }
 
     // Derive storable fields from category-specific draft
     let name = "";

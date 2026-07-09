@@ -13,6 +13,7 @@ import { unitLabelFromCode } from "@/lib/operationalDataset";
 import { resolveIntUnitSlug } from "@/lib/operationalSync";
 import {
   getAllocationsForUnit,
+  allocationSlotForUnit,
   unitCodeToSlot,
   type UnitSlot,
 } from "@/lib/priorityAllocation";
@@ -24,6 +25,8 @@ export type UnitOperationalState = {
   unitCode: string;
   unitLabel: string;
   intUnitSlug: UnitSlot | null;
+  /** Slot used by Priority & Allocation storage (may differ from intUnitSlug). */
+  prioritySlot: UnitSlot | null;
   visibleSatellites: number;
   allocatedSatellites: number;
   activeSatellites: number;
@@ -83,7 +86,8 @@ export function buildOperationalFleetState(input: {
   });
 
   const units: UnitOperationalState[] = (dbUnits ?? []).map((unit) => {
-    const intSlug = (resolveIntUnitSlug(unit.id, unit.code)?? null) as UnitSlot | null;
+    const intSlug = (resolveIntUnitSlug(unit.id, unit.code) ?? null) as UnitSlot | null;
+    const prioritySlot = allocationSlotForUnit(unit) as UnitSlot;
 
     const capability =
       fleetModel.get(unit.id) ?? {
@@ -96,7 +100,7 @@ export function buildOperationalFleetState(input: {
       ? countVisibleSatellitesForUnit(intSlug, regions)
       : 0;
 
-    const allocations = intSlug ? getAllocationsForUnit(intSlug) : [];
+    const allocations = getAllocationsForUnit(prioritySlot);
     const allocatedSatellites = allocations.length;
 
     return {
@@ -104,6 +108,7 @@ export function buildOperationalFleetState(input: {
       unitCode: unit.code,
       unitLabel: unitLabelFromCode(unit.code),
       intUnitSlug: intSlug,
+      prioritySlot,
       visibleSatellites,
       allocatedSatellites,
       activeSatellites: capability?.activeChains ?? 0,
@@ -224,7 +229,7 @@ function computePriorityAlignmentScore(state: UnitOperationalState): {
   score: number;
   issues: string[];
 } {
-  const intSlug = state.intUnitSlug;
+  const intSlug = state.prioritySlot ?? state.intUnitSlug;
   if (!intSlug) {
     return { score: 45, issues: ["No priority allocation slot for this unit"] };
   }

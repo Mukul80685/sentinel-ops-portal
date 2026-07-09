@@ -8,6 +8,7 @@ import {
   computeSatelliteAnalysis,
   isActiveScanStatus,
   scanStatusLabel,
+  resolveEngagementWithHardware,
   type SatelliteAnalysis,
   type UnitScanSnapshot,
 } from "@/lib/engagementEngine";
@@ -248,8 +249,8 @@ export function computeUnitCapability(
     );
   }
 
-  // INT Repository SSOT — alpha/bravo/charlie derive active scans from buildIntelSatelliteTable.
-  if (intUnitSlug && hasIntelData(intUnitSlug)) {
+  // INT Repository SSOT — derive active scans from merged INT table (incl. scan overrides).
+  if (intUnitSlug && hasIntelData(intUnitSlug, unitDbId)) {
     const intelResult = buildIntelBackedAssignments(
       intUnitSlug,
       unitDbId,
@@ -257,6 +258,7 @@ export function computeUnitCapability(
       equipment,
       intelRows,
       capacity.totalChains,
+      unitCode,
     );
     violations.push(...intelResult.violations);
 
@@ -291,7 +293,8 @@ export function computeUnitCapability(
   const usedProcessors = new Set<string>();
   const assignments: ValidatedSatelliteAssignment[] = [];
 
-  for (const eng of sortEngagementCandidates(unitEngs)) {
+  for (const rawEng of sortEngagementCandidates(unitEngs)) {
+    let eng = rawEng;
     const name = (eng.satellites?.name as string | undefined) ?? "Unassigned";
     const analysis = computeSatelliteAnalysisForEngagement(eng, intelRows);
 
@@ -319,10 +322,21 @@ export function computeUnitCapability(
 
     const chain = engagementHasOperationalChain(eng, eqById);
     if (!chain.valid) {
-      if (isActiveScanStatus(eng.status as string)) {
-        violations.push(`"${name}": ${chain.reason}`);
+      const rebound = resolveEngagementWithHardware(
+        eng,
+        unitEq,
+        eqById,
+        usedAntennas,
+        usedDemods,
+        usedProcessors,
+      );
+      if (!rebound) {
+        if (isActiveScanStatus(eng.status as string)) {
+          violations.push(`"${name}": ${chain.reason}`);
+        }
+        continue;
       }
-      continue;
+      eng = rebound;
     }
 
     const antennaId = eng.antenna_id as string;

@@ -9,6 +9,7 @@ import {
   validateImportFile,
 } from "@/lib/dataTableUtils";
 import { INT_UNITS, UNIT_LABELS, type IntelUnit } from "@/lib/intelUnits";
+import { intelRepoImportsKey, intelStorageSlug } from "@/lib/intelStorageKeys";
 
 export { INT_UNITS, UNIT_LABELS, type IntelUnit };
 
@@ -307,7 +308,10 @@ const LS_PREFIX = "intel-repo-imports-";
 
 export function loadImportedRecords(unitId: string): IntelRecord[] {
   try {
-    const raw = localStorage.getItem(LS_PREFIX + unitId);
+    const slug = intelStorageSlug(unitId);
+    const raw =
+      localStorage.getItem(intelRepoImportsKey(slug)) ??
+      localStorage.getItem(LS_PREFIX + unitId);
     return raw ? (JSON.parse(raw) as IntelRecord[]) : [];
   } catch {
     return [];
@@ -315,7 +319,8 @@ export function loadImportedRecords(unitId: string): IntelRecord[] {
 }
 
 export function saveImportedRecords(unitId: string, records: IntelRecord[]): void {
-  localStorage.setItem(LS_PREFIX + unitId, JSON.stringify(records));
+  const slug = intelStorageSlug(unitId);
+  localStorage.setItem(intelRepoImportsKey(slug), JSON.stringify(records));
 }
 
 export function mergeRecords(

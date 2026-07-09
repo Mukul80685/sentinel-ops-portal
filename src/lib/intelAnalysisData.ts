@@ -24,6 +24,10 @@ import {
 } from "@/lib/visibilityMatrix";
 import { bandToPolarizations, INT_UNITS } from "@/lib/intelRepository";
 import { findSatelliteInCatalog } from "@/lib/satelliteCatalog";
+import { getOperationalDataset } from "@/lib/operationalStore";
+import { loadScanOverrides } from "@/lib/intelScanStorage";
+import { loadImportedRecords } from "@/lib/intelRepository";
+import { intelStorageSlug } from "@/lib/intelStorageKeys";
 
 export const OUTPUT_TYPES = ["voice", "packet", "image", "video", "location"] as const;
 
@@ -262,8 +266,20 @@ export const UNIT_SATELLITE_ROSTER: Record<string, string[]> = {
 
 export const INTEL_MOCK_UNIT_IDS = new Set(["alpha", "bravo", "charlie"]);
 
-export function hasIntelData(unitId: string): boolean {
-  return INTEL_MOCK_UNIT_IDS.has(unitId);
+export function hasIntelData(intUnitSlug: string, dbUnitId?: string): boolean {
+  const slug = intelStorageSlug(intUnitSlug);
+  if (INTEL_MOCK_UNIT_IDS.has(slug)) return true;
+  if (UNIT_SATELLITE_ROSTER[slug]) return true;
+  if (loadScanOverrides(slug).length > 0) return true;
+  if (loadImportedRecords(slug).length > 0) return true;
+
+  if (dbUnitId) {
+    const ds = getOperationalDataset();
+    if ((ds.intelRows ?? []).some((r) => r.unit_id === dbUnitId)) return true;
+    if (ds.engagements.some((e) => e.unit_id === dbUnitId)) return true;
+  }
+
+  return false;
 }
 
 /** True when satellite appears in this unit's INT Repository roster. */

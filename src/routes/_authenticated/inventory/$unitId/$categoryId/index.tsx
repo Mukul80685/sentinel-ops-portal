@@ -23,7 +23,13 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Boxes, ClipboardList, Download, ImageOff, Trash2 } from "lucide-react";
 import { HomeNavIconBadge } from "@/components/home/HomeNavIcons";
-import { fileUrl, uploadFile } from "@/lib/storage";
+import { fileUrl, uploadFile, deleteStoredFile } from "@/lib/storage";
+import {
+  antennaPhotoLimitMessage,
+  canAddAntennaPhoto,
+  getAntennaPhotoQuota,
+  MAX_ANTENNA_IMAGES_PER_UNIT,
+} from "@/lib/inventoryAntennaLimits";
 import { getUnitById, listCategories, listEquipmentForUnit, statusClass } from "@/lib/queries";
 import { buildCsv, downloadCsv, toggleSelection, allSelected } from "@/lib/dataTableUtils";
 import { adminExportFilename } from "@/lib/adminExportNaming";
@@ -435,6 +441,7 @@ function AddDetailsDialog({
 
   const pendingItems = items.filter((i) => !i.photo_url);
   const completedCount = items.length - pendingItems.length;
+  const photoQuota = requirePhoto ? getAntennaPhotoQuota(unitId) : null;
 
   function handleSelectItem(id: string) {
     setSelectedId(id);
@@ -468,9 +475,19 @@ function AddDetailsDialog({
 
     setBusy(true);
     try {
+      const itemHadPhoto = Boolean(items.find((i) => i.id === selectedId)?.photo_url);
+      if (requirePhoto && photo && !canAddAntennaPhoto(unitId, itemHadPhoto)) {
+        toast.error(antennaPhotoLimitMessage(unitId));
+        return;
+      }
+
       let photo_url: string | undefined;
       if (photo) {
+        const previousPhoto = items.find((i) => i.id === selectedId)?.photo_url;
         photo_url = await uploadFile(photo, `equipment/${unitId}`);
+        if (previousPhoto && previousPhoto !== photo_url) {
+          deleteStoredFile(previousPhoto);
+        }
       }
       const ok = updateOperationalEquipment(selectedId, {
         name: form.name.trim() || undefined,
@@ -482,7 +499,6 @@ function AddDetailsDialog({
         ...(photo_url ? { photo_url } : {}),
       });
       if (!ok) throw new Error("Equipment not found.");
-      const itemHadPhoto = Boolean(items.find((i) => i.id === selectedId)?.photo_url);
       const remaining = requirePhoto && !itemHadPhoto
         ? Math.max(0, pendingItems.length - 1)
         : pendingItems.length;
@@ -517,6 +533,11 @@ function AddDetailsDialog({
         </DialogHeader>
 
         <form onSubmit={submit} className="space-y-4">
+          {requirePhoto && photoQuota && (
+            <p className="mono text-[10px] text-muted-foreground">
+              {photoQuota.used} of {MAX_ANTENNA_IMAGES_PER_UNIT} antenna photographs saved for this unit.
+            </p>
+          )}
           {requirePhoto && completedCount > 0 && (
             <p className="mono text-[10px] text-muted-foreground">
               {completedCount} of {items.length} resource{items.length !== 1 ? "s" : ""} already have photographs.

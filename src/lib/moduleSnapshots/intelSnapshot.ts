@@ -1,15 +1,17 @@
 import {
   getOperationalDataset,
   persistOperationalDataset,
+  rebindAndPersistUnitEngagements,
 } from "@/lib/operationalStore";
 import type {
   OpEngagement,
+  OpEquipment,
   OpIntelRow,
   OpSatellite,
   OpUnit,
   OperationalDataset,
 } from "@/lib/operationalDataset";
-import { filterUnitsForModule } from "@/lib/moduleUnitRegistry";
+import { filterUnitsForModule, unhideUnitInModule } from "@/lib/moduleUnitRegistry";
 import { MODULE_UNITS_EVENT } from "@/lib/moduleUnitRegistry";
 import { INTEL_CELL_EDITS_EVENT } from "@/lib/intelCellStore";
 import { INTEL_FREQ_EVENT } from "@/lib/intelFrequencyActions";
@@ -64,6 +66,7 @@ type IntelOperationalSlice = {
   engagements: OpEngagement[];
   satellites: OpSatellite[];
   units: OpUnit[];
+  equipment: OpEquipment[];
 };
 
 function collectIntelOperationalSlice(): IntelOperationalSlice {
@@ -73,6 +76,7 @@ function collectIntelOperationalSlice(): IntelOperationalSlice {
 
   const intelRows = (ds.intelRows ?? []).filter((row) => unitIds.has(row.unit_id));
   const engagements = ds.engagements.filter((engagement) => unitIds.has(engagement.unit_id));
+  const equipment = ds.equipment.filter((item) => unitIds.has(item.unit_id));
 
   const satelliteIds = new Set<string>();
   for (const row of intelRows) satelliteIds.add(row.satellite_id);
@@ -85,6 +89,7 @@ function collectIntelOperationalSlice(): IntelOperationalSlice {
     engagements,
     satellites,
     units: visibleUnits,
+    equipment,
   };
 }
 
@@ -143,13 +148,24 @@ function purgeIntelLocalStorage(): void {
 
 function applyIntelOperationalSlice(slice: IntelOperationalSlice): void {
   const ds = getOperationalDataset();
-  const unitIds = new Set(slice.engagements.map((engagement) => engagement.unit_id));
+  const unitIds = new Set([
+    ...slice.engagements.map((engagement) => engagement.unit_id),
+    ...slice.intelRows.map((row) => row.unit_id),
+    ...slice.equipment.map((item) => item.unit_id),
+  ]);
 
   const next: OperationalDataset = {
     ...ds,
     intelRows: slice.intelRows,
     units: mergeById(ds.units, slice.units),
     satellites: mergeById(ds.satellites, slice.satellites),
+    equipment:
+      slice.equipment.length > 0
+        ? [
+            ...ds.equipment.filter((item) => !unitIds.has(item.unit_id)),
+            ...slice.equipment,
+          ]
+        : ds.equipment,
     engagements: [
       ...ds.engagements.filter((engagement) => !unitIds.has(engagement.unit_id)),
       ...slice.engagements,
@@ -158,6 +174,11 @@ function applyIntelOperationalSlice(slice: IntelOperationalSlice): void {
   };
 
   persistOperationalDataset(next);
+
+  for (const unitId of unitIds) {
+    unhideUnitInModule(unitId, "intel");
+    rebindAndPersistUnitEngagements(unitId);
+  }
 }
 
 function writeIntelStorage(storage: Record<string, string>): void {
@@ -200,6 +221,7 @@ function validateOperationalSlice(value: unknown): IntelOperationalSlice | null 
   const engagements = value.engagements;
   const satellites = value.satellites;
   const units = value.units;
+  const equipment = value.equipment;
   if (
     !Array.isArray(intelRows) ||
     !Array.isArray(engagements) ||
@@ -213,6 +235,7 @@ function validateOperationalSlice(value: unknown): IntelOperationalSlice | null 
     engagements: engagements as OpEngagement[],
     satellites: satellites as OpSatellite[],
     units: units as OpUnit[],
+    equipment: Array.isArray(equipment) ? (equipment as OpEquipment[]) : [],
   };
 }
 
@@ -237,6 +260,19 @@ function validateReferentialIntegrity(slice: IntelOperationalSlice): string | nu
     }
     if (!satelliteIds.has(engagement.satellite_id)) {
       return `Engagement "${engagement.id}" references a satellite that is not present in the snapshot.`;
+    }
+    const hwIds = [
+      engagement.antenna_id,
+      engagement.demodulator_id,
+      engagement.processing_server_id,
+    ].filter((id): id is string => isNonEmptyString(id));
+    if (slice.equipment.length > 0) {
+      const equipmentIds = new Set(slice.equipment.map((item) => item.id));
+      for (const hwId of hwIds) {
+        if (!equipmentIds.has(hwId)) {
+          return `Engagement "${engagement.id}" references equipment "${hwId}" that is not present in the snapshot.`;
+        }
+      }
     }
   }
 

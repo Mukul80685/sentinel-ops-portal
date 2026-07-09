@@ -278,3 +278,138 @@ export function engagementDisplayStatus(
 export function engColor(pct: number) {
   return pct >= 80 ? "#ef4444" : pct >= 50 ? "#f59e0b" : "#10b981";
 }
+
+export type OperationalChainIds = {
+  antenna_id: string;
+  demodulator_id: string;
+  processing_server_id: string;
+};
+
+/** Pick the next free operational antenna → demod → processor chain for a unit. */
+export function pickAvailableOperationalChain(
+  unitEquipment: any[],
+  usedAntennas: Set<string>,
+  usedDemods: Set<string>,
+  usedProcessors: Set<string>,
+): OperationalChainIds | null {
+  const claimed = new Set<string>();
+  const picks: (string | null)[] = [];
+
+  for (const { match } of CHAIN_CATEGORIES) {
+    const catEq = unitEquipment.filter((e: any) => {
+      const name = (e.category?.name ?? "").toLowerCase();
+      return (
+        name.includes(match) &&
+        !claimed.has(e.id) &&
+        e.serviceability === "Operational"
+      );
+    });
+
+    let selected: string | null = null;
+    for (const e of catEq) {
+      const id = e.id as string;
+      if (match === "antenna" && usedAntennas.has(id)) continue;
+      if (match === "demodulat" && usedDemods.has(id)) continue;
+      if (match === "processing" && usedProcessors.has(id)) continue;
+      selected = id;
+      claimed.add(id);
+      break;
+    }
+    picks.push(selected);
+  }
+
+  const [antenna_id, , demodulator_id, processing_server_id] = picks;
+  if (!antenna_id || !demodulator_id || !processing_server_id) return null;
+
+  return { antenna_id, demodulator_id, processing_server_id };
+}
+
+export function engagementChainIsValid(
+  eng: any,
+  eqById: Map<string, any>,
+): boolean {
+  const checks = [
+    { id: eng.antenna_id, label: "Antenna" },
+    { id: eng.demodulator_id, label: "Demodulator" },
+    { id: eng.processing_server_id, label: "Processor" },
+  ];
+  for (const { id } of checks) {
+    if (!id) return false;
+    const eq = eqById.get(id as string);
+    if (!eq || eq.serviceability !== "Operational") return false;
+  }
+  return true;
+}
+
+/** Return engagement with hardware IDs rebound to current inventory when stale. */
+export function resolveEngagementWithHardware(
+  eng: any,
+  unitEquipment: any[],
+  eqById: Map<string, any>,
+  usedAntennas: Set<string>,
+  usedDemods: Set<string>,
+  usedProcessors: Set<string>,
+): any | null {
+  if (engagementChainIsValid(eng, eqById)) return eng;
+
+  const chain = pickAvailableOperationalChain(
+    unitEquipment,
+    usedAntennas,
+    usedDemods,
+    usedProcessors,
+  );
+  if (!chain) return null;
+
+  return {
+    ...eng,
+    antenna_id: chain.antenna_id,
+    demodulator_id: chain.demodulator_id,
+    processing_server_id: chain.processing_server_id,
+  };
+}
+
+/** Persistently rebind all engagements for a unit to current operational inventory. */
+export function rebindUnitEngagementHardware(
+  unitDbId: string,
+  equipment: any[],
+  engagements: any[],
+): number {
+  const unitEq = equipment.filter((e) => e.unit_id === unitDbId);
+  const unitEngs = engagements.filter((e) => e.unit_id === unitDbId);
+  if (unitEq.length === 0 || unitEngs.length === 0) return 0;
+
+  const eqById = new Map(unitEq.map((e) => [e.id as string, e]));
+  const usedAntennas = new Set<string>();
+  const usedDemods = new Set<string>();
+  const usedProcessors = new Set<string>();
+  let rebound = 0;
+
+  for (const eng of unitEngs) {
+    if (engagementChainIsValid(eng, eqById)) {
+      if (eng.antenna_id) usedAntennas.add(eng.antenna_id as string);
+      if (eng.demodulator_id) usedDemods.add(eng.demodulator_id as string);
+      if (eng.processing_server_id) usedProcessors.add(eng.processing_server_id as string);
+      continue;
+    }
+
+    const resolved = resolveEngagementWithHardware(
+      eng,
+      unitEq,
+      eqById,
+      usedAntennas,
+      usedDemods,
+      usedProcessors,
+    );
+    if (!resolved) continue;
+
+    eng.antenna_id = resolved.antenna_id;
+    eng.demodulator_id = resolved.demodulator_id;
+    eng.processing_server_id = resolved.processing_server_id;
+    usedAntennas.add(resolved.antenna_id as string);
+    usedDemods.add(resolved.demodulator_id as string);
+    usedProcessors.add(resolved.processing_server_id as string);
+    rebound++;
+  }
+
+  return rebound;
+}

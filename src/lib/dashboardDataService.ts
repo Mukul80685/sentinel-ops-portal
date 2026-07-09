@@ -150,9 +150,11 @@ export function buildEngagementStatus(
 
     const cap = state.capability;
     const assignedSatellites =
-      state.intUnitSlug != null
-        ? getAllocationsForUnit(state.intUnitSlug as UnitSlot).map((r) => r.satelliteName)
-        : [];
+      state.prioritySlot != null
+        ? getAllocationsForUnit(state.prioritySlot as UnitSlot).map((r) => r.satelliteName)
+        : state.intUnitSlug != null
+          ? getAllocationsForUnit(state.intUnitSlug as UnitSlot).map((r) => r.satelliteName)
+          : [];
 
     const activeSatellites = cap.assignments.map((a) => a.name);
 

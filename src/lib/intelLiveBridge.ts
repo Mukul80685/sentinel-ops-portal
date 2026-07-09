@@ -6,14 +6,18 @@
 import {
   isActiveScanStatus,
   scanStatusLabel,
+  resolveEngagementWithHardware,
+  pickAvailableOperationalChain,
   type SatelliteAnalysis,
 } from "@/lib/engagementEngine";
 import {
   buildIntelLinkageContext,
+  buildIntelLinkageVisibilityRows,
   buildIntelSatelliteTable,
   hasIntelData,
   type IntelSatelliteReportRow,
 } from "@/lib/intelAnalysisData";
+import { mergeIntelSatelliteTableWithStorage } from "@/lib/intelScanStorage";
 
 function engagementHasOperationalChain(
   eng: any,
@@ -35,6 +39,22 @@ function engagementHasOperationalChain(
   }
 
   return { valid: true };
+}
+
+function buildSyntheticEngagement(
+  satelliteName: string,
+  unitDbId: string,
+  chain: { antenna_id: string; demodulator_id: string; processing_server_id: string },
+): any {
+  return {
+    id: `synthetic-${unitDbId}-${satelliteName.replace(/\s+/g, "-")}`,
+    unit_id: unitDbId,
+    status: "In Progress",
+    antenna_id: chain.antenna_id,
+    demodulator_id: chain.demodulator_id,
+    processing_server_id: chain.processing_server_id,
+    satellites: { name: satelliteName },
+  };
 }
 
 /** Map INT table row → Live Engagement SatelliteAnalysis. */
@@ -89,8 +109,9 @@ export function buildIntelBackedAssignments(
   equipment: any[],
   intelRows: any[],
   maxAssignments: number,
+  unitCode?: string,
 ): IntelBackedAssignmentResult {
-  if (!hasIntelData(intUnitSlug)) {
+  if (!hasIntelData(intUnitSlug, unitDbId)) {
     return { assignments: [], violations: [] };
   }
 
@@ -98,8 +119,10 @@ export function buildIntelBackedAssignments(
   const unitEq = equipment.filter((e) => e.unit_id === unitDbId);
   const eqById = new Map(unitEq.map((e) => [e.id as string, e]));
 
-  const ctx = buildIntelLinkageContext(intUnitSlug, unitEngs, [], unitEq, intelRows);
-  const table = buildIntelSatelliteTable(intUnitSlug, ctx, unitEngs);
+  const visibilityRows = buildIntelLinkageVisibilityRows(intUnitSlug, unitDbId, unitEngs);
+  const ctx = buildIntelLinkageContext(intUnitSlug, unitEngs, visibilityRows, unitEq, intelRows);
+  const baseTable = buildIntelSatelliteTable(intUnitSlug, ctx, unitEngs);
+  const table = mergeIntelSatelliteTableWithStorage(intUnitSlug, baseTable, unitCode);
 
   const activeIntelRows = table.filter(
     (r) =>
@@ -121,9 +144,33 @@ export function buildIntelBackedAssignments(
   const violations: string[] = [];
 
   for (const row of activeIntelRows) {
-    const eng = engBySatName.get(row.satelliteName);
+    let eng = engBySatName.get(row.satelliteName) ?? null;
+
+    if (eng) {
+      eng = resolveEngagementWithHardware(
+        eng,
+        unitEq,
+        eqById,
+        usedAntennas,
+        usedDemods,
+        usedProcessors,
+      );
+    }
+
     if (!eng) {
-      violations.push(`"${row.satelliteName}": active in INT but no engagement record`);
+      const chain = pickAvailableOperationalChain(
+        unitEq,
+        usedAntennas,
+        usedDemods,
+        usedProcessors,
+      );
+      if (chain) {
+        eng = buildSyntheticEngagement(row.satelliteName, unitDbId, chain);
+      }
+    }
+
+    if (!eng) {
+      violations.push(`"${row.satelliteName}": no operational inventory chain available`);
       continue;
     }
 

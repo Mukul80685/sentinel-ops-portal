@@ -61,19 +61,20 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
+import {
+  loadScanOverrides,
+  saveScanOverrides,
+  loadSuppressedSatNamesList,
+  saveSuppressedSatNames,
+  mergeIntelSatelliteTableWithStorage,
+  type ScanReportOverride,
+} from "@/lib/intelScanStorage";
+import { unhideUnitInModule } from "@/lib/moduleUnitRegistry";
+import { rebindAndPersistUnitEngagements } from "@/lib/operationalStore";
+import { notifyOperationalDerivedRefresh } from "@/lib/operationalRefresh";
 
 // ── Scan report override storage ────────────────────────────────────────────
-// Stores user-imported aggregate rows so the scan report table reflects them.
-
-interface ScanReportOverride {
-  satelliteName: string;
-  polarization: string;
-  totalScanned: number;
-  analyzed: number;
-  pending: number;
-  productivityScore: number | null;
-  updatedOn: string;
-}
+// Uses shared intelScanStorage helpers (canonical slot-based keys).
 
 const SCAN_IMPORT_HEADERS = [
   "Satellite", "Polarization", "Scanned", "Analyzed",
@@ -166,34 +167,7 @@ function parseImportDate(raw: unknown): string {
   return fallback;
 }
 
-function scanOverridesKey(unitId: string) { return `intel-scan-overrides-${unitId}`; }
-
-function loadScanOverrides(unitId: string): ScanReportOverride[] {
-  try {
-    const raw = localStorage.getItem(scanOverridesKey(unitId));
-    return raw ? (JSON.parse(raw) as ScanReportOverride[]) : [];
-  } catch { return []; }
-}
-
 // ── Suppressed satellite rows ────────────────────────────────────────────────
-// Tracks satellite names explicitly deleted so they don't re-appear from the
-// seeded roster (tableRows) after their override data has been removed.
-function suppressedSatsKey(unitId: string) { return `intel-suppressed-sats-${unitId}`; }
-
-function loadSuppressedSats(unitId: string): string[] {
-  try {
-    const raw = localStorage.getItem(suppressedSatsKey(unitId));
-    return raw ? (JSON.parse(raw) as string[]) : [];
-  } catch { return []; }
-}
-
-function saveSuppressedSats(unitId: string, names: string[]): void {
-  localStorage.setItem(suppressedSatsKey(unitId), JSON.stringify(names));
-}
-
-function saveScanOverrides(unitId: string, overrides: ScanReportOverride[]): void {
-  localStorage.setItem(scanOverridesKey(unitId), JSON.stringify(overrides));
-}
 
 // ── Satellite setup wizard ───────────────────────────────────────────────────
 
@@ -741,10 +715,8 @@ function IntelUnitView() {
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const importFileRef = useRef<HTMLInputElement>(null);
-  const [scanOverrides, setScanOverrides] = useState<ScanReportOverride[]>(() => loadScanOverrides(unitId));
-  const [suppressedSatNames, setSuppressedSatNames] = useState<Set<string>>(
-    () => new Set(loadSuppressedSats(unitId).map((n) => n.toLowerCase())),
-  );
+  const [scanOverrides, setScanOverrides] = useState<ScanReportOverride[]>([]);
+  const [suppressedSatNames, setSuppressedSatNames] = useState<Set<string>>(new Set());
   // Keep a ref so the navigate-back effect always reads the latest overrides without
   // triggering unnecessary re-runs.
   const scanOverridesRef = useRef(scanOverrides);
@@ -769,12 +741,19 @@ function IntelUnitView() {
     return resolveIntUnitSlug(unitId, fromDb?.code) ?? unitId;
   }, [unitId, dbUnits]);
 
-  const dataAvailable = hasIntelData(intUnitSlug);
-
   const dbUnitId = useMemo(
     () => resolveOperationalUnitId(intUnitSlug, dbUnits),
     [intUnitSlug, dbUnits],
   );
+
+  const dataAvailable = hasIntelData(intUnitSlug, dbUnitId);
+
+  useEffect(() => {
+    setScanOverrides(loadScanOverrides(intUnitSlug, unit?.code));
+    setSuppressedSatNames(
+      new Set(loadSuppressedSatNamesList(intUnitSlug, unit?.code).map((n) => n.toLowerCase())),
+    );
+  }, [intUnitSlug, unit?.code]);
 
   const { data: engagements = [], isLoading: engLoading } = useQuery({
     queryKey: ENGAGEMENTS_ALL_KEY,
@@ -819,56 +798,8 @@ function IntelUnitView() {
 
   const mergedTableRows = useMemo(() => {
     const ovNameSet = new Set(scanOverrides.map((o) => o.satelliteName.toLowerCase()));
+    const filtered = mergeIntelSatelliteTableWithStorage(intUnitSlug, tableRows, unit?.code);
 
-    let combined: Array<ReturnType<typeof buildIntelSatelliteTable>[number] & {
-      isZeroImported?: boolean;
-    }>;
-
-    if (scanOverrides.length === 0) {
-      combined = tableRows;
-    } else {
-      const ovMap = new Map(scanOverrides.map((o) => [o.satelliteName.toLowerCase(), o]));
-      const updatedExisting = tableRows.map((row) => {
-        const ov = ovMap.get(row.satelliteName.toLowerCase());
-        if (!ov) return row;
-        return {
-          ...row,
-          polarization: ov.polarization,
-          totalScanned: ov.totalScanned,
-          analyzed: ov.analyzed,
-          pending: ov.pending,
-          productivityScore: ov.productivityScore,
-          reportTimestamp: ov.updatedOn,
-        };
-      });
-      // Add override rows whose satellite name doesn't appear in the computed roster
-      const rosterNames = new Set(tableRows.map((r) => r.satelliteName.toLowerCase()));
-      const extraRows = scanOverrides
-        .filter((o) => !rosterNames.has(o.satelliteName.toLowerCase()))
-        .map((o) => ({
-          reportId: `${intUnitSlug}__${o.satelliteName.replace(/\s+/g, "-")}`,
-          satelliteName: o.satelliteName,
-          scanEligible: true as const,
-          totalScanned: o.totalScanned,
-          analyzed: o.analyzed,
-          pending: o.pending,
-          productivityScore: o.productivityScore,
-          reportTimestamp: o.updatedOn,
-          polarization: o.polarization,
-          processingStatus: "ready" as const,
-          engagementStatus: null,
-        }));
-      combined = [...updatedExisting, ...extraRows];
-    }
-
-    // Remove satellites that were explicitly deleted (suppressed), so they don't
-    // re-surface from the seeded roster after their override data is cleared.
-    const filtered = combined.filter(
-      (row) => !suppressedSatNames.has(row.satelliteName.toLowerCase()),
-    );
-
-    // Tag rows that are in the override list but have all-zero counts — these should
-    // offer re-import instead of opening the drill-down.
     return filtered.map((row) => ({
       ...row,
       isZeroImported:
@@ -877,7 +808,7 @@ function IntelUnitView() {
         row.analyzed === 0 &&
         row.pending === 0,
     }));
-  }, [tableRows, scanOverrides, suppressedSatNames, intUnitSlug]);
+  }, [tableRows, scanOverrides, intUnitSlug, unit?.code]);
 
   const drillDown = useMemo(() => {
     if (!selectedReportId || !unit) return null;
@@ -939,7 +870,7 @@ function IntelUnitView() {
             ? { ...o, totalScanned: 0, analyzed: 0, pending: 0, productivityScore: null }
             : o,
         );
-        saveScanOverrides(unitId, updated);
+        saveScanOverrides(intUnitSlug, updated, unit?.code);
         setScanOverrides(updated);
       }
     }
@@ -996,14 +927,17 @@ function IntelUnitView() {
         updatedOn: parseImportDate(r[6]),
       }));
 
-      saveScanOverrides(unitId, overrides);
+      saveScanOverrides(intUnitSlug, overrides, unit?.code);
       setScanOverrides(overrides);
-      // Un-suppress any satellite that appears in the freshly imported data so it becomes
-      // visible again after previously being deleted.
       const importedLower = new Set(overrides.map((o) => o.satelliteName.toLowerCase()));
-      const newSuppressed = new Set([...suppressedSatNames].filter((n) => !importedLower.has(n)));
-      saveSuppressedSats(unitId, [...newSuppressed]);
-      setSuppressedSatNames(newSuppressed);
+      const newSuppressed = [...suppressedSatNames].filter((n) => !importedLower.has(n));
+      saveSuppressedSatNames(intUnitSlug, newSuppressed, unit?.code);
+      setSuppressedSatNames(new Set(newSuppressed));
+      unhideUnitInModule(dbUnitId, "intel");
+      rebindAndPersistUnitEngagements(dbUnitId);
+      notifyOperationalDerivedRefresh();
+      void qc.invalidateQueries({ queryKey: ENGAGEMENTS_ALL_KEY });
+      void qc.invalidateQueries({ queryKey: ["units"] });
       toast.success(`Imported ${overrides.length} scan report row${overrides.length !== 1 ? "s" : ""}`);
     } catch {
       toast.error("Failed to parse file — ensure it matches the downloaded template");
@@ -1017,7 +951,7 @@ function IntelUnitView() {
     );
     saveImportedRecords(intUnitSlug, remaining);
     const remainingOverrides = scanOverrides.filter((o) => !nameSet.has(o.satelliteName.toLowerCase()));
-    saveScanOverrides(unitId, remainingOverrides);
+    saveScanOverrides(intUnitSlug, remainingOverrides, unit?.code);
     setScanOverrides(remainingOverrides);
     // Clear setup wizard progress and imported cell data so a re-import starts fresh.
     for (const satName of satNames) {
@@ -1026,9 +960,9 @@ function IntelUnitView() {
       removeReportCellEdits(repId);
     }
     // Suppress these satellites so they don't re-appear from the seeded roster.
-    const newSuppressed = new Set([...suppressedSatNames, ...nameSet]);
-    saveSuppressedSats(unitId, [...newSuppressed]);
-    setSuppressedSatNames(newSuppressed);
+    const newSuppressed = [...new Set([...suppressedSatNames, ...nameSet])];
+    saveSuppressedSatNames(intUnitSlug, newSuppressed, unit?.code);
+    setSuppressedSatNames(new Set(newSuppressed));
 
     const opIds = (intelRows as any[])
       .filter((r) => nameSet.has((r.satellites?.name ?? "").toLowerCase()))

@@ -101,6 +101,7 @@ function createWindow() {
 
   setTimeout(() => {
     mainWindow.loadURL('http://localhost:3737');
+    mainWindow.webContents.openDevTools();
   }, 3000);
 
   mainWindow.on('closed', () => (mainWindow = null));

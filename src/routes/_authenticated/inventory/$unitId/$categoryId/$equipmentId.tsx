@@ -1,7 +1,12 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
-import { fileUrl, signedUrl, uploadFile } from "@/lib/storage";
+import { fileUrl, signedUrl, uploadFile, deleteStoredFile } from "@/lib/storage";
+import {
+  antennaPhotoLimitMessage,
+  canAddAntennaPhoto,
+  isAntennaEquipment,
+} from "@/lib/inventoryAntennaLimits";
 import { getEquipmentById, statusClass } from "@/lib/queries";
 import {
   getOperationalEquipmentById,
@@ -67,9 +72,18 @@ function EquipmentDetail() {
 
   async function changePhoto(file: File) {
     try {
+      const current = getOperationalEquipmentById(equipmentId);
+      const hadPhoto = Boolean(current?.photo_url?.trim());
+      if (isAntennaEquipment(current) && !canAddAntennaPhoto(unitId, hadPhoto)) {
+        toast.error(antennaPhotoLimitMessage(unitId));
+        return;
+      }
       const path = await uploadFile(file, `equipment/${unitId}`);
       if (!updateOperationalEquipment(equipmentId, { photo_url: path })) {
         return toast.error("Equipment not found.");
+      }
+      if (current?.photo_url && current.photo_url !== path) {
+        deleteStoredFile(current.photo_url);
       }
       toast.success("Photo updated");
       qc.invalidateQueries({ queryKey: ["eq-detail", equipmentId] });
