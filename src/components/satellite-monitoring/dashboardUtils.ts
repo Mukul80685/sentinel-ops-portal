@@ -35,6 +35,7 @@ export function formatBandPol(band: string, pol: string): string {
 }
 
 export function riskLevel(data: UnitOptimizationData): "Low" | "Medium" | "High" {
+  if (data.status === "NOT_ALLOTTED") return "Low";
   const hasCritical = OPT_FACTOR_DEFS.some((f) => data[f.key].severity === "critical");
   if (hasCritical || data.compositeScore < 45) return "High";
   if (data.compositeScore < 70) return "Medium";

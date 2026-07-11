@@ -1,6 +1,7 @@
-import { Link, createFileRoute, redirect } from "@tanstack/react-router";
+﻿import { Link, createFileRoute, redirect } from "@tanstack/react-router";
 import { Empty } from "@/components/Empty";
 import { loadRingPalette, useEngagementRingVisuals } from "@/lib/engagementRingVisuals";
+import { INT_UNITS } from "@/lib/intelRepository";
 import { useDashboardData } from "@/hooks/useDashboardData";
 import { DASHBOARD_PANEL_LABELS } from "@/lib/dashboardLabels";
 
@@ -11,7 +12,7 @@ export const Route = createFileRoute("/_authenticated/engagement/")({
   component: () => null,
 });
 
-/** Resource Engagement Status — committed RF resources only (no scan progress). */
+/** Resource Engagement Status â€” committed RF resources only (no scan progress). */
 export function EngagementDashboardView() {
   const { engagement, isLoading } = useDashboardData();
 
@@ -20,7 +21,7 @@ export function EngagementDashboardView() {
   if (isLoading) {
     return (
       <div className="py-12 text-center mono text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-        Loading {DASHBOARD_PANEL_LABELS.engagement.toLowerCase()}…
+        Loading {DASHBOARD_PANEL_LABELS.engagement.toLowerCase()}â€¦
       </div>
     );
   }
@@ -50,10 +51,10 @@ export function EngagementDashboardView() {
           >
             <div className="text-center w-full min-w-0">
               <div className="mono text-[13px] font-bold uppercase tracking-tight text-foreground leading-tight">
-                {row.unitLabel}
+                Unit {unitDisplayCode(row.unitCode)}
               </div>
               <div className="mono text-[10px] font-semibold text-foreground mt-1 truncate">
-                {row.unitLocation}
+                {unitLocation(row.unitCode)}
               </div>
             </div>
 
@@ -85,6 +86,16 @@ export function EngagementDashboardView() {
       </div>
     </>
   );
+}
+
+function unitDisplayCode(code: string): string {
+  return code.replace(/^GATE[-\s]?/i, "").trim() || code;
+}
+
+function unitLocation(code: string): string {
+  const displayCode = unitDisplayCode(code);
+  const intUnit = INT_UNITS.find((u) => u.code === displayCode);
+  return intUnit?.location ?? "â€”";
 }
 
 function FleetStat({ label, value, accent }: { label: string; value: string | number; accent?: boolean }) {

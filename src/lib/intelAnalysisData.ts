@@ -22,9 +22,10 @@ import {
   canonicalSatelliteKey,
   type GeoSatellite,
 } from "@/lib/visibilityMatrix";
-import { bandToPolarizations, INT_UNITS } from "@/lib/intelRepository";
+import { bandToPolarizations } from "@/lib/intelRepository";
 import { findSatelliteInCatalog } from "@/lib/satelliteCatalog";
 import { getOperationalDataset } from "@/lib/operationalStore";
+import { getUnitDisplayName } from "@/lib/unitDisplay";
 import { loadScanOverrides } from "@/lib/intelScanStorage";
 import { loadImportedRecords } from "@/lib/intelRepository";
 import { intelStorageSlug } from "@/lib/intelStorageKeys";
@@ -266,6 +267,18 @@ export const UNIT_SATELLITE_ROSTER: Record<string, string[]> = {
 
 export const INTEL_MOCK_UNIT_IDS = new Set(["alpha", "bravo", "charlie"]);
 
+/**
+ * True when the INT Repository unit page would display scan report rows
+ * (seeded mock units or user-uploaded scan/import data only).
+ */
+export function hasIntRepositoryContent(intUnitSlug: string, unitCode?: string): boolean {
+  const slug = intelStorageSlug(intUnitSlug, unitCode);
+  if (INTEL_MOCK_UNIT_IDS.has(slug)) return true;
+  if (loadScanOverrides(slug, unitCode).length > 0) return true;
+  if (loadImportedRecords(slug).length > 0) return true;
+  return false;
+}
+
 export function hasIntelData(intUnitSlug: string, dbUnitId?: string): boolean {
   const slug = intelStorageSlug(intUnitSlug);
   if (INTEL_MOCK_UNIT_IDS.has(slug)) return true;
@@ -375,19 +388,16 @@ function findDynamicUnit(slug: string): { name: string; code: string } | null {
 }
 
 export function getUnitIntelName(unitId: string): string {
-  return (
-    INT_UNITS.find((u) => u.id === unitId)?.name ??
-    findDynamicUnit(unitId)?.name ??
-    "Current Unit"
-  );
+  return getUnitDisplayName(unitId, "Current Unit");
 }
 
 export function getUnitIntelCode(unitId: string): string {
-  return (
-    INT_UNITS.find((u) => u.id === unitId)?.code ??
-    findDynamicUnit(unitId)?.code ??
-    "A"
-  );
+  const ds = getOperationalDataset();
+  const direct = ds.units.find((u) => u.id === unitId);
+  if (direct?.code?.trim()) return direct.code.trim();
+  const slugged = ds.units.find((u) => u.id === `op-unit-${unitId}`);
+  if (slugged?.code?.trim()) return slugged.code.trim();
+  return findDynamicUnit(unitId)?.code ?? "A";
 }
 
 /** Beam inventory from Visibility Matrix SSOT (inventory is unit-independent). */

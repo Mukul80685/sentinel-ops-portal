@@ -7,7 +7,7 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Plus, Settings2, Trash2, X } from "lucide-react";
+import { Plus, Pencil, Settings2, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,7 +28,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { addOperationalUnit } from "@/lib/operationalStore";
+import { addOperationalUnit, updateOperationalUnit } from "@/lib/operationalStore";
 import {
   MODULE_SCOPE_LABELS,
   purgeUnitFromModule,
@@ -58,9 +58,13 @@ export function UnitAdvancedFeatures({
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
   const [unitName, setUnitName] = useState("");
   const [unitLocation, setUnitLocation] = useState("");
   const [pendingDelete, setPendingDelete] = useState<Unit | null>(null);
+  const [pendingRename, setPendingRename] = useState<Unit | null>(null);
+  const [renameName, setRenameName] = useState("");
+  const [renameLocation, setRenameLocation] = useState("");
 
   const moduleLabel = MODULE_SCOPE_LABELS[scope];
 
@@ -104,6 +108,39 @@ export function UnitAdvancedFeatures({
     refresh();
   }
 
+  function openRenamePicker(unit: Unit) {
+    setPendingRename(unit);
+    setRenameName(unit.name);
+    setRenameLocation(unit.description ?? "");
+  }
+
+  function handleRenameUnit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!pendingRename) return;
+    if (!renameName.trim()) {
+      toast.error("Unit Name is required.");
+      return;
+    }
+    if (!renameLocation.trim()) {
+      toast.error("Unit Location is required.");
+      return;
+    }
+    const ok = updateOperationalUnit(pendingRename.id, {
+      name: renameName.trim(),
+      description: renameLocation.trim(),
+    });
+    if (!ok) {
+      toast.error("Unit could not be updated.");
+      return;
+    }
+    toast.success(`Unit renamed to "${renameName.trim()}" across all modules.`);
+    setPendingRename(null);
+    setRenameOpen(false);
+    setRenameName("");
+    setRenameLocation("");
+    refresh();
+  }
+
   const alignCls =
     align === "center" ? "justify-center" : align === "start" ? "justify-start" : "justify-end";
 
@@ -140,6 +177,18 @@ export function UnitAdvancedFeatures({
               }}
             >
               <Plus className="h-4 w-4" /> Add Unit
+            </Button>
+            <Button
+              variant="outline"
+              className="mono justify-start gap-2 uppercase text-[12px] tracking-wider"
+              disabled={units.length === 0}
+              onClick={() => {
+                setAdvancedOpen(false);
+                setPendingRename(null);
+                setRenameOpen(true);
+              }}
+            >
+              <Pencil className="h-4 w-4" /> Change Name of Existing Units
             </Button>
             <Button
               variant="outline"
@@ -250,6 +299,94 @@ export function UnitAdvancedFeatures({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Rename — pick unit, then edit name + location (global SSOT) */}
+      <Dialog
+        open={renameOpen}
+        onOpenChange={(open) => {
+          setRenameOpen(open);
+          if (!open) {
+            setPendingRename(null);
+            setRenameName("");
+            setRenameLocation("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="mono uppercase tracking-wide">
+              Change Name of Existing Units
+            </DialogTitle>
+          </DialogHeader>
+          {!pendingRename ? (
+            <>
+              <p className="text-xs text-muted-foreground">
+                Select a unit to rename. Changes apply across all administrator modules and the
+                satellite monitoring dashboard.
+              </p>
+              <div className="flex flex-col gap-1.5 max-h-72 overflow-y-auto">
+                {units.map((u) => (
+                  <Button
+                    key={u.id}
+                    variant="outline"
+                    className="mono justify-between gap-2 text-[12px] w-full"
+                    onClick={() => openRenamePicker(u)}
+                  >
+                    <span className="truncate text-left">
+                      {u.name}
+                      {u.description ? (
+                        <span className="text-muted-foreground"> — {u.description}</span>
+                      ) : null}
+                    </span>
+                    <Pencil className="h-3.5 w-3.5 shrink-0" />
+                  </Button>
+                ))}
+              </div>
+            </>
+          ) : (
+            <form onSubmit={handleRenameUnit} className="space-y-3">
+              <p className="mono text-[10px] text-muted-foreground uppercase tracking-wider">
+                Editing: {pendingRename.name}
+              </p>
+              <div className="space-y-1.5">
+                <Label htmlFor="af-rename-name" className="mono text-[11px] uppercase tracking-wider">
+                  Unit Name
+                </Label>
+                <Input
+                  id="af-rename-name"
+                  value={renameName}
+                  onChange={(e) => setRenameName(e.target.value)}
+                  autoFocus
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="af-rename-loc" className="mono text-[11px] uppercase tracking-wider">
+                  Unit Location
+                </Label>
+                <Input
+                  id="af-rename-loc"
+                  value={renameLocation}
+                  onChange={(e) => setRenameLocation(e.target.value)}
+                />
+              </div>
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    setPendingRename(null);
+                    setRenameName("");
+                    setRenameLocation("");
+                  }}
+                >
+                  Back
+                </Button>
+                <Button type="submit">Save Changes</Button>
+              </DialogFooter>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

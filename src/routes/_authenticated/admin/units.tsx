@@ -8,6 +8,7 @@ import {
   getOperationalDataset,
   persistOperationalDataset,
   removeOperationalUnit,
+  updateOperationalUnit,
 } from "@/lib/operationalStore";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,23 +33,6 @@ import { toggleSelection, allSelected } from "@/lib/dataTableUtils";
 export const Route = createFileRoute("/_authenticated/admin/units")({ component: UnitsAdmin });
 
 type UnitPatch = Partial<Pick<OpUnit, "code" | "name" | "description">>;
-
-function updateOperationalUnit(id: string, patch: UnitPatch): boolean {
-  const ds = getOperationalDataset();
-  const unit = ds.units.find((u) => u.id === id);
-  if (!unit) return false;
-
-  Object.assign(unit, patch);
-
-  if (patch.code !== undefined || patch.name !== undefined) {
-    for (const eq of ds.equipment.filter((e) => e.unit_id === id)) {
-      eq.units = { code: unit.code, name: unit.name };
-    }
-  }
-
-  persistOperationalDataset(ds);
-  return true;
-}
 
 function UnitsAdmin() {
   const isAdmin = useIsAdmin();

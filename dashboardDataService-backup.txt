@@ -1,5 +1,5 @@
-/**
- * DashboardDataService — live aggregation layer for the Satellite Monitoring Dashboard.
+﻿/**
+ * DashboardDataService â€” live aggregation layer for the Satellite Monitoring Dashboard.
  *
  * The dashboard NEVER stores its own operational records. All metrics are derived
  * on read from the five administrator module data sources:
@@ -16,7 +16,6 @@ import {
   type UnitActivitySatRow,
   type UnitOptimizationData,
 } from "@/lib/operationalState";
-import { unitDisplayFromRecord } from "@/lib/unitDisplay";
 import { formatLiveEngagementSatelliteLabel } from "@/lib/operationalSync";
 import {
   getAllocationsForUnit,
@@ -28,7 +27,7 @@ import {
   subscribeOperationalSync,
 } from "@/lib/operationalRefresh";
 
-// ─── Input contract (sourced from administrator modules via queries.ts) ───────
+// â”€â”€â”€ Input contract (sourced from administrator modules via queries.ts) â”€â”€â”€â”€â”€â”€â”€
 
 export type DashboardSourceInput = {
   dbUnits: { id: string; code: string; name?: string }[];
@@ -37,13 +36,12 @@ export type DashboardSourceInput = {
   intelRows: any[];
 };
 
-// ─── Derived view types ───────────────────────────────────────────────────────
+// â”€â”€â”€ Derived view types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export type EngagementUnitStatus = {
   unitId: string;
   unitCode: string;
   unitLabel: string;
-  unitLocation: string;
   occupancyPct: number;
   feasibilityStatus: string;
   /** Satellites assigned via Priority & Allocation */
@@ -66,7 +64,6 @@ export type EngagementStatusSnapshot = {
 export type UnitActivityEntry = {
   unitDbId: string;
   unitLabel: string;
-  unitLocation: string;
   unitCode: string;
   monitoredCount: number;
   activeSats: UnitActivitySatRow[];
@@ -94,7 +91,7 @@ export type DashboardMetrics = {
   optimization: OptimizationScoresSnapshot;
 };
 
-// ─── Pure builders (no React, no caching) ───────────────────────────────────
+// â”€â”€â”€ Pure builders (no React, no caching) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function buildDashboardMetrics(input: DashboardSourceInput): DashboardMetrics {
   const { dbUnits, equipment, engagements, intelRows } = input;
@@ -113,7 +110,7 @@ export function buildDashboardMetrics(input: DashboardSourceInput): DashboardMet
   return {
     fleetState,
     engagement: buildEngagementStatus(fleetState, dbUnits),
-    activity: buildUnitActivitySnapshot(fleetState, engagements, intelRows, equipment),
+    activity: buildUnitActivitySnapshot(fleetState, engagements, intelRows),
     optimization: buildOptimizationScores(fleetState, equipment),
   };
 }
@@ -127,20 +124,18 @@ function emptyDashboardMetrics(): DashboardMetrics {
   };
 }
 
-/** Resource Engagement Status — INT + Visibility + Inventory (via liveEngagementModel). */
+/** Resource Engagement Status â€” INT + Visibility + Inventory (via liveEngagementModel). */
 export function buildEngagementStatus(
   fleetState: OperationalFleetState,
   dbUnits: { id: string; code: string; name?: string }[],
 ): EngagementStatusSnapshot {
   const units: EngagementUnitStatus[] = dbUnits.map((u) => {
-    const display = unitDisplayFromRecord(u);
     const state = fleetState.byUnitId.get(u.id);
     if (!state) {
       return {
         unitId: u.id,
         unitCode: u.code,
-        unitLabel: display.name,
-        unitLocation: display.location,
+        unitLabel: u.code,
         occupancyPct: 0,
         feasibilityStatus: "NON_OPERATIONAL",
         assignedSatellites: [],
@@ -176,7 +171,6 @@ export function buildEngagementStatus(
       unitId: u.id,
       unitCode: u.code,
       unitLabel: state.unitLabel,
-      unitLocation: state.unitLocation,
       occupancyPct: cap.occupancyPct,
       feasibilityStatus: cap.feasibilityStatus,
       assignedSatellites,
@@ -202,15 +196,14 @@ export function buildEngagementStatus(
   };
 }
 
-/** Active Satellite Monitoring — INT Repository + Visibility Metrics. */
+/** Active Satellite Monitoring â€” INT Repository + Visibility Metrics. */
 export function buildUnitActivitySnapshot(
   fleetState: OperationalFleetState,
   engagements: any[],
   intelRows: any[],
-  equipment: any[] = [],
 ): UnitActivitySnapshotData {
   const units: UnitActivityEntry[] = fleetState.units.map((state) => {
-    const activity = buildUnitActivityFromState(state, engagements, intelRows, equipment);
+    const activity = buildUnitActivityFromState(state, engagements, intelRows);
     const totalScanned = activity.activeSats.reduce((s, r) => s + r.scanned, 0);
     const totalAnalyzed = activity.activeSats.reduce((s, r) => s + r.analyzed, 0);
     const totalPending = activity.activeSats.reduce(
@@ -221,7 +214,6 @@ export function buildUnitActivitySnapshot(
     return {
       unitDbId: state.unitDbId,
       unitLabel: state.unitLabel,
-      unitLocation: state.unitLocation,
       unitCode: state.unitCode,
       monitoredCount: activity.activeSats.length,
       activeSats: activity.activeSats,
@@ -238,7 +230,7 @@ export function buildUnitActivitySnapshot(
   };
 }
 
-/** Optimization Engine — Resource Inventory + Priority + Serviceability. */
+/** Optimization Engine â€” Resource Inventory + Priority + Serviceability. */
 export function buildOptimizationScores(
   fleetState: OperationalFleetState,
   equipment: any[],
@@ -261,7 +253,7 @@ export function buildOptimizationScores(
   return { byUnitId, units, avgCompositeScore };
 }
 
-// ─── Public service API ───────────────────────────────────────────────────────
+// â”€â”€â”€ Public service API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function getEngagementStatus(input: DashboardSourceInput): EngagementStatusSnapshot {
   return buildDashboardMetrics(input).engagement;

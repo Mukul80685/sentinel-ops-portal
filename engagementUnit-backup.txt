@@ -1,4 +1,4 @@
-import { Component, type ReactNode, useMemo, useState, useEffect } from "react";
+﻿import { Component, type ReactNode, useMemo, useState, useEffect } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
@@ -34,9 +34,7 @@ import {
   assignmentsToEngagementRows,
   computeUnitCapability,
 } from "@/lib/liveEngagementModel";
-import { buildIntelActiveMonitoringRows } from "@/lib/intelLiveBridge";
-import { hasIntRepositoryContent } from "@/lib/intelAnalysisData";
-import { resolveIntUnitSlug } from "@/lib/operationalSync";
+import { INT_UNITS } from "@/lib/intelRepository";
 import { DASHBOARD_PANEL_LABELS, dashboardPanelBackLink } from "@/lib/dashboardLabels";
 import { loadRingPalette, useEngagementRingVisuals } from "@/lib/engagementRingVisuals";
 import { AlertTriangle, Pencil, Plus, Trash2 } from "lucide-react";
@@ -50,7 +48,6 @@ function attachEquipmentToEngagements(rows: any[], equipment: any[]) {
   const byId = new Map(equipment.map((e) => [e.id, e]));
   return rows.map((r) => ({
     ...r,
-    chainNames: resolveChainEquipmentNames(r, equipment),
     antenna: r.antenna_id
       ? { id: r.antenna_id, name: byId.get(r.antenna_id)?.name ?? null }
       : null,
@@ -63,111 +60,6 @@ function attachEquipmentToEngagements(rows: any[], equipment: any[]) {
   }));
 }
 
-/** Resolve display names for each chain stage (matches honeycomb categories). */
-function resolveChainEquipmentNames(
-  row: any,
-  equipment: any[],
-): {
-  antenna: string | null;
-  lna: string | null;
-  lnb: string | null;
-  demodulator: string | null;
-  processor: string | null;
-  other: string | null;
-} {
-  const byId = new Map(equipment.map((e) => [e.id, e]));
-  const nameOf = (id: string | null | undefined) =>
-    id ? (byId.get(id)?.name ?? null) : null;
-
-  const usedAntennas = new Set<string>();
-  const usedDemods = new Set<string>();
-  const usedProcessors = new Set<string>();
-  if (row.antenna_id) usedAntennas.add(row.antenna_id);
-  if (row.demodulator_id) usedDemods.add(row.demodulator_id);
-  if (row.processing_server_id) usedProcessors.add(row.processing_server_id);
-
-  const claimed = new Set<string>();
-  const names: Record<string, string | null> = {};
-
-  for (const { match } of CHAIN_CATEGORIES) {
-    const catEq = equipment.filter((e: any) => {
-      const cat = (e.category?.name ?? "").toLowerCase();
-      return (
-        cat.includes(match) &&
-        !claimed.has(e.id) &&
-        e.serviceability === "Operational"
-      );
-    });
-
-    const preferId =
-      match === "antenna"
-        ? row.antenna_id
-        : match === "demodulat"
-          ? row.demodulator_id
-          : match === "processing"
-            ? row.processing_server_id
-            : null;
-
-    let selected: string | null = null;
-    if (preferId && catEq.some((e) => e.id === preferId)) {
-      selected = preferId as string;
-    } else {
-      for (const e of catEq) {
-        const id = e.id as string;
-        if (match === "antenna" && usedAntennas.has(id)) {
-          selected = id;
-          break;
-        }
-        if (match === "demodulat" && usedDemods.has(id)) {
-          selected = id;
-          break;
-        }
-        if (match === "processing" && usedProcessors.has(id)) {
-          selected = id;
-          break;
-        }
-        if (match === "lna" || match === "lnb") {
-          selected = id;
-          break;
-        }
-      }
-    }
-
-    if (selected) {
-      claimed.add(selected);
-      names[match] = nameOf(selected);
-    } else {
-      names[match] = null;
-    }
-  }
-
-  const chainIds = new Set(
-    [row.antenna_id, row.demodulator_id, row.processing_server_id, ...Array.from(claimed)].filter(Boolean),
-  );
-  const otherEq = equipment.find(
-    (e: any) =>
-      !chainIds.has(e.id) &&
-      e.serviceability === "Operational" &&
-      !(e.category?.name ?? "").toLowerCase().match(/antenna|lna|lnb|demodulat|processing/),
-  );
-
-  return {
-    antenna: names.antenna ?? nameOf(row.antenna_id),
-    lna: names.lna ?? null,
-    lnb: names.lnb ?? null,
-    demodulator: names.demodulat ?? nameOf(row.demodulator_id),
-    processor: names.processing ?? nameOf(row.processing_server_id),
-    other: otherEq?.name ?? null,
-  };
-}
-
-function ResourceNameCell({ value }: { value: string | null | undefined }) {
-  if (value) {
-    return <span className="text-foreground">{value}</span>;
-  }
-  return <span className="text-foreground/60">—</span>;
-}
-
 export const Route = createFileRoute("/_authenticated/engagement/$unitId")({
   component: EngagementUnitPage,
 });
@@ -177,11 +69,11 @@ function unitDisplayCode(code: string): string {
 }
 function parseLnaType(remarks: string | null): string {
   const m = remarks?.match(/LNA\/LNB:(LNA|LNB)/);
-  return m ? m[1] : "—";
+  return m ? m[1] : "â€”";
 }
 function parseDemodType(remarks: string | null): string {
   const m = remarks?.match(/DEMOD_TYPE:([\w-]+)/);
-  return m ? m[1] : "—";
+  return m ? m[1] : "â€”";
 }
 
 function resourceCompleteness(r: any): { isPending: boolean; missing: string[] } {
@@ -210,7 +102,7 @@ function StatusBadge({ label }: { label: string }) {
   );
 }
 
-// ─── Resource rings ───────────────────────────────────────────────────────────
+// â”€â”€â”€ Resource rings â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function SmallRing({
   pct, label, engaged, faulty, total,
@@ -235,7 +127,7 @@ function SmallRing({
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
           <span className="mono font-bold leading-none text-[11px]" style={{ color: textColor }}>
-            {total === 0 ? "—" : `${pct}%`}
+            {total === 0 ? "â€”" : `${pct}%`}
           </span>
         </div>
       </div>
@@ -286,32 +178,30 @@ function ResourceHoneycomb({
 }) {
   const byLabel = (label: string) => resourceStats.find((r) => r.label === label);
   const antennas     = byLabel("Antennas");
-  const lna            = byLabel("LNA");
   const lnb            = byLabel("LNB");
   const demodulators   = byLabel("Demodulators");
   const processors     = byLabel("Processors");
   const other          = byLabel("Other");
 
-  const rings = [
-    antennas && { ...antennas, label: "Antennas" as const },
-    lna && { ...lna, label: "LNA" as const },
-    lnb && { ...lnb, label: "LNB" as const },
-    demodulators && { ...demodulators, label: "Demodulators" as const },
-    processors && { ...processors, label: "Processors" as const },
-    other && other.total > 0 && { ...other, label: "Other Resources" as const },
-  ].filter(Boolean) as {
-    label: string;
-    total: number;
-    faulty: number;
-    engaged: number;
-    pct: number;
-  }[];
-
   return (
-    <div className="flex-1 min-w-0 grid grid-cols-3 gap-x-3 gap-y-3 items-start justify-items-center">
-      {rings.map((ring) => (
-        <SmallRing key={ring.label} {...ring} />
-      ))}
+    <div className="flex-1 min-w-0 grid grid-cols-6 gap-x-0 gap-y-1 items-start">
+      <div className="col-span-2 flex justify-center">
+        {antennas && <SmallRing {...antennas} label="Antennas" />}
+      </div>
+      <div className="col-span-2 flex justify-center">
+        {lnb && <SmallRing {...lnb} label="LNB" />}
+      </div>
+      <div className="col-span-2 flex justify-center">
+        {demodulators && <SmallRing {...demodulators} label="Demodulators" />}
+      </div>
+      <div className="col-span-2 col-start-2 flex justify-center">
+        {processors && <SmallRing {...processors} label="Processors" />}
+      </div>
+      <div className="col-span-2 col-start-4 flex justify-center">
+        {other && other.total > 0 && (
+          <SmallRing {...other} label="Other Resources" />
+        )}
+      </div>
     </div>
   );
 }
@@ -355,7 +245,7 @@ function EngagementVisualization({
   );
 }
 
-// ─── Main component ───────────────────────────────────────────────────────────
+// â”€â”€â”€ Main component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class EngagementErrorBoundary extends Component<
   { children: ReactNode },
@@ -451,51 +341,22 @@ function EngagementUnit() {
     staleTime: 30 * 1000,
   });
 
-  const intUnitSlug = useMemo(
-    () => resolveIntUnitSlug(unitId, unit?.code),
-    [unitId, unit?.code],
-  );
-
-  const engagementSource = allEngagements.length > 0 ? allEngagements : rows;
-
   const capability = useMemo(
     () =>
       computeUnitCapability(
         unitId,
         unit?.code,
-        engagementSource,
+        allEngagements.length > 0 ? allEngagements : rows,
         equipmentRaw,
         intelRows,
       ),
-    [unitId, unit?.code, engagementSource, equipmentRaw, intelRows],
+    [unitId, unit?.code, allEngagements, rows, equipmentRaw, intelRows],
   );
 
   const validatedActiveRows = useMemo(
     () => assignmentsToEngagementRows(capability, enrichedRows),
     [capability, enrichedRows],
   );
-
-  const intelMonitoringAssignments = useMemo(() => {
-    if (!intUnitSlug || !hasIntRepositoryContent(intUnitSlug, unit?.code)) return null;
-    return buildIntelActiveMonitoringRows(
-      intUnitSlug,
-      unitId,
-      engagementSource,
-      equipmentRaw,
-      intelRows,
-      unit?.code,
-    );
-  }, [intUnitSlug, unitId, engagementSource, equipmentRaw, intelRows, unit?.code]);
-
-  const activeMonitoringRows = useMemo(() => {
-    if (intelMonitoringAssignments) {
-      return attachEquipmentToEngagements(
-        intelMonitoringAssignments.map((a) => a.engagement),
-        equipmentRaw,
-      );
-    }
-    return [];
-  }, [intelMonitoringAssignments, equipmentRaw]);
 
   const rawInProgressRows = useMemo(
     () => enrichedRows.filter((r: any) => ACTIVE_SCAN_STATUSES.has(r.status)),
@@ -526,7 +387,7 @@ function EngagementUnit() {
       const total   = catEq.length;
       const faulty  = catEq.filter((e: any) => NON_OPERATIONAL.has(e.serviceability)).length;
       const active  = catEq.filter((e: any) => e.serviceability === "Operational" && allocatedIds.has(e.id)).length;
-      const engaged = active;
+      const engaged = faulty + active;
       const pct     = total === 0 ? 0 : Math.min(100, Math.round((engaged / total) * 100));
       return { label, total, faulty, allocated: active, engaged, pct };
     });
@@ -543,17 +404,11 @@ function EngagementUnit() {
 
   const analysisByEngId = useMemo(() => {
     const map = new Map<string, ReturnType<typeof computeSatelliteAnalysis>>();
-    if (intelMonitoringAssignments) {
-      for (const a of intelMonitoringAssignments) {
-        map.set(a.engagementId, a.analysis);
-      }
-      return map;
-    }
     for (const a of capability.assignments) {
       map.set(a.engagementId, a.analysis);
     }
     return map;
-  }, [intelMonitoringAssignments, capability.assignments]);
+  }, [capability.assignments]);
 
   async function update(id: string, patch: any) {
     if (!updateOperationalEngagement(id, patch)) {
@@ -571,19 +426,22 @@ function EngagementUnit() {
     qc.invalidateQueries({ queryKey: ENGAGEMENTS_ALL_KEY });
   }
 
-  const unitLabel = unit?.name ?? "—";
-  const unitLocation = unit?.description ?? undefined;
+  const displayCode = unitDisplayCode(unit?.code ?? "â€”");
+  const unitLabel   = `Unit ${displayCode}`;
+  const unitLocation = (() => {
+    const intUnit = INT_UNITS.find((u) => u.code === displayCode);
+    return intUnit?.location ?? (unit as any)?.description ?? undefined;
+  })();
 
   const RESOURCE_HEADERS = [
     "#",
     "Satellite",
     "Polarization",
     "Antenna",
-    "LNA",
-    "LNB",
+    "LNA/LNB",
     "Demodulator",
     "Processor",
-    "Other Resources",
+    "Allocation Status",
     "",
   ];
 
@@ -606,18 +464,18 @@ function EngagementUnit() {
         }
       />
 
-      {/* Engaged resources — active monitoring sessions (no scan statistics) */}
+      {/* Engaged resources â€” active monitoring sessions (no scan statistics) */}
       <div className="panel overflow-hidden mb-3">
         <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-secondary/20">
           <span className="mono text-[10.5px] font-bold uppercase tracking-wider text-foreground">
-            Engaged Resources — Active Monitoring
+            Engaged Resources â€” Active Monitoring
           </span>
           <span className="mono text-[7.5px] uppercase tracking-[0.15em] text-foreground/70">
-            {activeMonitoringRows.length} sessions
+            {validatedActiveRows.length} sessions
           </span>
         </div>
 
-        {activeMonitoringRows.length === 0 ? (
+        {validatedActiveRows.length === 0 ? (
           <div className="px-4 py-5 text-center mono text-[9px] text-foreground/70 uppercase tracking-wider">
             No resources currently engaged
           </div>
@@ -638,54 +496,85 @@ function EngagementUnit() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {activeMonitoringRows.map((r: any, idx: number) => {
+                {validatedActiveRows.map((r: any, idx: number) => {
+                  const { isPending, missing } = resourceCompleteness(r);
                   const analysis =
                     analysisByEngId.get(r.id) ?? computeSatelliteAnalysis(r, intelRows);
-                  const chain = r.chainNames ?? resolveChainEquipmentNames(r, equipmentRaw);
+                  const allocationLabel = isPending
+                    ? "Pending Allocation"
+                    : engagementDisplayStatus(r.status, false, analysis.pending);
 
                   return (
                     <tr
                       key={r.id}
-                      className="transition-colors hover:bg-secondary/20"
+                      className={`transition-colors ${
+                        isPending ? "bg-amber-500/5 hover:bg-amber-500/10" : "hover:bg-secondary/20"
+                      }`}
                     >
                       <td className="px-3 py-2.5 text-foreground/70">{idx + 1}</td>
 
                       <td className="px-3 py-2.5 font-bold text-foreground whitespace-nowrap">
-                        {r.satellites?.name ?? "—"}
+                        {r.satellites?.name ?? "â€”"}
                       </td>
 
                       <td className="px-3 py-2.5 whitespace-nowrap">
-                        {analysis.polarization !== "—" ? (
+                        {analysis.polarization !== "â€”" ? (
                           <span className="mono text-[9px] font-semibold text-primary bg-primary/5 border border-primary/15 px-1.5 py-0.5 rounded-sm">
                             {analysis.polarization}
                           </span>
                         ) : (
-                          <span className="text-foreground/60">—</span>
+                          <span className="text-foreground/60">â€”</span>
                         )}
                       </td>
 
                       <td className="px-3 py-2.5 whitespace-nowrap">
-                        <ResourceNameCell value={chain.antenna} />
+                        {r.antenna?.name ? (
+                          <span className="text-foreground">{r.antenna.name}</span>
+                        ) : (
+                          <span className="text-destructive italic text-[9px]">missing</span>
+                        )}
                       </td>
 
                       <td className="px-3 py-2.5 whitespace-nowrap">
-                        <ResourceNameCell value={chain.lna} />
+                        {r.antenna_id ? (
+                          <span className="px-1.5 py-0.5 rounded-sm bg-secondary/60 text-secondary-foreground text-[8px] uppercase">
+                            {parseLnaType(r.remarks)}
+                          </span>
+                        ) : (
+                          <span className="text-foreground/60">â€”</span>
+                        )}
                       </td>
 
                       <td className="px-3 py-2.5 whitespace-nowrap">
-                        <ResourceNameCell value={chain.lnb} />
+                        {r.demodulator?.name ? (
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-foreground">{r.demodulator.name}</span>
+                            {parseDemodType(r.remarks) !== "â€”" && (
+                              <span className="text-[8px] text-foreground/70 uppercase">
+                                {parseDemodType(r.remarks)}
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-destructive italic text-[9px]">missing</span>
+                        )}
+                      </td>
+
+                      <td className="px-3 py-2.5 text-foreground whitespace-nowrap">
+                        {r.server?.name ? (
+                          r.server.name
+                        ) : (
+                          <span className="text-destructive italic text-[9px]">missing</span>
+                        )}
                       </td>
 
                       <td className="px-3 py-2.5 whitespace-nowrap">
-                        <ResourceNameCell value={chain.demodulator} />
-                      </td>
-
-                      <td className="px-3 py-2.5 whitespace-nowrap">
-                        <ResourceNameCell value={chain.processor} />
-                      </td>
-
-                      <td className="px-3 py-2.5 whitespace-nowrap">
-                        <ResourceNameCell value={chain.other} />
+                        <StatusBadge label={allocationLabel} />
+                        {isPending && missing.length > 0 && (
+                          <div className="mono text-[8px] text-amber-700 mt-0.5">
+                            Missing: {missing.join(", ")}
+                          </div>
+                        )}
                       </td>
 
                       <td className="px-2 py-2.5">
@@ -715,7 +604,7 @@ function EngagementUnit() {
             Planned Satellites
           </span>
           <span className="mono text-[7.5px] uppercase tracking-[0.15em] text-foreground/70">
-            Queued · Awaiting resource assignment
+            Queued Â· Awaiting resource assignment
           </span>
         </div>
 
@@ -742,10 +631,10 @@ function EngagementUnit() {
                   <tr key={r.id} className="hover:bg-secondary/20 transition-colors">
                     <td className="px-3 py-2 text-foreground/70">{idx + 1}</td>
                     <td className="px-3 py-2 font-bold text-foreground whitespace-nowrap">
-                      {r.satellites?.name ?? "—"}
+                      {r.satellites?.name ?? "â€”"}
                     </td>
                     <td className="px-3 py-2 text-foreground/80 whitespace-nowrap">
-                      {r.observation_start ? new Date(r.observation_start).toLocaleString() : "—"}
+                      {r.observation_start ? new Date(r.observation_start).toLocaleString() : "â€”"}
                     </td>
                     <td className="px-3 py-2">
                       <StatusBadge label={engagementDisplayStatus(r.status, false, 0)} />
@@ -771,7 +660,7 @@ function EngagementUnit() {
 
       {engError && (
         <div className="panel mb-3 px-3 py-2 mono text-[10px] text-amber-800 border border-amber-400/30 bg-amber-400/10">
-          Engagement records could not be loaded — showing available unit data only.
+          Engagement records could not be loaded â€” showing available unit data only.
         </div>
       )}
 
@@ -919,7 +808,7 @@ function EditEngagement({
       <DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="mono uppercase tracking-wider text-[12px]">
-            Edit Engagement — {row.satellites?.name ?? "—"}
+            Edit Engagement â€” {row.satellites?.name ?? "â€”"}
           </DialogTitle>
         </DialogHeader>
 
@@ -977,7 +866,7 @@ function EditEngagement({
             </F>
             <F label="Demodulator">
               <Select value={form.demodulator_id} onValueChange={(v) => set("demodulator_id", v)}>
-                <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+                <SelectTrigger><SelectValue placeholder="â€”" /></SelectTrigger>
                 <SelectContent>
                   {availableDemod.map((e: any) => <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>)}
                 </SelectContent>
@@ -987,7 +876,7 @@ function EditEngagement({
 
           <F label="Processor">
             <Select value={form.processing_server_id} onValueChange={(v) => set("processing_server_id", v)}>
-              <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+              <SelectTrigger><SelectValue placeholder="â€”" /></SelectTrigger>
               <SelectContent>
                 {availableServers.map((e: any) => <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>)}
               </SelectContent>
@@ -1154,7 +1043,7 @@ function AddEngagement({ unitId, activeRows, equipment, primary }: AddEngagement
           <div className="mono text-[8.5px] text-foreground/75 border border-border/50 rounded-sm px-2 py-1.5 bg-secondary/10">
             Antenna capacity: <span className="font-bold text-foreground">{availableAntennas.length}</span> of{" "}
             <span className="font-bold text-foreground">{serviceable("antenna").length}</span> serviceable unallocated
-            &nbsp;·&nbsp; Max concurrent = {serviceable("antenna").length}
+            &nbsp;Â·&nbsp; Max concurrent = {serviceable("antenna").length}
           </div>
         )}
 
@@ -1176,7 +1065,7 @@ function AddEngagement({ unitId, activeRows, equipment, primary }: AddEngagement
             </Select>
           </F>
 
-          <F label={`Antenna * — ${availableAntennas.length} available`}>
+          <F label={`Antenna * â€” ${availableAntennas.length} available`}>
             <Select value={form.antenna_id} onValueChange={(v) => set("antenna_id", v)} disabled={noAntenna}>
               <SelectTrigger><SelectValue placeholder={noAntenna ? "None available" : "Select antenna *"} /></SelectTrigger>
               <SelectContent>
@@ -1225,9 +1114,9 @@ function AddEngagement({ unitId, activeRows, equipment, primary }: AddEngagement
                 </SelectContent>
               </Select>
             </F>
-            <F label={`Device * — ${availableDemod.length} available`}>
+            <F label={`Device * â€” ${availableDemod.length} available`}>
               <Select value={form.demodulator_id} onValueChange={(v) => set("demodulator_id", v)}>
-                <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+                <SelectTrigger><SelectValue placeholder="â€”" /></SelectTrigger>
                 <SelectContent>
                   {availableDemod.length === 0
                     ? <SelectItem value="_none" disabled>None available</SelectItem>
@@ -1237,9 +1126,9 @@ function AddEngagement({ unitId, activeRows, equipment, primary }: AddEngagement
             </F>
           </div>
 
-          <F label={`Processor * — ${availableServers.length} available`}>
+          <F label={`Processor * â€” ${availableServers.length} available`}>
             <Select value={form.processing_server_id} onValueChange={(v) => set("processing_server_id", v)}>
-              <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+              <SelectTrigger><SelectValue placeholder="â€”" /></SelectTrigger>
               <SelectContent>
                 {availableServers.length === 0
                   ? <SelectItem value="_none" disabled>None available</SelectItem>
@@ -1268,7 +1157,7 @@ function AddEngagement({ unitId, activeRows, equipment, primary }: AddEngagement
 
           <Button type="submit" disabled={!canSubmit} className="w-full mono uppercase tracking-wider text-[10px]">
             {noAntenna
-              ? "Blocked — No Antenna Available"
+              ? "Blocked â€” No Antenna Available"
               : inProgressMissingResources
                 ? "Assign Required Resources First"
                 : "Create Engagement"}

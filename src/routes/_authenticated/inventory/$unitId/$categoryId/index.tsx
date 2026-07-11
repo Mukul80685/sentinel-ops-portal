@@ -31,6 +31,7 @@ import {
   MAX_ANTENNA_IMAGES_PER_UNIT,
 } from "@/lib/inventoryAntennaLimits";
 import { getUnitById, listCategories, listEquipmentForUnit, statusClass } from "@/lib/queries";
+import { unitDisplayFromRecord } from "@/lib/unitDisplay";
 import { buildCsv, downloadCsv, toggleSelection, allSelected } from "@/lib/dataTableUtils";
 import { adminExportFilename } from "@/lib/adminExportNaming";
 
@@ -134,10 +135,7 @@ function EquipmentList() {
     toast.success(`${list.length} record${list.length !== 1 ? "s" : ""} exported.`);
   }
 
-  const unitLetter = meta?.unit?.code?.split("-").pop() ?? "";
-  const unitLabel = meta?.unit
-    ? (unitLetter.length === 1 ? `Unit ${unitLetter}` : meta.unit.name)
-    : "";
+  const unitLabel = meta?.unit ? unitDisplayFromRecord(meta.unit).name : "";
   const headerPageTitle = meta
     ? `${unitLabel} \u2014 ${meta.cat?.name ?? "Equipment"}`
     : "Equipment";

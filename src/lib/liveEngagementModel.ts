@@ -13,7 +13,7 @@ import {
   type UnitScanSnapshot,
 } from "@/lib/engagementEngine";
 import { canUnitScanSatellite } from "@/lib/intelIntegrity";
-import { hasIntelData, isSatelliteInIntRoster } from "@/lib/intelAnalysisData";
+import { hasIntRepositoryContent, isSatelliteInIntRoster } from "@/lib/intelAnalysisData";
 import { buildIntelBackedAssignments } from "@/lib/intelLiveBridge";
 import {
   resolveIntUnitSlug,
@@ -24,6 +24,7 @@ export type FeasibilityStatus = "VALID" | "DEGRADED" | "NON_OPERATIONAL";
 
 export type StageAvailability = {
   antennas: number;
+  lnas: number;
   lnbs: number;
   demodulators: number;
   processors: number;
@@ -91,11 +92,11 @@ export function countServiceableChainCapacity(equipment: any[]): StageAvailabili
     );
   }
 
-  const [antennas = 0, lnbs = 0, demodulators = 0, processors = 0] = stageCounts;
+  const [antennas = 0, lnas = 0, lnbs = 0, demodulators = 0, processors = 0] = stageCounts;
   const totalChains =
     stageCounts.length === 0 ? 0 : Math.min(...stageCounts);
 
-  return { antennas, lnbs, demodulators, processors, totalChains };
+    return { antennas, lnas, lnbs, demodulators, processors, totalChains };
 }
 
 function engagementHasOperationalChain(
@@ -203,6 +204,7 @@ export function computeUnitCapability(
     occupancyPct: 0,
     availableByStage: {
       antennas: capacity.antennas,
+      lnas: capacity.lnas,
       lnbs: capacity.lnbs,
       demodulators: capacity.demodulators,
       processors: capacity.processors,
@@ -237,6 +239,29 @@ export function computeUnitCapability(
     };
   }
 
+  // No INT Repository content → no derived engagement (matches Active Satellite Monitoring gate).
+  if (intUnitSlug && !hasIntRepositoryContent(intUnitSlug, unitCode)) {
+    return {
+      unitId: unitDbId,
+      intUnitSlug,
+      feasibilityStatus: "VALID",
+      constraintViolations: [],
+      totalChains: capacity.totalChains,
+      maxPossibleScans: capacity.totalChains,
+      activeChains: 0,
+      occupancyPct: 0,
+      availableByStage: {
+        antennas: capacity.antennas,
+        lnas: capacity.lnas,
+        lnbs: capacity.lnbs,
+        demodulators: capacity.demodulators,
+        processors: capacity.processors,
+      },
+      assignments: [],
+      snapshot: { activeCount: 0, satellites: [] },
+    };
+  }
+
   const unitEngs = engagements.filter((e) => e.unit_id === unitDbId);
   const rawActive = unitEngs.filter((e) => {
     const status = e.status as string;
@@ -250,7 +275,7 @@ export function computeUnitCapability(
   }
 
   // INT Repository SSOT — derive active scans from merged INT table (incl. scan overrides).
-  if (intUnitSlug && hasIntelData(intUnitSlug, unitDbId)) {
+  if (intUnitSlug && hasIntRepositoryContent(intUnitSlug, unitCode)) {
     const intelResult = buildIntelBackedAssignments(
       intUnitSlug,
       unitDbId,
@@ -279,6 +304,7 @@ export function computeUnitCapability(
       occupancyPct,
       availableByStage: {
         antennas: capacity.antennas,
+        lnas: capacity.lnas, 
         lnbs: capacity.lnbs,
         demodulators: capacity.demodulators,
         processors: capacity.processors,
@@ -391,6 +417,7 @@ export function computeUnitCapability(
     occupancyPct,
     availableByStage: {
       antennas: capacity.antennas,
+      lnas: capacity.lnas,
       lnbs: capacity.lnbs,
       demodulators: capacity.demodulators,
       processors: capacity.processors,

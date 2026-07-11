@@ -1,27 +1,77 @@
-import { createFileRoute, redirect } from "@tanstack/react-router"; import { useMemo, useState, type ComponentType } from "react"; import { AppShell } from "@/components/AppShell"; import { HomeNavIconBadge, type HomeIconTheme } from "@/components/home/HomeNavIcons"; import { useOperationalState } from "@/hooks/useOperationalState"; import { buildUnitActivityFromState, buildUnitOptimizationData, type OperationalFleetState, type UnitOptimizationData } from "@/lib/operationalState"; import {   CONTROL_CENTER_MODULE_MAP,   ccHubSearch,   isControlCenterModule,   type ControlCenterModuleId, } from "@/lib/controlCenter"; import { scoreRingPalette, useEngagementRingVisuals } from "@/lib/engagementRingVisuals"; import {   EngagementDashboardView,   ImportantFrequenciesView,   IntelRepositoryView,   PriorityAllocationView, } from "@/components/control-center/ControlCenterModuleViews"; import {   Activity,   AlertTriangle,   Archive,   BarChart3,   ChevronDown,   ChevronLeft,   ChevronRight,   ChevronUp,   Globe,   Info,   ListOrdered,   Minus,   Plus,   Satellite as SatIcon,   Search,   Shield,   Star,   TrendingDown,   TrendingUp,   X,   Zap, } from "lucide-react";
+import { createFileRoute, redirect } from "@tanstack/react-router";
+import { useMemo, useState, useCallback, type ComponentType } from "react";
+import { AppShell } from "@/components/AppShell";
+import { HomeNavIconBadge, type HomeIconTheme } from "@/components/home/HomeNavIcons";
+import { useOperationalState } from "@/hooks/useOperationalState";
+import { buildUnitActivityFromState, buildUnitOptimizationData, type OperationalFleetState, type UnitOptimizationData } from "@/lib/operationalState";
+import {
+  CONTROL_CENTER_MODULE_MAP,
+  ccHubSearch,
+  isControlCenterModule,
+  type ControlCenterModuleId,
+} from "@/lib/controlCenter";
+import { scoreRingPalette, useEngagementRingVisuals } from "@/lib/engagementRingVisuals";
+import {
+  EngagementDashboardView,
+  ImportantFrequenciesView,
+  IntelRepositoryView,
+  PriorityAllocationView,
+} from "@/components/control-center/ControlCenterModuleViews";
+import {
+  Activity,
+  AlertTriangle,
+  Archive,
+  BarChart3,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  Globe,
+  Info,
+  ListOrdered,
+  Minus,
+  Pencil,
+  Plus,
+  Satellite as SatIcon,
+  Search,
+  Shield,
+  Star,
+  TrendingDown,
+  TrendingUp,
+  X,
+  Zap,
+} from "lucide-react";
 
-export const Route = createFileRoute("/_authenticated/control-center")({   ssr: false,   component: ControlCenterPage,   head: () => ({ meta: [{ title: "Control Center — SSACC" }] }),   validateSearch: (search: Record<string, unknown>) => {     const moduleRaw = typeof search.module === "string" ? search.module : undefined;     const module = moduleRaw && isControlCenterModule(moduleRaw) ? moduleRaw : undefined;     return {       unit: typeof search.unit === "string" ? search.unit : undefined,       module,     };   },   beforeLoad: ({ search }) => {     if (!search.module) {       throw redirect({ to: "/control-center", search: ccHubSearch("engagement") });     }   }, });
+export const Route = createFileRoute("/_authenticated/control-center")({
+  ssr: false,
+  component: ControlCenterPage,
+  head: () => ({ meta: [{ title: "Control Center — SSACC" }] }),
+  validateSearch: (search: Record<string, unknown>) => {
+    const moduleRaw = typeof search.module === "string" ? search.module : undefined;
+    const module = moduleRaw && isControlCenterModule(moduleRaw) ? moduleRaw : undefined;
+    return {
+      unit: typeof search.unit === "string" ? search.unit : undefined,
+      module,
+    };
+  },
+  beforeLoad: ({ search }) => {
+    if (!search.module) {
+      throw redirect({ to: "/control-center", search: ccHubSearch("engagement") });
+    }
+  },
+});
 
 // ── TYPES ──────────────────────────────────────────────────────────────────
-
-const UNIT_LABELS = [   "Unit A", "Unit B", "Unit C", "Unit D",   "Unit E", "Unit F", "Unit G", "Unit H", ] as const;
-type UnitLabel = typeof UNIT_LABELS[number];
-
-const REGIONS = [   "China", "India", "Pakistan", "Europe",   "Middle East", "SE Asia", "Russia", "Americas", ] as const;
-type Region = typeof REGIONS[number];
-type OrbitType = "GEO" | "MEO" | "LEO";
 
 type MetricTrend     = "improving" | "stable" | "degrading";
 type InsightCategory = "Capability" | "Coverage" | "Output" | "Utilization";
 type Severity        = "High" | "Medium" | "Low";
 
-type SatRecord = { id: string; name: string; region: Region; orbit: OrbitType };
-
 type Insight = {
   id: string;
   title: string;
   detail: string;
-  units?: UnitLabel[];
+  units?: string[];
   regions?: string[];
   category: InsightCategory;
   severity: Severity;
@@ -62,217 +112,42 @@ const OPT_FACTOR_DEFS: Array<{ key: FactorKey; label: string; weight: number; ab
   { key: "serviceability", label: "Serviceability",       weight: 1 / 3, abbr: "S" },
 ];
 
-// ── SATELLITE CATALOG — 150 ENTRIES ────────────────────────────────────────
-
-const SAT_CATALOG: SatRecord[] = [
-  // China (25)
-  { id:"c01", name:"ChinaSat 1A",    region:"China",    orbit:"GEO" },
-  { id:"c02", name:"ChinaSat 2A",    region:"China",    orbit:"GEO" },
-  { id:"c03", name:"ChinaSat 3A",    region:"China",    orbit:"GEO" },
-  { id:"c04", name:"ChinaSat 4",     region:"China",    orbit:"GEO" },
-  { id:"c05", name:"ChinaSat 5B",    region:"China",    orbit:"GEO" },
-  { id:"c06", name:"ChinaSat 6A",    region:"China",    orbit:"GEO" },
-  { id:"c07", name:"ChinaSat 6B",    region:"China",    orbit:"GEO" },
-  { id:"c08", name:"ChinaSat 7",     region:"China",    orbit:"GEO" },
-  { id:"c09", name:"ChinaSat 9",     region:"China",    orbit:"GEO" },
-  { id:"c10", name:"ChinaSat 9A",    region:"China",    orbit:"GEO" },
-  { id:"c11", name:"ChinaSat 10",    region:"China",    orbit:"GEO" },
-  { id:"c12", name:"ChinaSat 11",    region:"China",    orbit:"GEO" },
-  { id:"c13", name:"ChinaSat 12",    region:"China",    orbit:"GEO" },
-  { id:"c14", name:"ChinaSat 16",    region:"China",    orbit:"GEO" },
-  { id:"c15", name:"ChinaSat 18",    region:"China",    orbit:"GEO" },
-  { id:"c16", name:"SinoSat 1",      region:"China",    orbit:"GEO" },
-  { id:"c17", name:"SinoSat 2",      region:"China",    orbit:"GEO" },
-  { id:"c18", name:"Apstar 5",       region:"China",    orbit:"GEO" },
-  { id:"c19", name:"Apstar 6",       region:"China",    orbit:"GEO" },
-  { id:"c20", name:"Apstar 6C",      region:"China",    orbit:"GEO" },
-  { id:"c21", name:"Apstar 7",       region:"China",    orbit:"GEO" },
-  { id:"c22", name:"Apstar 9",       region:"China",    orbit:"GEO" },
-  { id:"c23", name:"Zhongxing 9A",   region:"China",    orbit:"GEO" },
-  { id:"c24", name:"Fengyun 4A",     region:"China",    orbit:"GEO" },
-  { id:"c25", name:"Beidou-IGSO 1",  region:"China",    orbit:"MEO" },
-  // India (20)
-  { id:"i01", name:"INSAT-3A",    region:"India",    orbit:"GEO" },
-  { id:"i02", name:"INSAT-3DR",   region:"India",    orbit:"GEO" },
-  { id:"i03", name:"INSAT-4A",    region:"India",    orbit:"GEO" },
-  { id:"i04", name:"INSAT-4B",    region:"India",    orbit:"GEO" },
-  { id:"i05", name:"INSAT-4C",    region:"India",    orbit:"GEO" },
-  { id:"i06", name:"GSAT-7",      region:"India",    orbit:"GEO" },
-  { id:"i07", name:"GSAT-7A",     region:"India",    orbit:"GEO" },
-  { id:"i08", name:"GSAT-9",      region:"India",    orbit:"GEO" },
-  { id:"i09", name:"GSAT-10",     region:"India",    orbit:"GEO" },
-  { id:"i10", name:"GSAT-11",     region:"India",    orbit:"GEO" },
-  { id:"i11", name:"GSAT-12",     region:"India",    orbit:"GEO" },
-  { id:"i12", name:"GSAT-14",     region:"India",    orbit:"GEO" },
-  { id:"i13", name:"GSAT-15",     region:"India",    orbit:"GEO" },
-  { id:"i14", name:"GSAT-17",     region:"India",    orbit:"GEO" },
-  { id:"i15", name:"GSAT-18",     region:"India",    orbit:"GEO" },
-  { id:"i16", name:"GSAT-19",     region:"India",    orbit:"GEO" },
-  { id:"i17", name:"GSAT-20",     region:"India",    orbit:"GEO" },
-  { id:"i18", name:"Kalpana-1",   region:"India",    orbit:"GEO" },
-  { id:"i19", name:"EduSat",      region:"India",    orbit:"GEO" },
-  { id:"i20", name:"Cartosat-2E", region:"India",    orbit:"LEO" },
-  // Pakistan (5)
-  { id:"p01", name:"PakSat 1R",   region:"Pakistan", orbit:"GEO" },
-  { id:"p02", name:"PakSat MM1",  region:"Pakistan", orbit:"GEO" },
-  { id:"p03", name:"PAKTES-1A",   region:"Pakistan", orbit:"LEO" },
-  { id:"p04", name:"PakSat 38E",  region:"Pakistan", orbit:"GEO" },
-  { id:"p05", name:"PakSat-NR",   region:"Pakistan", orbit:"GEO" },
-  // Europe (25)
-  { id:"e01", name:"Eutelsat 5WB",  region:"Europe",   orbit:"GEO" },
-  { id:"e02", name:"Eutelsat 7A",   region:"Europe",   orbit:"GEO" },
-  { id:"e03", name:"Eutelsat 8WB",  region:"Europe",   orbit:"GEO" },
-  { id:"e04", name:"Eutelsat 10A",  region:"Europe",   orbit:"GEO" },
-  { id:"e05", name:"Eutelsat 12WB", region:"Europe",   orbit:"GEO" },
-  { id:"e06", name:"Eutelsat 16A",  region:"Europe",   orbit:"GEO" },
-  { id:"e07", name:"Eutelsat 25B",  region:"Europe",   orbit:"GEO" },
-  { id:"e08", name:"Eutelsat 28A",  region:"Europe",   orbit:"GEO" },
-  { id:"e09", name:"Eutelsat 33C",  region:"Europe",   orbit:"GEO" },
-  { id:"e10", name:"SES-1",         region:"Europe",   orbit:"GEO" },
-  { id:"e11", name:"SES-3",         region:"Europe",   orbit:"GEO" },
-  { id:"e12", name:"SES-5",         region:"Europe",   orbit:"GEO" },
-  { id:"e13", name:"SES-6",         region:"Europe",   orbit:"GEO" },
-  { id:"e14", name:"SES-8",         region:"Europe",   orbit:"GEO" },
-  { id:"e15", name:"SES-10",        region:"Europe",   orbit:"GEO" },
-  { id:"e16", name:"SES-11",        region:"Europe",   orbit:"GEO" },
-  { id:"e17", name:"SES-12",        region:"Europe",   orbit:"GEO" },
-  { id:"e18", name:"Astra 1M",      region:"Europe",   orbit:"GEO" },
-  { id:"e19", name:"Astra 1N",      region:"Europe",   orbit:"GEO" },
-  { id:"e20", name:"Astra 2B",      region:"Europe",   orbit:"GEO" },
-  { id:"e21", name:"Astra 3B",      region:"Europe",   orbit:"GEO" },
-  { id:"e22", name:"Thor 5",        region:"Europe",   orbit:"GEO" },
-  { id:"e23", name:"Thor 7",        region:"Europe",   orbit:"GEO" },
-  { id:"e24", name:"Hispasat 1E",   region:"Europe",   orbit:"GEO" },
-  { id:"e25", name:"Hotbird 13G",   region:"Europe",   orbit:"GEO" },
-  // Middle East (15)
-  { id:"m01", name:"Arabsat 5A",    region:"Middle East", orbit:"GEO" },
-  { id:"m02", name:"Arabsat 5C",    region:"Middle East", orbit:"GEO" },
-  { id:"m03", name:"Arabsat 6A",    region:"Middle East", orbit:"GEO" },
-  { id:"m04", name:"Badr 4",        region:"Middle East", orbit:"GEO" },
-  { id:"m05", name:"Badr 5",        region:"Middle East", orbit:"GEO" },
-  { id:"m06", name:"Badr 6",        region:"Middle East", orbit:"GEO" },
-  { id:"m07", name:"Badr 7",        region:"Middle East", orbit:"GEO" },
-  { id:"m08", name:"Badr 8",        region:"Middle East", orbit:"GEO" },
-  { id:"m09", name:"Yahsat 1A",     region:"Middle East", orbit:"GEO" },
-  { id:"m10", name:"Yahsat 1B",     region:"Middle East", orbit:"GEO" },
-  { id:"m11", name:"Nilesat 201",   region:"Middle East", orbit:"GEO" },
-  { id:"m12", name:"Nilesat 301",   region:"Middle East", orbit:"GEO" },
-  { id:"m13", name:"Es'hailSat 1",  region:"Middle East", orbit:"GEO" },
-  { id:"m14", name:"Es'hailSat 2",  region:"Middle East", orbit:"GEO" },
-  { id:"m15", name:"Gulfsat 1",     region:"Middle East", orbit:"GEO" },
-  // SE Asia (20)
-  { id:"a01", name:"Measat 3",     region:"SE Asia",  orbit:"GEO" },
-  { id:"a02", name:"Measat 3A",    region:"SE Asia",  orbit:"GEO" },
-  { id:"a03", name:"Measat 3B",    region:"SE Asia",  orbit:"GEO" },
-  { id:"a04", name:"Thaicom 4",    region:"SE Asia",  orbit:"GEO" },
-  { id:"a05", name:"Thaicom 5",    region:"SE Asia",  orbit:"GEO" },
-  { id:"a06", name:"Thaicom 6",    region:"SE Asia",  orbit:"GEO" },
-  { id:"a07", name:"Thaicom 7",    region:"SE Asia",  orbit:"GEO" },
-  { id:"a08", name:"Thaicom 8",    region:"SE Asia",  orbit:"GEO" },
-  { id:"a09", name:"JCSat 3A",     region:"SE Asia",  orbit:"GEO" },
-  { id:"a10", name:"JCSat 16",     region:"SE Asia",  orbit:"GEO" },
-  { id:"a11", name:"JCSat 17",     region:"SE Asia",  orbit:"GEO" },
-  { id:"a12", name:"AsiaSat 3S",   region:"SE Asia",  orbit:"GEO" },
-  { id:"a13", name:"AsiaSat 5",    region:"SE Asia",  orbit:"GEO" },
-  { id:"a14", name:"AsiaSat 6",    region:"SE Asia",  orbit:"GEO" },
-  { id:"a15", name:"AsiaSat 7",    region:"SE Asia",  orbit:"GEO" },
-  { id:"a16", name:"AsiaSat 8",    region:"SE Asia",  orbit:"GEO" },
-  { id:"a17", name:"AsiaSat 9",    region:"SE Asia",  orbit:"GEO" },
-  { id:"a18", name:"VinaPhone 1",  region:"SE Asia",  orbit:"GEO" },
-  { id:"a19", name:"JCSat TN",     region:"SE Asia",  orbit:"GEO" },
-  { id:"a20", name:"PalaSat 1",    region:"SE Asia",  orbit:"LEO" },
-  // Russia (15)
-  { id:"r01", name:"Express AM5",   region:"Russia",   orbit:"GEO" },
-  { id:"r02", name:"Express AM6",   region:"Russia",   orbit:"GEO" },
-  { id:"r03", name:"Express AM7",   region:"Russia",   orbit:"GEO" },
-  { id:"r04", name:"Express AM8",   region:"Russia",   orbit:"GEO" },
-  { id:"r05", name:"Express AM9",   region:"Russia",   orbit:"GEO" },
-  { id:"r06", name:"Express AT1",   region:"Russia",   orbit:"GEO" },
-  { id:"r07", name:"Express AT2",   region:"Russia",   orbit:"GEO" },
-  { id:"r08", name:"Luch 5A",       region:"Russia",   orbit:"GEO" },
-  { id:"r09", name:"Luch 5V",       region:"Russia",   orbit:"GEO" },
-  { id:"r10", name:"Luch 5X",       region:"Russia",   orbit:"GEO" },
-  { id:"r11", name:"Gonets-M 1",    region:"Russia",   orbit:"LEO" },
-  { id:"r12", name:"Gonets-M 2",    region:"Russia",   orbit:"LEO" },
-  { id:"r13", name:"Amos 7",        region:"Russia",   orbit:"GEO" },
-  { id:"r14", name:"Amos 8",        region:"Russia",   orbit:"GEO" },
-  { id:"r15", name:"Ekspress AMU7", region:"Russia",   orbit:"GEO" },
-  // Americas (25)
-  { id:"w01", name:"Intelsat 17",   region:"Americas", orbit:"GEO" },
-  { id:"w02", name:"Intelsat 18",   region:"Americas", orbit:"GEO" },
-  { id:"w03", name:"Intelsat 19",   region:"Americas", orbit:"GEO" },
-  { id:"w04", name:"Intelsat 20",   region:"Americas", orbit:"GEO" },
-  { id:"w05", name:"Intelsat 21",   region:"Americas", orbit:"GEO" },
-  { id:"w06", name:"Intelsat 22",   region:"Americas", orbit:"GEO" },
-  { id:"w07", name:"Intelsat 26",   region:"Americas", orbit:"GEO" },
-  { id:"w08", name:"Intelsat 27",   region:"Americas", orbit:"GEO" },
-  { id:"w09", name:"AMC-1",         region:"Americas", orbit:"GEO" },
-  { id:"w10", name:"AMC-3",         region:"Americas", orbit:"GEO" },
-  { id:"w11", name:"AMC-11",        region:"Americas", orbit:"GEO" },
-  { id:"w12", name:"Galaxy 17",     region:"Americas", orbit:"GEO" },
-  { id:"w13", name:"Galaxy 18",     region:"Americas", orbit:"GEO" },
-  { id:"w14", name:"Galaxy 23",     region:"Americas", orbit:"GEO" },
-  { id:"w15", name:"DirecTV 4S",    region:"Americas", orbit:"GEO" },
-  { id:"w16", name:"DirecTV 6",     region:"Americas", orbit:"GEO" },
-  { id:"w17", name:"Viasat-1",      region:"Americas", orbit:"GEO" },
-  { id:"w18", name:"Viasat-2",      region:"Americas", orbit:"MEO" },
-  { id:"w19", name:"Anik F1R",      region:"Americas", orbit:"GEO" },
-  { id:"w20", name:"Anik F2",       region:"Americas", orbit:"GEO" },
-  { id:"w21", name:"Anik F3",       region:"Americas", orbit:"GEO" },
-  { id:"w22", name:"Telestar 18V",  region:"Americas", orbit:"GEO" },
-  { id:"w23", name:"SatMex 6",      region:"Americas", orbit:"GEO" },
-  { id:"w24", name:"SatMex 8",      region:"Americas", orbit:"GEO" },
-  { id:"w25", name:"SES Americas",  region:"Americas", orbit:"MEO" },
-];
-
-const _POOL: Array<UnitLabel | null> = [
-  "Unit A","Unit A","Unit A","Unit A","Unit A","Unit A","Unit A",
-  "Unit B","Unit B","Unit B","Unit B","Unit B","Unit B",
-  "Unit C","Unit C","Unit C","Unit C","Unit C",
-  "Unit D","Unit D","Unit D","Unit D","Unit D",
-  "Unit E","Unit E","Unit E","Unit E",
-  "Unit F","Unit F","Unit F","Unit F","Unit F","Unit F",
-  "Unit G","Unit G",
-  "Unit H",
-  null, null,
-];
-const INIT_ASSIGNMENTS: Record<string, UnitLabel | null> = Object.fromEntries(
-  SAT_CATALOG.map((s, i) => [s.id, _POOL[i % _POOL.length]])
-);
-const OPTIMAL_LOAD = Math.round(SAT_CATALOG.length / UNIT_LABELS.length); // 19
-
-// ── COVERAGE DATA (mock — stays until visibility matrix integration) ────────
-
-type CoverageEntry = {
-  region: Region; intensity: number; units: UnitLabel[];
-  status: "high" | "adequate" | "thin" | "blind" | "overlap";
-};
-
-const COVERAGE_DATA: CoverageEntry[] = [
-  { region: "China",       intensity: 85, units: ["Unit A","Unit B","Unit D"],     status: "overlap"  },
-  { region: "India",       intensity: 70, units: ["Unit A","Unit C","Unit E"],     status: "adequate" },
-  { region: "Pakistan",    intensity: 55, units: ["Unit B","Unit F"],              status: "adequate" },
-  { region: "Europe",      intensity: 45, units: ["Unit C","Unit E"],              status: "thin"     },
-  { region: "Middle East", intensity: 62, units: ["Unit B","Unit D","Unit F"],     status: "adequate" },
-  { region: "SE Asia",     intensity: 38, units: ["Unit A"],                       status: "thin"     },
-  { region: "Russia",      intensity: 20, units: ["Unit D"],                       status: "thin"     },
-  { region: "Americas",    intensity: 0,  units: [],                               status: "blind"    },
-];
-
-// ── DECISION INSIGHTS (mock — stays until correlation engine built) ─────────
+// ── DECISION INSIGHTS (mock — no unit badges until correlation engine built) ─
 
 const DECISION_INSIGHTS: Insight[] = [
-  { id: "dc1", severity: "High", category: "Capability", trend: "degrading", title: "Unit G critically below operational threshold", detail: "3 major assets offline. Capability score 22% against 50% minimum. Assignment and scanning suspended until recovery.", units: ["Unit G"] },
-  { id: "dc2", severity: "High", category: "Capability", trend: "degrading", title: "Unit C capability deficit degrading coverage quality", detail: "47% capability — primary antenna and server fault unresolved. India and Europe coverage contribution is at risk.", units: ["Unit C"], regions: ["India", "Europe"] },
-  { id: "dc3", severity: "High", category: "Coverage", trend: "stable", title: "Americas region has zero coverage — blind spot confirmed", detail: "No unit is assigned to any of the 25 Americas-sector satellites. Entire sector is unmonitored.", regions: ["Americas"] },
-  { id: "dc4", severity: "High", category: "Output", trend: "degrading", title: "Unit G INT output fully offline", detail: "Zero frequencies scanned this cycle. Equipment failure has cascaded into complete output loss.", units: ["Unit G"] },
-  { id: "dc5", severity: "Medium", category: "Utilization", trend: "degrading", title: "Unit A overloaded — 47% above optimal load", detail: "28 satellites assigned against optimal 19. Scan quality and reporting cycle time are at risk. Recommend redistributing to Unit H.", units: ["Unit A"] },
-  { id: "dc6", severity: "Medium", category: "Utilization", trend: "stable", title: "Unit H critically underutilized — 4 of 19 slots occupied", detail: "15 assignment capacity slots idle. Candidate for receiving satellites from overloaded units A, B, or F.", units: ["Unit H"] },
-  { id: "dc7", severity: "Medium", category: "Coverage", trend: "degrading", title: "SE Asia and Russia at single-unit dependency risk", detail: "SE Asia at 38% intensity (1 unit), Russia at 20% (1 unit). Any disruption to Unit A or D eliminates coverage in those sectors.", regions: ["SE Asia", "Russia"], units: ["Unit A", "Unit D"] },
-  { id: "dc8", severity: "Medium", category: "Output", trend: "degrading", title: "Unit B INT productivity below threshold", detail: "55% productivity rate against 70% target. Downward trend observed. 10 of 22 scanned frequencies returned no actionable data.", units: ["Unit B"] },
-  { id: "dc9", severity: "Low", category: "Coverage", trend: "stable", title: "China triple-unit overlap — assess deconfliction opportunity", detail: "Units A, B, D all covering China. Controlled redundancy but represents rebalancing opportunity toward Americas and Russia.", regions: ["China"], units: ["Unit A", "Unit B", "Unit D"] },
-  { id: "dc10", severity: "Low", category: "Output", trend: "improving", title: "Units E and F above efficiency benchmark", detail: "Unit E 86% productivity, Unit F 86%. Allocation pattern and scan methodology of these units should be reviewed as reference model.", units: ["Unit E", "Unit F"] },
+  { id: "dc1", severity: "High",   category: "Capability",   trend: "degrading", title: "One or more units critically below operational threshold",          detail: "Check Capability panel for units scoring below 50%. Assignment and scanning may be impacted until recovery." },
+  { id: "dc2", severity: "High",   category: "Coverage",     trend: "stable",    title: "Coverage blind spots detected in assigned satellite regions",       detail: "Some satellite regions may have no unit assigned. Review the Satellite Visibility Matrix to confirm coverage gaps." },
+  { id: "dc3", severity: "High",   category: "Output",       trend: "degrading", title: "INT output below threshold for one or more units",                  detail: "Units with zero scanned frequencies this cycle may have equipment or engagement issues. Check Output panel." },
+  { id: "dc4", severity: "Medium", category: "Utilization",  trend: "degrading", title: "Satellite load imbalance detected across units",                    detail: "Some units are overloaded while others remain idle. Review Utilization panel and rebalance assignments." },
+  { id: "dc5", severity: "Medium", category: "Coverage",     trend: "degrading", title: "Single-unit dependency risk in one or more regions",                detail: "Regions covered by only one unit are vulnerable to complete coverage loss on any disruption to that unit." },
+  { id: "dc6", severity: "Medium", category: "Output",       trend: "degrading", title: "INT productivity below 70% target for some units",                  detail: "Units with low productive-to-scanned ratios may need scan methodology review or equipment serviceability check." },
+  { id: "dc7", severity: "Low",    category: "Coverage",     trend: "stable",    title: "Multi-unit overlap detected — deconfliction opportunity",           detail: "Multiple units assigned to same region represents redundancy. Review for rebalancing toward uncovered regions." },
+  { id: "dc8", severity: "Low",    category: "Output",       trend: "improving", title: "High-efficiency units identified — review as reference model",      detail: "Units consistently above 80% productivity can serve as methodology benchmarks for lower-performing units." },
 ];
+
+// ── SCAN HISTORY STORE ─────────────────────────────────────────────────────
+
+const SCAN_HISTORY_KEY = "ssacc_scan_history";
+const MAX_HISTORY = 5;
+
+function loadScanHistory(): Record<string, string[]> {
+  try {
+    const raw = localStorage.getItem(SCAN_HISTORY_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+}
+
+function saveScanHistory(data: Record<string, string[]>) {
+  try { localStorage.setItem(SCAN_HISTORY_KEY, JSON.stringify(data)); } catch {}
+}
+
+function addToScanHistory(unitId: string, satName: string) {
+  const all = loadScanHistory();
+  const current = all[unitId] ?? [];
+  const updated = [satName, ...current.filter(s => s !== satName)].slice(0, MAX_HISTORY);
+  all[unitId] = updated;
+  saveScanHistory(all);
+}
 
 // ── REAL-DATA DERIVATION HELPERS ───────────────────────────────────────────
 
@@ -523,68 +398,23 @@ function CapabilityPanel({ capData }: { capData: ReturnType<typeof deriveCapabil
   );
 }
 
-// ── SECTION 2B — COVERAGE PANEL ───────────────────────────────────────────
+// ── SECTION 2B — COVERAGE PANEL (pending visibility matrix) ───────────────
 
 function CoveragePanel() {
-  const [expandedRegion, setExpandedRegion] = useState<Region | null>(null);
-  const blindCount    = COVERAGE_DATA.filter(r => r.status === "blind").length;
-  const thinCount     = COVERAGE_DATA.filter(r => r.status === "thin").length;
-  const avgIntensity  = Math.round(COVERAGE_DATA.reduce((s, r) => s + r.intensity, 0) / COVERAGE_DATA.length);
-
   return (
     <DomainPanel id="B" label="Coverage" icon={Globe}
       sources="Satellite Visibility Matrix · Priority Allocation"
       summaryNode={
-        <div className="flex items-center gap-1.5 justify-end flex-wrap">
-          {blindCount > 0 && (
-            <span className="px-1 py-0.5 mono text-[8px] font-bold bg-destructive/10 border border-destructive/30 text-destructive rounded-sm">{blindCount} blind</span>
-          )}
-          {thinCount > 0 && (
-            <span className="px-1 py-0.5 mono text-[8px] font-bold bg-amber-400/10 border border-amber-400/30 text-amber-500 rounded-sm">{thinCount} thin</span>
-          )}
-          <span className="mono text-sm font-bold tabular-nums text-muted-foreground">{avgIntensity}% avg</span>
-        </div>
+        <span className="mono text-[9px] text-muted-foreground/60 italic">Pending integration</span>
       }>
-      <div className="divide-y divide-border">
-        {COVERAGE_DATA.map(r => {
-          const isExp = expandedRegion === r.region;
-          const intBarCls =
-            r.status === "blind"   ? "bg-destructive/60" :
-            r.status === "thin"    ? "bg-amber-400"       :
-            r.status === "overlap" ? "bg-sky-500"         : "bg-primary";
-          const statusBadge: Record<CoverageEntry["status"], string> = {
-            blind:    "text-destructive bg-destructive/8 border-destructive/25",
-            thin:     "text-amber-500 bg-amber-400/8 border-amber-400/25",
-            overlap:  "text-sky-600 bg-sky-500/8 border-sky-500/25",
-            adequate: "text-emerald-600 bg-emerald-500/8 border-emerald-500/25",
-            high:     "text-emerald-600 bg-emerald-500/8 border-emerald-500/25",
-          };
-          return (
-            <div key={r.region}>
-              <button type="button" onClick={() => setExpandedRegion(isExp ? null : r.region)}
-                className={`w-full px-3 py-2 flex items-center gap-2 text-left transition-colors hover:bg-secondary/20 ${isExp ? "bg-secondary/15" : ""}`}>
-                <span className="mono text-[10px] text-muted-foreground w-20 shrink-0 truncate">{r.region}</span>
-                <div className="flex-1 h-1.5 rounded-full bg-border overflow-hidden">
-                  {r.intensity > 0 && <div className={`h-full rounded-full ${intBarCls}`} style={{ width: `${r.intensity}%` }} />}
-                </div>
-                <span className="mono text-[10px] font-bold tabular-nums w-7 text-right text-foreground/70">{r.intensity}%</span>
-                <span className={`mono text-[8px] font-bold px-1 py-0.5 rounded-sm border capitalize w-[52px] text-center shrink-0 ${statusBadge[r.status]}`}>{r.status}</span>
-                {r.units.length > 0
-                  ? <ChevronDown className={`h-3 w-3 text-muted-foreground shrink-0 transition-transform ${isExp ? "rotate-180" : ""}`} />
-                  : <span className="w-3 shrink-0" />}
-              </button>
-              {isExp && r.units.length > 0 && (
-                <div className="px-3 pb-2 pt-1 bg-secondary/10 border-t border-border">
-                  <div className="flex flex-wrap gap-1 mt-0.5">
-                    {r.units.map(u => (
-                      <span key={u} className="px-1.5 py-0.5 mono text-[8px] font-bold border border-primary/25 bg-primary/8 text-primary rounded-sm">{u}</span>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
+      <div className="flex flex-col items-center justify-center px-4 py-8 gap-3 text-center">
+        <Globe className="h-8 w-8 text-muted-foreground/20" />
+        <div className="mono text-[10px] font-bold uppercase tracking-wider text-muted-foreground/50">
+          Awaiting Visibility Matrix
+        </div>
+        <div className="mono text-[9px] text-muted-foreground/40 leading-relaxed max-w-[160px]">
+          Coverage data will be derived from the Satellite Visibility Matrix once integration is complete.
+        </div>
       </div>
     </DomainPanel>
   );
@@ -645,11 +475,11 @@ function OutputPanel({ intData }: { intData: ReturnType<typeof deriveIntOutput> 
 
 // ── SECTION 2D — UTILIZATION PANEL ────────────────────────────────────────
 
-function utilStatus(n: number): "overloaded" | "high" | "optimal" | "under" | "idle" {
-  if (n > 24)  return "overloaded";
-  if (n > 20)  return "high";
-  if (n >= 11) return "optimal";
-  if (n >= 5)  return "under";
+function utilStatus(n: number, optimal: number): "overloaded" | "high" | "optimal" | "under" | "idle" {
+  if (n > optimal * 1.3) return "overloaded";
+  if (n > optimal)       return "high";
+  if (n >= optimal * 0.5) return "optimal";
+  if (n >= 1)            return "under";
   return "idle";
 }
 
@@ -663,9 +493,10 @@ const utilStatusStyle: Record<ReturnType<typeof utilStatus>, { cls: string; bar:
 
 function UtilizationPanel({ unitLoads }: { unitLoads: Record<string, number> }) {
   const keys = Object.keys(unitLoads);
-  const overloaded = keys.filter(u => utilStatus(unitLoads[u] ?? 0) === "overloaded").length;
-  const idle       = keys.filter(u => utilStatus(unitLoads[u] ?? 0) === "idle").length;
-  const maxLoad    = Math.max(...keys.map(u => unitLoads[u] ?? 0), OPTIMAL_LOAD);
+  const optimalLoad = Math.round(keys.reduce((s, u) => s + (unitLoads[u] ?? 0), 0) / Math.max(1, keys.length));
+  const overloaded = keys.filter(u => utilStatus(unitLoads[u] ?? 0, optimalLoad) === "overloaded").length;
+  const idle       = keys.filter(u => utilStatus(unitLoads[u] ?? 0, optimalLoad) === "idle").length;
+  const maxLoad    = Math.max(...keys.map(u => unitLoads[u] ?? 0), optimalLoad, 1);
 
   return (
     <DomainPanel id="D" label="Utilization" icon={BarChart3}
@@ -683,16 +514,16 @@ function UtilizationPanel({ unitLoads }: { unitLoads: Record<string, number> }) 
       <div className="divide-y divide-border">
         <div className="px-3 py-1.5 flex items-center gap-2 bg-secondary/10">
           <span className="mono text-[8px] text-muted-foreground/60 flex-1">
-            Optimal load per unit: {OPTIMAL_LOAD} satellites — {SAT_CATALOG.length} total
+            Avg load per unit: {optimalLoad} satellites
           </span>
-          <span className="mono text-[8px] text-muted-foreground/60">Assigned / Optimal / Max</span>
+          <span className="mono text-[8px] text-muted-foreground/60">Assigned / Avg / Max</span>
         </div>
         {keys.map(u => {
           const n   = unitLoads[u] ?? 0;
-          const st  = utilStatus(n);
+          const st  = utilStatus(n, optimalLoad);
           const sty = utilStatusStyle[st];
           const barW = `${Math.min(100, (n / maxLoad) * 100)}%`;
-          const optW = `${Math.min(100, (OPTIMAL_LOAD / maxLoad) * 100)}%`;
+          const optW = `${Math.min(100, (optimalLoad / maxLoad) * 100)}%`;
           const shortLabel = u.replace("GATE ", "GT-");
           return (
             <div key={u} className="px-3 py-2 flex items-center gap-2">
@@ -711,7 +542,7 @@ function UtilizationPanel({ unitLoads }: { unitLoads: Record<string, number> }) 
   );
 }
 
-// ── SECTION 3 — DECISION CORE ─────────────────────────────────────────────
+// ── SECTION 3 — DECISION CORE ──────────────────────────────────────────────
 
 const INSIGHT_CATS = ["All", "Capability", "Coverage", "Output", "Utilization"] as const;
 type CatFilter = typeof INSIGHT_CATS[number];
@@ -737,14 +568,6 @@ function InsightCard({ insight, isOpen, onToggle }: { insight: Insight; isOpen: 
       {isOpen && (
         <div className="px-4 pb-3 pt-1 bg-secondary/10 border-t border-border space-y-2">
           <p className="mono text-[9px] text-muted-foreground leading-snug">{insight.detail}</p>
-          <div className="flex flex-wrap gap-1">
-            {insight.units?.map(u => (
-              <span key={u} className="px-1.5 py-0.5 mono text-[8px] border border-primary/25 bg-primary/8 text-primary rounded-sm font-bold">{u}</span>
-            ))}
-            {insight.regions?.map(r => (
-              <span key={r} className="px-1.5 py-0.5 mono text-[8px] border border-sky-500/25 bg-sky-500/8 text-sky-600 rounded-sm font-bold">{r}</span>
-            ))}
-          </div>
           <div className="mono text-[8px] text-muted-foreground/40 italic">Future: drill-down correlation engine →</div>
         </div>
       )}
@@ -813,10 +636,79 @@ function outcomeLabel(o: SatHistory["outcome"]) {
   return o === "productive" ? "text-emerald-600" : o === "mixed" ? "text-amber-500" : "text-destructive/80";
 }
 
-function UnitRow({ unit, data, idx }: { unit: string; data: UnitScanData; idx: number }) {
+// ── SCAN HISTORY CELL — editable, rolling-5 ───────────────────────────────
+
+function ScanHistoryCell({ unitId }: { unitId: string }) {
+  const [history, setHistory] = useState<string[]>(() => loadScanHistory()[unitId] ?? []);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [historyDrop, setHistoryDrop] = useState(false);
+
+  const needsInit = history.length === 0;
+
+  const handleAdd = useCallback(() => {
+    const name = draft.trim();
+    if (!name) return;
+    addToScanHistory(unitId, name);
+    const updated = loadScanHistory()[unitId] ?? [];
+    setHistory(updated);
+    setDraft("");
+    setEditing(false);
+  }, [draft, unitId]);
+
+  return (
+    <td className="px-3 py-3 w-44 align-top">
+      {needsInit && !editing ? (
+        <button onClick={() => setEditing(true)}
+          className="flex items-center gap-1 mono text-[10px] text-muted-foreground/60 hover:text-primary transition-colors">
+          <Pencil className="h-3 w-3" /> Enter history
+        </button>
+      ) : editing ? (
+        <div className="flex flex-col gap-1">
+          <input
+            autoFocus
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") handleAdd(); if (e.key === "Escape") setEditing(false); }}
+            placeholder="Satellite name"
+            className="mono text-[10px] bg-secondary border border-border rounded-sm px-1.5 py-1 text-foreground w-full outline-none focus:border-primary/50"
+          />
+          <div className="flex gap-1">
+            <button onClick={handleAdd} className="mono text-[9px] px-1.5 py-0.5 bg-primary/10 border border-primary/25 text-primary rounded-sm hover:bg-primary/20">Add</button>
+            <button onClick={() => setEditing(false)} className="mono text-[9px] px-1.5 py-0.5 border border-border text-muted-foreground rounded-sm hover:bg-secondary">Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <div>
+          <button onClick={() => setHistoryDrop(p => !p)}
+            className="flex items-center gap-1.5 w-full text-left group/hist">
+            <span className="mono text-[11px] font-medium text-foreground truncate max-w-[110px] group-hover/hist:text-primary transition-colors">{history[0]}</span>
+            <button onClick={e => { e.stopPropagation(); setEditing(true); }}
+              className="shrink-0 text-muted-foreground/40 hover:text-primary transition-colors ml-auto">
+              <Pencil className="h-2.5 w-2.5" />
+            </button>
+            {historyDrop ? <ChevronUp className="h-3 w-3 shrink-0 text-foreground" /> : <ChevronDown className="h-3 w-3 shrink-0 text-foreground" />}
+          </button>
+          {historyDrop && (
+            <div className="mt-1.5 border-t border-border pt-1.5">
+              <div className="mono text-[9px] uppercase tracking-[0.18em] text-foreground mb-1.5 font-semibold">Last {history.length} Scanned</div>
+              {history.map((sat, i) => (
+                <div key={i} className="flex items-center gap-1.5 py-0.5">
+                  <span className="mono text-[9px] text-muted-foreground/50 w-3 shrink-0">{i + 1}</span>
+                  <span className="mono text-[10px] font-medium text-foreground truncate flex-1">{sat}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </td>
+  );
+}
+
+function UnitRow({ unit, unitId, data, idx }: { unit: string; unitId: string; data: UnitScanData; idx: number }) {
   const [selSat,      setSelSat     ] = useState(0);
   const [activeDrop,  setActiveDrop ] = useState(false);
-  const [historyDrop, setHistoryDrop] = useState(false);
 
   if (data.activeSats.length === 0) {
     return (
@@ -828,7 +720,7 @@ function UnitRow({ unit, data, idx }: { unit: string; data: UnitScanData; idx: n
         <td className="px-3 py-3 w-20"><span className="mono text-[14px] font-bold text-foreground">—</span></td>
         <td className="px-3 py-3 w-20"><span className="mono text-[14px] font-bold text-foreground">—</span></td>
         <td className="px-3 py-3 w-32"><span className="mono text-[11px] font-medium text-foreground">—</span></td>
-        <td className="px-3 py-3 w-44"><span className="mono text-[11px] font-medium text-foreground truncate max-w-[120px]">{data.history[0]?.satellite ?? "—"}</span></td>
+        <ScanHistoryCell unitId={unitId} />
       </tr>
     );
   }
@@ -843,7 +735,7 @@ function UnitRow({ unit, data, idx }: { unit: string; data: UnitScanData; idx: n
       <td className="px-3 py-3 mono text-[11px] font-semibold text-foreground w-8">{idx}</td>
       <td className="px-3 py-3 w-24"><span className="mono text-[13px] font-bold text-foreground whitespace-nowrap">{unit}</span></td>
       <td className="px-3 py-3 w-52 align-top">
-        <button onClick={() => { setActiveDrop(p => !p); setHistoryDrop(false); }} className="flex items-center gap-1.5 w-full text-left group/btn">
+        <button onClick={() => { setActiveDrop(p => !p); }} className="flex items-center gap-1.5 w-full text-left group/btn">
           <span className="mono text-[12px] font-semibold text-foreground truncate max-w-[130px] group-hover/btn:text-primary transition-colors">{sat.satellite}</span>
           <span className="mono text-[9px] text-primary bg-primary/8 border border-primary/15 px-1 py-0.5 rounded-sm leading-none shrink-0 font-bold">{data.activeSats.length}</span>
           {activeDrop ? <ChevronUp className="h-3 w-3 shrink-0 text-foreground" /> : <ChevronDown className="h-3 w-3 shrink-0 text-foreground" />}
@@ -875,33 +767,14 @@ function UnitRow({ unit, data, idx }: { unit: string; data: UnitScanData; idx: n
           <div className={`h-full rounded-full ${scorebar(pct)}`} style={{ width: `${pct}%` }} />
         </div>
       </td>
-      <td className="px-3 py-3 w-44 align-top">
-        <button onClick={() => { setHistoryDrop(p => !p); setActiveDrop(false); }} className="flex items-center gap-1.5 w-full text-left group/hist">
-          <span className="mono text-[11px] font-medium text-foreground truncate max-w-[120px] group-hover/hist:text-primary transition-colors">{data.history[0]?.satellite ?? "—"}</span>
-          {historyDrop ? <ChevronUp className="h-3 w-3 shrink-0 text-foreground" /> : <ChevronDown className="h-3 w-3 shrink-0 text-foreground" />}
-        </button>
-        {historyDrop && (
-          <div className="mt-1.5 border-t border-border pt-1.5">
-            <div className="mono text-[9px] uppercase tracking-[0.18em] text-foreground mb-1.5 font-semibold">Previously Scanned</div>
-            {data.history.map((h, i) => (
-              <div key={i} className="flex items-center justify-between py-0.5 gap-1.5">
-                <span className="mono text-[10px] font-medium text-foreground truncate flex-1">{h.satellite}</span>
-                <div className="flex items-center gap-1 shrink-0">
-                  <span className="mono text-[10px] font-medium text-foreground">{h.time}</span>
-                  <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${outcomeColor(h.outcome)}`} />
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </td>
+      <ScanHistoryCell unitId={unitId} />
     </tr>
   );
 }
 
 function UnitActivitySnapshot() {
   const [expanded, setExpanded] = useState(false);
-  const { fleetState, engagements, intelRows, isLoading } = useOperationalState();
+  const { fleetState, engagements, intelRows, equipment, isLoading } = useOperationalState();
 
   const unitRows = useMemo(() => {
     if (!fleetState) return [];
@@ -912,7 +785,7 @@ function UnitActivitySnapshot() {
     if (!fleetState) return new Map<string, UnitScanData>();
     const map = new Map<string, UnitScanData>();
     for (const state of fleetState.units) {
-      const activity = buildUnitActivityFromState(state, engagements, intelRows);
+      const activity = buildUnitActivityFromState(state, engagements, intelRows, equipment);
       map.set(state.unitDbId, {
         activeSats: activity.activeSats.map((s) => ({
           satellite: s.satellite,
@@ -927,7 +800,7 @@ function UnitActivitySnapshot() {
       });
     }
     return map;
-  }, [fleetState, engagements, intelRows]);
+  }, [fleetState, engagements, intelRows, equipment]);
 
   const visible = expanded ? unitRows : unitRows.slice(0, 4);
 
@@ -957,12 +830,18 @@ function UnitActivitySnapshot() {
                 <th className="px-3 py-2.5 text-left mono text-[10px] font-bold uppercase tracking-wider text-foreground">Analyzed</th>
                 <th className="px-3 py-2.5 text-left mono text-[10px] font-bold uppercase tracking-wider text-foreground">Pending</th>
                 <th className="px-3 py-2.5 text-left mono text-[10px] font-bold uppercase tracking-wider text-foreground">Band · Pol</th>
-                <th className="px-3 py-2.5 text-left mono text-[10px] font-bold uppercase tracking-wider text-foreground">Scan History <span className="ml-1.5 text-foreground/80 normal-case tracking-normal font-medium">(click ▾)</span></th>
+                <th className="px-3 py-2.5 text-left mono text-[10px] font-bold uppercase tracking-wider text-foreground">Scan History <span className="ml-1.5 text-foreground/80 normal-case tracking-normal font-medium">(click ▾ · pencil to edit)</span></th>
               </tr>
             </thead>
             <tbody>
               {visible.map((state, idx) => (
-                <UnitRow key={state.unitDbId} unit={state.unitLabel} data={activityByUnitId.get(state.unitDbId) ?? { activeSats: [], history: [] }} idx={idx + 1} />
+                <UnitRow
+                  key={state.unitDbId}
+                  unit={state.unitLabel}
+                  unitId={state.unitDbId}
+                  data={activityByUnitId.get(state.unitDbId) ?? { activeSats: [], history: [] }}
+                  idx={idx + 1}
+                />
               ))}
             </tbody>
           </table>
@@ -1140,7 +1019,7 @@ function OptimizationEngine() {
   const { unit: selectedUnitKey } = Route.useSearch();
   const { fleetState, equipment, isLoading } = useOperationalState();
   const [sortKey,      setSortKey     ] = useState<"unit"|"score"|"status"|"risk">("score");
-  const [sortDir,      setSortDir     ] = useState<"asc"|"desc">("desc");
+  const [sortDir,      setSortDir     ] = useState<"asc" | "desc">("desc");
   const [filterStatus, setFilterStatus] = useState<OptStatus|"ALL">("ALL");
   const [tableExpanded, setTableExpanded] = useState(false);
 
@@ -1314,6 +1193,7 @@ function EngagementLiveModuleView() {
       </div>
       <UnitActivitySnapshot />
       <OptimizationEngine />
+      <DecisionCore insights={DECISION_INSIGHTS} />
     </div>
   );
 }

@@ -102,8 +102,7 @@ import {
   VISIBILITY_OVERLAY_EVENT,
 } from "@/lib/visibilityOverlay";
 import { mergeRegionsWithOverlay, useVisibleSatelliteCounts } from "@/lib/satelliteCatalog";
-import { INT_UNITS } from "@/lib/intelRepository";
-import { unitTileTitle, UNIT_SLOTS, type UnitSlot } from "@/lib/priorityAllocation";
+import { unitDisplayFromRecord } from "@/lib/unitDisplay";
 import { resolveIntUnitSlug } from "@/lib/operationalSync";
 import { UnitAdvancedFeatures } from "@/components/UnitAdvancedFeatures";
 import { useModuleUnits } from "@/hooks/useModuleUnits";
@@ -120,9 +119,14 @@ import {
   normalizeLaunchDateForStorage,
 } from "@/lib/launchDateFormat";
 
-// ─── Static unit roster for visibility layer (shared naming with INT) ─────────
+// ─── Unit display shape (names/locations from operational store SSOT) ───────
 
-type VisibilityUnit = (typeof INT_UNITS)[number];
+type VisibilityUnit = {
+  id: string;
+  code: string;
+  name: string;
+  location: string;
+};
 
 // GeoSatellite / GeoRegion / GEO_REGIONS / REGION_BEAMS / beam helpers — @/lib/visibilityMatrix (SSOT)
 
@@ -275,12 +279,12 @@ function VisibilityPage() {
     () =>
       visibleDbUnits.map((u: { id: string; code: string; name: string; description?: string | null }) => {
         const slug = resolveIntUnitSlug(u.id, u.code) ?? u.id;
-        const seed = INT_UNITS.find((s) => s.id === slug);
+        const display = unitDisplayFromRecord(u);
         return {
           id: slug,
-          code: seed?.code ?? u.code,
-          name: seed?.name ?? u.name,
-          location: seed?.location ?? u.description ?? "—",
+          code: u.code,
+          name: display.name,
+          location: display.location,
         };
       }),
     [visibleDbUnits],
@@ -645,7 +649,7 @@ function UnitGrid({
     <div className="flex flex-col flex-1 min-h-0 h-full">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 flex-1 min-h-0 auto-rows-fr overflow-y-auto">
         {units.map((u) => {
-          const title = (UNIT_SLOTS as readonly string[]).includes(u.id) ? unitTileTitle(u.id as UnitSlot) : u.name;
+          const title = u.name;
           const count = visibleCounts[u.id] ?? 0;
 
           return (

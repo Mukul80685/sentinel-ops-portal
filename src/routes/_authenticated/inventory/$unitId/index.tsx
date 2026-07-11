@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
 import { HomeNavIconBadge } from "@/components/home/HomeNavIcons";
 import { listCategories, getUnitById, listEquipmentForUnit } from "@/lib/queries";
+import { unitDisplayFromRecord } from "@/lib/unitDisplay";
 import {
   Activity,
   Boxes,
@@ -46,11 +47,7 @@ function InventoryCategories() {
     },
   });
 
-  // Derive clean unit label from code (falls back to full unit name for dynamic units)
-  const unitLetter = unit?.code?.split("-").pop() ?? "";
-  const unitLabel = unit
-    ? (unitLetter.length === 1 ? `Unit ${unitLetter}` : unit.name)
-    : "";
+  const unitLabel = unit ? unitDisplayFromRecord(unit).name : "";
 
   return (
     <AppShell

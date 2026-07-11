@@ -1,7 +1,7 @@
 const STORAGE_KEY = "ssacc_local_files";
 export const BUCKET = "ssacc-files";
 
-const ipc = (window as any).electron?.ipcRenderer;
+const ipc = typeof window !== "undefined" ? (window as any).electron?.ipcRenderer : undefined;
 const USE_IPC = !!ipc;
 
 // Legacy localStorage fallback (for non-Electron or migration reads)

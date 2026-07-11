@@ -4,9 +4,6 @@ import { UnitAdvancedFeatures } from "@/components/UnitAdvancedFeatures";
 import { useModuleUnits } from "@/hooks/useModuleUnits";
 import {
   allocationSlotForUnit,
-  unitTileTitle,
-  UNIT_LOCATIONS,
-  UNIT_SLOTS,
   useAllocationCounts,
 } from "@/lib/priorityAllocation";
 
@@ -28,14 +25,8 @@ function UnitTileGrid({ basePath, fill }: { basePath: string; fill?: boolean }) 
       >
         {units.map((unit, idx) => {
           const slot = unitSlots[idx];
-          // Seed identity only for genuine seed units (GATE-* codes) — a
-          // user-created unit must always display its own name/location.
-          const isSeedUnit =
-            (UNIT_SLOTS as readonly string[]).includes(slot) && /^GATE-/i.test(unit.code);
-          const title = isSeedUnit ? unitTileTitle(slot) : unit.name;
-          const location = isSeedUnit
-            ? (UNIT_LOCATIONS[slot] ?? unit.description ?? "")
-            : (unit.description ?? "");
+          const title = unit.name;
+          const location = unit.description ?? "";
           const count = counts[slot] ?? 0;
 
           return (

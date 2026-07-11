@@ -1,0 +1,54 @@
+﻿/**
+ * React hook â€” Satellite Monitoring Dashboard consumes ONLY dashboardDataService.
+ * Upstream data is fetched via useOperationalState (administrator module queries).
+ */
+
+import { useMemo } from "react";
+import {
+  buildDashboardMetrics,
+  type DashboardMetrics,
+} from "@/lib/dashboardDataService";
+import { useOperationalState } from "@/hooks/useOperationalState";
+
+export type DashboardData = DashboardMetrics & {
+  isLoading: boolean;
+  isFetching: boolean;
+  hasData: boolean;
+  /** Executive tile summaries */
+  avgEngagement: number;
+  totalActiveSatellites: number;
+  avgOptimizationScore: number;
+};
+
+export function useDashboardData(): DashboardData {
+  const {
+    units,
+    equipment,
+    engagements,
+    intelRows,
+    isLoading,
+    isFetching,
+    derivedRevision,
+  } = useOperationalState();
+
+  return useMemo(() => {
+    const metrics = buildDashboardMetrics({
+      dbUnits: units,
+      equipment,
+      engagements,
+      intelRows,
+    });
+
+    const hasData = metrics.fleetState != null && units.length > 0;
+
+    return {
+      ...metrics,
+      isLoading,
+      isFetching,
+      hasData,
+      avgEngagement: metrics.engagement.avgOccupancy,
+      totalActiveSatellites: metrics.activity.totalMonitoredSatellites,
+      avgOptimizationScore: metrics.optimization.avgCompositeScore,
+    };
+  }, [units, equipment, engagements, intelRows, isLoading, isFetching, derivedRevision]);
+}

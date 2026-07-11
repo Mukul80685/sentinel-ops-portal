@@ -10,7 +10,7 @@ import {
   type OpIntelRow,
   type OpUnit,
 } from "@/lib/operationalDataset";
-import { OPERATIONAL_DATASET_VERSION, OPERATIONAL_STORE_EVENT, OPERATIONAL_STORE_KEY } from "@/lib/operationalConstants";
+import { OPERATIONAL_DATASET_VERSION, OPERATIONAL_STORE_EVENT, OPERATIONAL_STORE_KEY, UNIT_IDENTITY_OVERRIDES_KEY } from "@/lib/operationalConstants";
 import { UNIT_SLOTS, type UnitSlot } from "@/lib/priorityAllocation";
 import { rebindUnitEngagementHardware } from "@/lib/engagementEngine";
 import { deleteStoredFile } from "@/lib/storage";
@@ -24,30 +24,116 @@ const MIN_FLEET_EQUIPMENT = 300;
 
 let _cache: OperationalDataset | null = null;
 
+type UnitIdentityOverride = { name: string; description: string | null };
+
+function loadUnitIdentityOverrides(): Record<string, UnitIdentityOverride> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(UNIT_IDENTITY_OVERRIDES_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw) as Record<string, UnitIdentityOverride>;
+  } catch {
+    return {};
+  }
+}
+
+function persistUnitIdentityOverride(
+  unitId: string,
+  name: string,
+  description: string | null,
+): void {
+  if (typeof window === "undefined") return;
+  const all = loadUnitIdentityOverrides();
+  all[unitId] = { name, description };
+  localStorage.setItem(UNIT_IDENTITY_OVERRIDES_KEY, JSON.stringify(all));
+}
+
+/** Recover renames already saved in a user-managed store into the dedicated overrides key. */
+function syncOverridesFromStore(ds: OperationalDataset): void {
+  if (!ds.userManaged) return;
+  const seedById = new Map(
+    generateOperationalDataset().units.map((u) => [u.id, u] as const),
+  );
+  for (const unit of ds.units) {
+    const seed = seedById.get(unit.id);
+    if (!seed) continue;
+    if (unit.name !== seed.name || unit.description !== seed.description) {
+      persistUnitIdentityOverride(unit.id, unit.name, unit.description);
+    }
+  }
+}
+
+/** Apply saved renames onto any dataset (including freshly generated seeds). */
+function applyUnitIdentityOverrides(ds: OperationalDataset): boolean {
+  const overrides = loadUnitIdentityOverrides();
+  const ids = Object.keys(overrides);
+  if (ids.length === 0) return false;
+
+  let changed = false;
+  for (const unit of ds.units) {
+    const o = overrides[unit.id];
+    if (!o) continue;
+    if (unit.name !== o.name || unit.description !== o.description) {
+      unit.name = o.name;
+      unit.description = o.description;
+      changed = true;
+    }
+    for (const eq of ds.equipment) {
+      if (eq.unit_id === unit.id) {
+        eq.units = { code: unit.code, name: unit.name };
+      }
+    }
+  }
+  return changed;
+}
+
 function isValidCachedDataset(parsed: OperationalDataset): boolean {
+  // User-managed datasets (renames, deletes, etc.) must never be auto-regenerated.
+  if (parsed.userManaged && (parsed.units?.length ?? 0) > 0) return true;
   if (parsed.version !== OPERATIONAL_DATASET_VERSION) return false;
-  // User-managed datasets are never auto-regenerated — regeneration would
-  // resurrect units/equipment the user deliberately deleted.
-  if (parsed.userManaged) return true;
   return parsed.units.length > 0 && (parsed.equipment?.length ?? 0) >= MIN_FLEET_EQUIPMENT;
 }
 
 export function getOperationalDataset(): OperationalDataset {
-  if (_cache && isValidCachedDataset(_cache)) return _cache;
+  // Browser must read localStorage before trusting SSR-populated in-memory cache.
   if (typeof window !== "undefined") {
     try {
       const raw = localStorage.getItem(OPERATIONAL_STORE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as OperationalDataset;
         if (isValidCachedDataset(parsed)) {
+          let dirty = false;
+          if (parsed.userManaged && parsed.version !== OPERATIONAL_DATASET_VERSION) {
+            parsed.version = OPERATIONAL_DATASET_VERSION;
+            dirty = true;
+          }
+          syncOverridesFromStore(parsed);
+          if (applyUnitIdentityOverrides(parsed)) dirty = true;
+          if (!parsed.userManaged && Object.keys(loadUnitIdentityOverrides()).length > 0) {
+            parsed.userManaged = true;
+            dirty = true;
+          }
           _cache = parsed;
+          if (dirty) persistUserMutation(parsed);
           return _cache;
         }
       }
-    } catch { /* regenerate */ }
+    } catch { /* fall through */ }
   }
+
+  if (_cache && isValidCachedDataset(_cache)) {
+    if (applyUnitIdentityOverrides(_cache)) {
+      persistUserMutation(_cache);
+    }
+    return _cache;
+  }
+
   _cache = generateOperationalDataset();
-  persistOperationalDataset(_cache);
+  if (applyUnitIdentityOverrides(_cache)) {
+    persistUserMutation(_cache);
+  } else {
+    persistOperationalDataset(_cache);
+  }
   return _cache;
 }
 
@@ -66,7 +152,11 @@ function persistUserMutation(dataset: OperationalDataset): void {
 
 export function resetOperationalDataset(): OperationalDataset {
   _cache = generateOperationalDataset();
-  persistOperationalDataset(_cache);
+  if (applyUnitIdentityOverrides(_cache)) {
+    persistUserMutation(_cache);
+  } else {
+    persistOperationalDataset(_cache);
+  }
   return _cache;
 }
 
@@ -207,6 +297,31 @@ export function addOperationalUnit(input: {
   ds.units.push(unit);
   persistUserMutation(ds);
   return unit;
+}
+
+export type OperationalUnitPatch = Partial<Pick<OpUnit, "code" | "name" | "description">>;
+
+/** Update unit identity globally — name/location propagate to all modules via SSOT. */
+export function updateOperationalUnit(unitId: string, patch: OperationalUnitPatch): boolean {
+  const ds = getOperationalDataset();
+  const unit = ds.units.find((u) => u.id === unitId);
+  if (!unit) return false;
+
+  if (patch.name !== undefined) unit.name = patch.name.trim();
+  if (patch.description !== undefined) {
+    unit.description = patch.description.trim() || null;
+  }
+  if (patch.code !== undefined) unit.code = patch.code.trim();
+
+  if (patch.code !== undefined || patch.name !== undefined) {
+    for (const eq of ds.equipment.filter((e) => e.unit_id === unitId)) {
+      eq.units = { code: unit.code, name: unit.name };
+    }
+  }
+
+  persistUnitIdentityOverride(unitId, unit.name, unit.description);
+  persistUserMutation(ds);
+  return true;
 }
 
 export function removeOperationalUnit(unitId: string): boolean {

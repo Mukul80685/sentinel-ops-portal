@@ -22,6 +22,18 @@ import {
 
 type OptStatus = UnitOptimizationData["status"];
 
+function formatOptStatus(status: OptStatus): string {
+  if (status === "NOT_ALLOTTED") return "Not Allotted";
+  return status.charAt(0) + status.slice(1).toLowerCase();
+}
+
+function optStatusBadgeCls(status: OptStatus): string {
+  if (status === "OPTIMIZED") return "text-emerald-700 bg-emerald-500/10 border-emerald-500/25";
+  if (status === "SUBOPTIMAL") return "text-amber-600 bg-amber-400/10 border-amber-400/25";
+  if (status === "NOT_ALLOTTED") return "text-secondary-foreground bg-secondary/50 border-border";
+  return "text-destructive bg-destructive/10 border-destructive/25";
+}
+
 function SortThOpt({
   col,
   sortKey,
@@ -151,7 +163,9 @@ function UnitDetailView({ data, onBack }: { data: UnitOptimizationData; onBack: 
       ? "text-emerald-600 bg-emerald-500/8 border-emerald-500/20"
       : data.status === "SUBOPTIMAL"
         ? "text-amber-500 bg-amber-400/8 border-amber-400/20"
-        : "text-destructive bg-destructive/8 border-destructive/20";
+        : data.status === "NOT_ALLOTTED"
+          ? "text-secondary-foreground bg-secondary/50 border-border"
+          : "text-destructive bg-destructive/8 border-destructive/20";
 
   return (
     <div className="space-y-3">
@@ -173,7 +187,7 @@ function UnitDetailView({ data, onBack }: { data: UnitOptimizationData; onBack: 
           <div className="flex flex-col items-center shrink-0">
             <CompositeScoreRing score={data.compositeScore} />
             <span className={`inline-block mt-2 mono text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-sm border ${statusBadgeCls}`}>
-              {data.status}
+              {formatOptStatus(data.status)}
             </span>
           </div>
           <div className="flex-1 space-y-2.5 w-full">
@@ -273,7 +287,12 @@ export function OptimizationEngine() {
     }
   };
 
-  const statusOrder: Record<OptStatus, number> = { MISALLOCATED: 0, SUBOPTIMAL: 1, OPTIMIZED: 2 };
+  const statusOrder: Record<OptStatus, number> = {
+    NOT_ALLOTTED: 0,
+    MISALLOCATED: 1,
+    SUBOPTIMAL: 2,
+    OPTIMIZED: 3,
+  };
   const riskOrder: Record<"High" | "Medium" | "Low", number> = { High: 0, Medium: 1, Low: 2 };
 
   const rows = useMemo(() => {
@@ -326,8 +345,10 @@ export function OptimizationEngine() {
           </span>
         </div>
         <div className="flex items-center gap-1 flex-wrap">
-          {(["ALL", "OPTIMIZED", "SUBOPTIMAL", "MISALLOCATED"] as const).map((s) => {
+          {(["ALL", "OPTIMIZED", "SUBOPTIMAL", "MISALLOCATED", "NOT_ALLOTTED"] as const).map((s) => {
             const on = filterStatus === s;
+            const label =
+              s === "ALL" ? "All" : s === "NOT_ALLOTTED" ? "Not Allotted" : formatOptStatus(s);
             return (
               <button
                 key={s}
@@ -340,11 +361,13 @@ export function OptimizationEngine() {
                         ? "bg-amber-400/15 border-amber-400/40 text-amber-600"
                         : s === "MISALLOCATED"
                           ? "bg-destructive/12 border-destructive/30 text-destructive"
-                          : "bg-secondary border-border text-secondary-foreground"
+                          : s === "NOT_ALLOTTED"
+                            ? "bg-secondary border-border text-secondary-foreground"
+                            : "bg-secondary border-border text-secondary-foreground"
                     : "border-border text-foreground hover:bg-secondary/40 hover:text-secondary-foreground"
                 }`}
               >
-                {s === "ALL" ? "All" : s.charAt(0) + s.slice(1).toLowerCase()}
+                {label}
               </button>
             );
           })}
@@ -371,12 +394,7 @@ export function OptimizationEngine() {
             <tbody>
               {(tableExpanded ? rows : rows.slice(0, 4)).map(({ state, data: d }, idx) => {
                 const risk = riskLevel(d);
-                const sb =
-                  d.status === "OPTIMIZED"
-                    ? "text-emerald-700 bg-emerald-500/10 border-emerald-500/25"
-                    : d.status === "SUBOPTIMAL"
-                      ? "text-amber-600 bg-amber-400/10 border-amber-400/25"
-                      : "text-destructive bg-destructive/10 border-destructive/25";
+                const sb = optStatusBadgeCls(d.status);
                 const rb =
                   risk === "Low"
                     ? "text-emerald-700 bg-emerald-500/8 border-emerald-500/20"
@@ -407,7 +425,9 @@ export function OptimizationEngine() {
                       </div>
                     </td>
                     <td className="px-3 py-3">
-                      <span className={`inline-block mono text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-sm border ${sb}`}>{d.status}</span>
+                      <span className={`inline-block mono text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-sm border ${sb}`}>
+                        {formatOptStatus(d.status)}
+                      </span>
                     </td>
                     <td className="px-3 py-3">
                       <span className={`inline-block mono text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-sm border ${rb}`}>{risk}</span>
