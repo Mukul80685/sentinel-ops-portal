@@ -2,7 +2,9 @@ const { app, BrowserWindow } = require('electron');
 const path = require('path');
 const http = require('http');
 const fs = require('fs');
-
+const { ipcMain } = require('electron');
+const ATTACH_DIR = path.join(app.getPath('userData'), 'ssacc-attachments');
+if (!fs.existsSync(ATTACH_DIR)) fs.mkdirSync(ATTACH_DIR, { recursive: true });
 let mainWindow;
 let server;
 
@@ -106,6 +108,20 @@ function createWindow() {
 
   mainWindow.on('closed', () => (mainWindow = null));
 }
+ipcMain.handle('attachment-save', async (_, filePath, base64Data) => {
+  const dest = path.join(ATTACH_DIR, filePath.replace(/[/\\]/g, '_'));
+  fs.writeFileSync(dest, Buffer.from(base64Data, 'base64'));
+  return dest;
+});
+ipcMain.handle('attachment-load', async (_, filePath) => {
+  const dest = path.join(ATTACH_DIR, filePath.replace(/[/\\]/g, '_'));
+  if (!fs.existsSync(dest)) return null;
+  return fs.readFileSync(dest).toString('base64');
+});
+ipcMain.handle('attachment-delete', async (_, filePath) => {
+  const dest = path.join(ATTACH_DIR, filePath.replace(/[/\\]/g, '_'));
+  if (fs.existsSync(dest)) fs.unlinkSync(dest);
+});
 
 app.on('ready', async () => {
   try {
