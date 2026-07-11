@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, dialog } = require('electron');
 const path = require('path');
 const http = require('http');
 const fs = require('fs');
@@ -23,6 +23,43 @@ const MIME_TYPES = {
 };
 
 const CLIENT_DIST = path.join(__dirname, 'dist/client');
+const PREFERRED_PORT = 3737;
+const PORT_ATTEMPTS = 10;
+
+function listenOnAvailablePort(server, startPort) {
+  return new Promise((resolve, reject) => {
+    let port = startPort;
+
+    const tryListen = () => {
+      const onError = (err) => {
+        server.off('listening', onListening);
+        if (err.code === 'EADDRINUSE' && port < startPort + PORT_ATTEMPTS - 1) {
+          port += 1;
+          tryListen();
+          return;
+        }
+        reject(err);
+      };
+
+      const onListening = () => {
+        server.off('error', onError);
+        resolve(port);
+      };
+
+      server.once('error', onError);
+      server.once('listening', onListening);
+      server.listen(port, '127.0.0.1');
+    };
+
+    tryListen();
+  });
+}
+
+function showStartupError(title, message) {
+  console.error(title, message);
+  dialog.showErrorBox(title, message);
+  app.quit();
+}
 
 function serveStatic(req, res) {
   const filePath = path.join(CLIENT_DIST, req.url.split('?')[0]);
@@ -42,8 +79,23 @@ function serveStatic(req, res) {
 }
 
 async function startServer() {
-  const serverEntry = await import('./dist/server/server.js');
+  let serverEntry;
+  try {
+    serverEntry = await import('./dist/server/server.js');
+  } catch (err) {
+    throw new Error(
+      `Could not load the application server bundle.\n\n` +
+        `Expected file: ${path.join(__dirname, 'dist/server/server.js')}\n\n` +
+        `${err?.message ?? err}`,
+    );
+  }
+
   const handler = serverEntry.default;
+  if (!handler?.fetch) {
+    throw new Error('The application server bundle is missing its fetch handler.');
+  }
+
+  let activePort = PREFERRED_PORT;
 
   server = http.createServer(async (req, res) => {
     // Serve static assets directly from dist/client
@@ -57,7 +109,7 @@ async function startServer() {
     }
 
     // Everything else goes to the SSR handler
-    const url = `http://localhost:3737${req.url}`;
+    const url = `http://127.0.0.1:${activePort}${req.url}`;
     const headers = {};
     for (const [key, value] of Object.entries(req.headers)) {
       if (value) headers[key] = Array.isArray(value) ? value.join(',') : value;
@@ -86,14 +138,17 @@ async function startServer() {
     });
   });
 
-  await new Promise((resolve) => server.listen(3737, resolve));
-  console.log('Server listening on port 3737');
+  const port = await listenOnAvailablePort(server, PREFERRED_PORT);
+  activePort = port;
+  console.log(`Server listening on port ${port}`);
+  return port;
 }
 
-function createWindow() {
+function createWindow(port) {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
+    show: false,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -101,10 +156,24 @@ function createWindow() {
     },
   });
 
-  setTimeout(() => {
-    mainWindow.loadURL('http://localhost:3737');
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
+  });
+
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    if (validatedURL === `http://127.0.0.1:${port}/` || validatedURL === `http://localhost:${port}/`) {
+      showStartupError(
+        'SSACC failed to load',
+        `The local application server could not be reached on port ${port}.\n\n${errorDescription} (${errorCode})`,
+      );
+    }
+  });
+
+  mainWindow.loadURL(`http://127.0.0.1:${port}`);
+
+  if (!app.isPackaged) {
     mainWindow.webContents.openDevTools();
-  }, 3000);
+  }
 
   mainWindow.on('closed', () => (mainWindow = null));
 }
@@ -123,14 +192,29 @@ ipcMain.handle('attachment-delete', async (_, filePath) => {
   if (fs.existsSync(dest)) fs.unlinkSync(dest);
 });
 
-app.on('ready', async () => {
-  try {
-    await startServer();
-    createWindow();
-  } catch (err) {
-    console.error('Failed to start server:', err);
-  }
-});
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+
+  app.on('ready', async () => {
+    try {
+      const port = await startServer();
+      createWindow(port);
+    } catch (err) {
+      showStartupError(
+        'SSACC failed to start',
+        `${err?.message ?? err}\n\nIf another copy of SSACC is already running, close it and try again.`,
+      );
+    }
+  });
+}
 
 app.on('window-all-closed', () => {
   if (server) server.close();
