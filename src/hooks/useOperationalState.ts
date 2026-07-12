@@ -20,6 +20,9 @@ import {
   subscribeOperationalSync,
 } from "@/lib/operationalRefresh";
 
+/** Offline SSOT — refetch only when operational sync events invalidate queries. */
+const OPERATIONAL_QUERY_STALE_MS = Number.POSITIVE_INFINITY;
+
 export function useOperationalState() {
   const [ready, setReady] = useState(false);
   /** Bumps when priority/visibility/module overlays change (localStorage SSOT). */
@@ -43,28 +46,28 @@ export function useOperationalState() {
     queryKey: ["units"],
     queryFn: listUnits,
     enabled: ready,
-    staleTime: 0,
+    staleTime: OPERATIONAL_QUERY_STALE_MS,
   });
 
   const equipmentQuery = useQuery({
     queryKey: ["equipment-all"],
     queryFn: listAllEquipment,
     enabled: ready,
-    staleTime: 0,
+    staleTime: OPERATIONAL_QUERY_STALE_MS,
   });
 
   const engagementsQuery = useQuery({
     queryKey: ENGAGEMENTS_ALL_KEY,
     queryFn: fetchAllEngagements,
     enabled: ready,
-    staleTime: 0,
+    staleTime: OPERATIONAL_QUERY_STALE_MS,
   });
 
   const intelQuery = useQuery({
     queryKey: INTEL_RECORDS_ALL_KEY,
     queryFn: listAllIntelRecords,
     enabled: ready,
-    staleTime: 0,
+    staleTime: OPERATIONAL_QUERY_STALE_MS,
   });
 
   const units = unitsQuery.data ?? [];

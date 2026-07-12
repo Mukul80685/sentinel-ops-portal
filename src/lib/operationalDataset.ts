@@ -369,6 +369,21 @@ export function generateOperationalDataset(): OperationalDataset {
   };
 }
 
+let _seedUnitIdentities: Map<string, { name: string; description: string | null }> | null = null;
+
+/** Lightweight seed unit names — avoids full dataset regeneration on every store read. */
+export function getSeedUnitIdentities(): Map<string, { name: string; description: string | null }> {
+  if (!_seedUnitIdentities) {
+    _seedUnitIdentities = new Map(
+      UNIT_DEFS.map((u) => [
+        `op-unit-${u.slot}`,
+        { name: u.name, description: `${u.description} · ${UNIT_LOCATIONS[u.slot]}` },
+      ]),
+    );
+  }
+  return _seedUnitIdentities;
+}
+
 export function unitSlotFromDbUnit(
   unit: { id: string; code: string },
   dataset: OperationalDataset,

@@ -4,6 +4,7 @@
 
 import {
   generateOperationalDataset,
+  getSeedUnitIdentities,
   type OperationalDataset,
   type OpEngagement,
   type OpEquipment,
@@ -51,9 +52,7 @@ function persistUnitIdentityOverride(
 /** Recover renames already saved in a user-managed store into the dedicated overrides key. */
 function syncOverridesFromStore(ds: OperationalDataset): void {
   if (!ds.userManaged) return;
-  const seedById = new Map(
-    generateOperationalDataset().units.map((u) => [u.id, u] as const),
-  );
+  const seedById = getSeedUnitIdentities();
   for (const unit of ds.units) {
     const seed = seedById.get(unit.id);
     if (!seed) continue;
@@ -95,7 +94,11 @@ function isValidCachedDataset(parsed: OperationalDataset): boolean {
 }
 
 export function getOperationalDataset(): OperationalDataset {
-  // Browser must read localStorage before trusting SSR-populated in-memory cache.
+  // Fast path — one in-memory copy per session; mutations update _cache in place.
+  if (_cache && isValidCachedDataset(_cache)) {
+    return _cache;
+  }
+
   if (typeof window !== "undefined") {
     try {
       const raw = localStorage.getItem(OPERATIONAL_STORE_KEY);
@@ -119,13 +122,6 @@ export function getOperationalDataset(): OperationalDataset {
         }
       }
     } catch { /* fall through */ }
-  }
-
-  if (_cache && isValidCachedDataset(_cache)) {
-    if (applyUnitIdentityOverrides(_cache)) {
-      persistUserMutation(_cache);
-    }
-    return _cache;
   }
 
   _cache = generateOperationalDataset();

@@ -1,20 +1,16 @@
 import { useEffect, useRef } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { resetOperationalDataSourceCache } from "@/lib/operationalDataSource";
 import {
   ensureOperationalDataset,
-  OPERATIONAL_STORE_EVENT,
   resetOperationalDataset,
 } from "@/lib/operationalStore";
 import { OPERATIONAL_DATASET_VERSION } from "@/lib/operationalConstants";
-import { invalidateOperationalQueries } from "@/lib/operationalRefresh";
 
 /**
  * OperationalStoreGate
  * Ensures SSOT initialization and performs a controlled cache sync.
  */
 export function OperationalStoreGate() {
-  const qc = useQueryClient();
   const ran = useRef(false);
 
   useEffect(() => {
@@ -48,20 +44,7 @@ export function OperationalStoreGate() {
     } catch {
       resetOperationalDataset();
     }
-
-    window.dispatchEvent(new Event(OPERATIONAL_STORE_EVENT));
-
-    invalidateOperationalQueries(qc);
-    void qc.invalidateQueries({ queryKey: ["cats"] });
-    void qc.invalidateQueries({ queryKey: ["categories"] });
-    void qc.invalidateQueries({ queryKey: ["equipment-all-cat"] });
-    void qc.invalidateQueries({
-      predicate: (q) => {
-        const k = q.queryKey[0];
-        return k === "eq-counts" || k === "eq" || k === "eq-detail" || k === "unit-equipment-detail";
-      },
-    });
-  }, [qc]);
+  }, []);
 
   return null;
 }

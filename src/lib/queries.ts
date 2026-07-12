@@ -190,11 +190,28 @@ export function engStatusClass(s: EngStatus) {
 
 export const INTEL_RECORDS_ALL_KEY = ["intel-records", "all"] as const;
 
-function enrichOperationalIntelRow(row: OpIntelRow): any {
-  const ds = ensureOperationalDataset();
-  const satRecord = ds.satellites.find((s) => s.id === row.satellite_id);
-  const unit = ds.units.find((u) => u.id === row.unit_id);
-  const eng = ds.engagements.find((e) => e.satellite_id === row.satellite_id);
+type IntelEnrichmentIndex = {
+  satellites: Map<string, { id: string; name: string }>;
+  units: Map<string, { code: string }>;
+  engagementBySatellite: Map<string, OpEngagement>;
+};
+
+function buildIntelEnrichmentIndex(ds: ReturnType<typeof ensureOperationalDataset>): IntelEnrichmentIndex {
+  const satellites = new Map(ds.satellites.map((s) => [s.id, s] as const));
+  const units = new Map(ds.units.map((u) => [u.id, u] as const));
+  const engagementBySatellite = new Map<string, OpEngagement>();
+  for (const eng of ds.engagements) {
+    if (!engagementBySatellite.has(eng.satellite_id)) {
+      engagementBySatellite.set(eng.satellite_id, eng);
+    }
+  }
+  return { satellites, units, engagementBySatellite };
+}
+
+function enrichOperationalIntelRow(row: OpIntelRow, index: IntelEnrichmentIndex): any {
+  const satRecord = index.satellites.get(row.satellite_id);
+  const unit = index.units.get(row.unit_id);
+  const eng = index.engagementBySatellite.get(row.satellite_id);
   const satName = satRecord?.name ?? eng?.satellites?.name ?? "—";
   const freqMatch = row.summary?.match(/Frequency\s+([\d.]+\s*MHz)/i);
   const frequency = freqMatch?.[1] ?? row.band;
@@ -208,18 +225,24 @@ function enrichOperationalIntelRow(row: OpIntelRow): any {
 }
 
 export async function listAllIntelRecords(): Promise<any[]> {
-  return getOperationalIntelRows().map(enrichOperationalIntelRow);
+  const ds = ensureOperationalDataset();
+  const index = buildIntelEnrichmentIndex(ds);
+  return getOperationalIntelRows().map((row) => enrichOperationalIntelRow(row, index));
 }
 
 export async function listIntelRecordsForUnit(unitId: string): Promise<any[]> {
-  const all = await listAllIntelRecords();
-  return all.filter((r) => r.unit_id === unitId);
+  const ds = ensureOperationalDataset();
+  const index = buildIntelEnrichmentIndex(ds);
+  return getOperationalIntelRows()
+    .filter((r) => r.unit_id === unitId)
+    .map((row) => enrichOperationalIntelRow(row, index));
 }
 
 export async function getIntelRecordById(intelId: string): Promise<any | null> {
+  const ds = ensureOperationalDataset();
   const row = getOperationalIntelRows().find((r) => r.id === intelId);
   if (!row) return null;
-  return enrichOperationalIntelRow(row);
+  return enrichOperationalIntelRow(row, buildIntelEnrichmentIndex(ds));
 }
 
 /**
