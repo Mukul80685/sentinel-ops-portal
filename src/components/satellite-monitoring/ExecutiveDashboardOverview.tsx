@@ -53,7 +53,7 @@ function ExecutiveTile({
   return (
     <Link
       to="/"
-      search={{ panel: tile.panel }}
+      search={{ unit: undefined, panel: tile.panel }}
       className={TILE_CLASS}
       title={DASHBOARD_PANEL_PURPOSE[tile.panel]}
     >

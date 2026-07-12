@@ -6,6 +6,7 @@ import { HomeNavIconBadge } from "@/components/home/HomeNavIcons";
 import { Empty } from "@/components/Empty";
 import { listCategories, listAllEquipmentDetailed } from "@/lib/queries";
 import type { OpServiceability } from "@/lib/operationalDataset";
+import { unitDisplayLabel } from "@/lib/operationalDataset";
 import { UnitAdvancedFeatures } from "@/components/UnitAdvancedFeatures";
 import { useModuleUnits } from "@/hooks/useModuleUnits";
 import {
@@ -77,22 +78,6 @@ function pctColor(pct: number): string {
   if (pct >= 85) return "#22c55e";
   if (pct >= 60) return "#f59e0b";
   return "#ef4444";
-}
-
-// NATO phonetic alphabet → "Unit X" display label
-const NATO_TO_LETTER: Record<string, string> = {
-  alpha: "A", bravo: "B", charlie: "C", delta: "D",
-  echo:  "E", foxtrot: "F", golf: "G", hotel: "H",
-  india: "I", juliet: "J", kilo: "K", lima:  "L",
-};
-function unitDisplayName(u: { code: string; name: string }, idx: number): string {
-  void idx;
-  const hay = `${u.code} ${u.name}`.toLowerCase();
-  for (const [key, letter] of Object.entries(NATO_TO_LETTER)) {
-    if (hay.includes(key)) return `Unit ${letter}`;
-  }
-  // Dynamically created units keep their given name.
-  return u.name;
 }
 
 // ─── Category icon map ─────────────────────────────────────────────────────────
@@ -216,7 +201,7 @@ function ServiceabilityPage() {
       const summary = summaryParts.join(" | ");
 
       // Normalised display label ("Unit A", "Unit B" …)
-      const displayName = unitDisplayName(u, idx);
+      const displayName = unitDisplayLabel(u);
 
       return { unit: u, items, ok, partial, bad, faults, pct, total, catCounts, summary, displayName };
     });
@@ -412,7 +397,7 @@ function UnitDetail({
         </Button>
         <div>
           <div className="mono text-sm font-bold uppercase tracking-widest text-foreground">
-            {unit ? unitDisplayName(unit, 0) : "Unit"} — Serviceability Detail
+            {unit ? unitDisplayLabel(unit) : "Unit"} — Serviceability Detail
           </div>
           <div className="mono text-[10px] text-muted-foreground">
             {equipment.length} items ·{" "}

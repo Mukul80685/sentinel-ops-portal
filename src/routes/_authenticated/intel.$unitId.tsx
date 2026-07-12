@@ -19,6 +19,7 @@ import {
   hasIntelData,
 } from "@/lib/intelAnalysisData";
 import { INT_UNITS } from "@/lib/intelUnits";
+import { unitDisplayLabel } from "@/lib/operationalDataset";
 import { resolveIntUnitSlug, resolveOperationalUnitId } from "@/lib/operationalSync";
 import { ENGAGEMENTS_ALL_KEY, fetchAllEngagements } from "@/lib/engagementEngine";
 import { removeOperationalIntelRows } from "@/lib/operationalStore";
@@ -1015,7 +1016,7 @@ function IntelUnitView() {
     );
   }
 
-  const unitLabel = INT_UNITS.some((u) => u.id === unitId) ? `Unit ${unit.code}` : unit.name;
+  const unitLabel = unit ? unitDisplayLabel(unit) : "Unit";
 
   // DECISION: Treat cleared units like new units — show upload onboarding whenever no rows remain.
   const showScanUploadOnboarding =

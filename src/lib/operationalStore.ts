@@ -209,6 +209,28 @@ export function addOperationalUnit(input: {
   return unit;
 }
 
+export function updateOperationalUnit(
+  unitId: string,
+  patch: { name?: string; description?: string | null },
+): OpUnit | null {
+  const ds = getOperationalDataset();
+  const unit = ds.units.find((u) => u.id === unitId);
+  if (!unit) return null;
+  if (patch.name !== undefined) unit.name = patch.name.trim();
+  if (patch.description !== undefined) {
+    unit.description = patch.description?.trim() || null;
+  }
+  if (patch.name !== undefined) {
+    for (const eq of ds.equipment) {
+      if (eq.unit_id === unitId && eq.units) {
+        eq.units.name = unit.name;
+      }
+    }
+  }
+  persistUserMutation(ds);
+  return unit;
+}
+
 export function removeOperationalUnit(unitId: string): boolean {
   const ds = getOperationalDataset();
   const before = ds.units.length;

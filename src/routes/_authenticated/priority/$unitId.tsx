@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
 import { ccModuleBackLink } from "@/lib/controlCenter";
 import { exportCsv, getUnitById } from "@/lib/queries";
+import { unitDisplayLabel } from "@/lib/operationalDataset";
 import { adminExportFilename } from "@/lib/adminExportNaming";
 import { useCanEdit } from "@/lib/auth";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -40,7 +41,6 @@ import {
   updateAllocationPriority,
   allocationSlotForUnit,
   unitCodeToSlot,
-  unitShortLabel,
   SAT_PRIORITIES,
   SAT_PRIORITY_LABEL,
   type AllocationSortKey,
@@ -178,8 +178,7 @@ function PriorityUnit() {
   });
 
   const slot = unit ? allocationSlotForUnit(unit) : null;
-  const seedLabel = unit?.code ? unitShortLabel(unit.code) : "Unit";
-  const shortLabel = seedLabel !== "Unit" ? seedLabel : (unit?.name ?? "Unit");
+  const shortLabel = unit ? unitDisplayLabel(unit) : "Unit";
 
   const rows = useMemo(() => {
     if (!slot) return [];

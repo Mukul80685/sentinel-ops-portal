@@ -14,10 +14,20 @@ import {
   buildIntelLinkageContext,
   buildIntelLinkageVisibilityRows,
   buildIntelSatelliteTable,
+  deriveIntScanPhaseStatus,
   hasIntelData,
+  UNIT_SATELLITE_ROSTER,
   type IntelSatelliteReportRow,
 } from "@/lib/intelAnalysisData";
-import { mergeIntelSatelliteTableWithStorage } from "@/lib/intelScanStorage";
+import { loadImportedRecords } from "@/lib/intelRepository";
+import {
+  loadScanOverrides,
+  loadSuppressedSatNames,
+  mergeIntelSatelliteTableWithStorage,
+} from "@/lib/intelScanStorage";
+import { intelStorageSlug } from "@/lib/intelStorageKeys";
+import { resolveIntUnitSlug } from "@/lib/operationalSync";
+import { computeUnitResourceEngagementPct } from "@/lib/resourceEngagementStats";
 
 function engagementHasOperationalChain(
   eng: any,
@@ -217,4 +227,148 @@ export function buildIntelBackedAssignments(
   }
 
   return { assignments, violations };
+}
+
+/** Unit appears in INT Repository (seed roster or user uploads) — not generic fleet units. */
+export function unitHasIntRepositoryPresence(intUnitSlug: string, unitCode?: string): boolean {
+  if (UNIT_SATELLITE_ROSTER[intUnitSlug]) return true;
+  const slug = intelStorageSlug(intUnitSlug, unitCode);
+  if (loadScanOverrides(slug, unitCode).length > 0) return true;
+  if (loadImportedRecords(slug).length > 0) return true;
+  return false;
+}
+
+/**
+ * Satellites a unit is monitoring — mirrors the INT Repository unit table.
+ * Includes roster units (alpha/bravo/charlie) with scan data, plus any unit
+ * with user-uploaded overrides/imports. Units with no INT presence return [].
+ */
+export function listIntelMonitoringSatellites(
+  unitDbId: string,
+  unitCode: string | undefined,
+  engagements: any[],
+  equipment: any[],
+  intelRows: any[],
+): IntelSatelliteReportRow[] {
+  const intUnitSlug = resolveIntUnitSlug(unitDbId, unitCode);
+  if (!intUnitSlug || !unitHasIntRepositoryPresence(intUnitSlug, unitCode)) {
+    return [];
+  }
+
+  const slug = intelStorageSlug(intUnitSlug, unitCode);
+  const suppressed = loadSuppressedSatNames(slug, unitCode);
+  const allOverrides = loadScanOverrides(slug, unitCode);
+  const zeroImported = new Set(
+    allOverrides
+      .filter((o) => o.totalScanned === 0)
+      .map((o) => o.satelliteName.toLowerCase()),
+  );
+
+  const unitEngs = engagements.filter((e) => e.unit_id === unitDbId);
+  const unitEq = equipment.filter((e: any) => e.unit_id === unitDbId);
+  const visibilityRows = buildIntelLinkageVisibilityRows(intUnitSlug, unitDbId, unitEngs);
+  const ctx = buildIntelLinkageContext(intUnitSlug, unitEngs, visibilityRows, unitEq, intelRows);
+  const table = mergeIntelSatelliteTableWithStorage(
+    intUnitSlug,
+    buildIntelSatelliteTable(intUnitSlug, ctx, unitEngs),
+    unitCode,
+  );
+
+  const fromTable = table.filter(
+    (row) =>
+      !suppressed.has(row.satelliteName.toLowerCase()) &&
+      !zeroImported.has(row.satelliteName.toLowerCase()) &&
+      row.scanEligible &&
+      row.engagementStatus != null &&
+      row.totalScanned > 0,
+  );
+
+  if (fromTable.length > 0 || UNIT_SATELLITE_ROSTER[intUnitSlug]) {
+    return fromTable;
+  }
+
+  // Upload-only unit (no seed roster): build rows from overrides + imports.
+  const overrides = allOverrides.filter(
+    (o) => o.totalScanned > 0 && !suppressed.has(o.satelliteName.toLowerCase()),
+  );
+  const imports = loadImportedRecords(slug).filter(
+    (r) => !r.archived && !suppressed.has(r.satellite.toLowerCase()),
+  );
+  const satNames = new Set<string>();
+  for (const o of overrides) satNames.add(o.satelliteName);
+  for (const r of imports) satNames.add(r.satellite);
+
+  const rows: IntelSatelliteReportRow[] = [];
+  for (const name of satNames) {
+    const key = name.toLowerCase();
+    const ov = overrides.find((o) => o.satelliteName.toLowerCase() === key);
+    if (ov) {
+      rows.push({
+        reportId: `${intUnitSlug}__${name.replace(/\s+/g, "-")}`,
+        satelliteName: name,
+        scanEligible: true,
+        totalScanned: ov.totalScanned,
+        analyzed: ov.analyzed,
+        pending: ov.pending,
+        productivityScore: ov.productivityScore,
+        reportTimestamp: ov.updatedOn,
+        polarization: ov.polarization,
+        processingStatus: ov.pending > 0 ? "Active Scanning" : "Analysis Complete",
+        engagementStatus: deriveIntScanPhaseStatus(ov.totalScanned, ov.analyzed, ov.pending),
+      });
+      continue;
+    }
+    const satImports = imports.filter((r) => r.satellite.toLowerCase() === key);
+    if (satImports.length > 0) {
+      const analyzed = satImports.filter((r) => r.productivity === "productive").length;
+      const totalScanned = satImports.length;
+      const pending = Math.max(0, totalScanned - analyzed);
+      rows.push({
+        reportId: `${intUnitSlug}__${name.replace(/\s+/g, "-")}`,
+        satelliteName: name,
+        scanEligible: true,
+        totalScanned,
+        analyzed,
+        pending,
+        productivityScore:
+          analyzed > 0 ? Math.round((analyzed / totalScanned) * 100) : null,
+        reportTimestamp: satImports[0]?.collectionDate ?? null,
+        polarization: satImports[0]?.polarization ?? "—",
+        processingStatus: pending > 0 ? "Active Scanning" : "Analysis Complete",
+        engagementStatus: deriveIntScanPhaseStatus(totalScanned, analyzed, pending),
+      });
+    }
+  }
+
+  return rows.filter((r) => r.totalScanned > 0 && r.engagementStatus != null);
+}
+
+/** True when INT Repository reports at least one satellite with scan data for this unit. */
+export function unitHasIntMonitoringActivity(
+  unitDbId: string,
+  unitCode: string | undefined,
+  engagements: any[],
+  equipment: any[],
+  intelRows: any[],
+): boolean {
+  return (
+    listIntelMonitoringSatellites(unitDbId, unitCode, engagements, equipment, intelRows).length > 0
+  );
+}
+
+/**
+ * Resource engagement % is meaningful only when INT shows active monitoring.
+ * Units with no INT scan data always return 0% (no seeded-inventory hallucination).
+ */
+export function computeGatedResourceEngagementPct(
+  unitDbId: string,
+  unitCode: string | undefined,
+  equipment: any[],
+  engagements: any[],
+  intelRows: any[],
+): number {
+  if (!unitHasIntMonitoringActivity(unitDbId, unitCode, engagements, equipment, intelRows)) {
+    return 0;
+  }
+  return computeUnitResourceEngagementPct(unitDbId, equipment, engagements);
 }

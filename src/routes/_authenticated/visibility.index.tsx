@@ -103,9 +103,10 @@ import {
 } from "@/lib/visibilityOverlay";
 import { mergeRegionsWithOverlay, useVisibleSatelliteCounts } from "@/lib/satelliteCatalog";
 import { INT_UNITS } from "@/lib/intelRepository";
-import { unitTileTitle, UNIT_SLOTS, type UnitSlot } from "@/lib/priorityAllocation";
+import { unitDisplayLabel, unitDisplayLocation } from "@/lib/operationalDataset";
 import { resolveIntUnitSlug } from "@/lib/operationalSync";
 import { UnitAdvancedFeatures } from "@/components/UnitAdvancedFeatures";
+import { RegionFlagIcon } from "@/components/visibility/RegionFlagIcon";
 import { useModuleUnits } from "@/hooks/useModuleUnits";
 import {
   buildIntScanLookupForUnit,
@@ -279,8 +280,8 @@ function VisibilityPage() {
         return {
           id: slug,
           code: seed?.code ?? u.code,
-          name: seed?.name ?? u.name,
-          location: seed?.location ?? u.description ?? "—",
+          name: unitDisplayLabel(u),
+          location: unitDisplayLocation(u, seed?.location),
         };
       }),
     [visibleDbUnits],
@@ -645,7 +646,7 @@ function UnitGrid({
     <div className="flex flex-col flex-1 min-h-0 h-full">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 flex-1 min-h-0 auto-rows-fr overflow-y-auto">
         {units.map((u) => {
-          const title = (UNIT_SLOTS as readonly string[]).includes(u.id) ? unitTileTitle(u.id as UnitSlot) : u.name;
+          const title = u.name;
           const count = visibleCounts[u.id] ?? 0;
 
           return (
@@ -739,21 +740,14 @@ function RegionGrid({
             onClick={() => onSelect(region)}
             className="panel flex flex-col items-center justify-center gap-3 py-7 px-3 min-h-[130px] hover:bg-secondary/60 focus:outline-none focus:ring-1 focus:ring-primary transition-colors group"
           >
-            {region.flagCode ? (
-              <img
-                src={`https://flagcdn.com/w40/${region.flagCode}.png`}
-                srcSet={`https://flagcdn.com/w80/${region.flagCode}.png 2x`}
-                alt={region.label}
-                className="w-14 h-9 object-cover rounded-sm border border-border"
-                loading="lazy"
-              />
-            ) : region.emoji ? (
-              <span className="text-4xl leading-none select-none" role="img" aria-label={region.label}>
-                {region.emoji}
-              </span>
-            ) : (
-              REGION_ICON[region.id] ?? <Globe className="h-9 w-9 text-muted-foreground" />
-            )}
+            <RegionFlagIcon
+              flagCode={region.flagCode}
+              emoji={region.emoji}
+              label={region.label}
+              variant="tile"
+              className="w-14 h-9"
+              fallback={REGION_ICON[region.id] ?? <Globe className="h-9 w-9 text-muted-foreground" />}
+            />
             <span className="mono text-[11px] font-bold uppercase tracking-widest text-center leading-tight">
               {region.label}
             </span>

@@ -14,6 +14,14 @@ export type ModuleScope =
   | "inventory"
   | "serviceability";
 
+export const ALL_MODULE_SCOPES: ModuleScope[] = [
+  "intel",
+  "priority",
+  "visibility",
+  "inventory",
+  "serviceability",
+];
+
 export const MODULE_SCOPE_LABELS: Record<ModuleScope, string> = {
   intel: "Intelligence Repository",
   priority: "Satellite Priority & Allocation",
@@ -73,6 +81,38 @@ export function filterUnitsForModule<T extends { id: string }>(
   const hidden = loadHiddenSet(scope);
   if (hidden.size === 0) return units;
   return units.filter((u) => !hidden.has(u.id));
+}
+
+/** Union of visible units across multiple administrator modules (deduped by id). */
+export function unionUnitsForScopes<T extends { id: string }>(
+  units: T[],
+  scopes: ModuleScope[],
+): T[] {
+  const byId = new Map<string, T>();
+  for (const scope of scopes) {
+    for (const unit of filterUnitsForModule(units, scope)) {
+      byId.set(unit.id, unit);
+    }
+  }
+  return [...byId.values()];
+}
+
+export function unhideUnitInAllModules(unitId: string): void {
+  for (const scope of ALL_MODULE_SCOPES) {
+    unhideUnitInModule(unitId, scope);
+  }
+}
+
+export function clearUnitFromAllHiddenLists(unitId: string): void {
+  let changed = false;
+  for (const scope of ALL_MODULE_SCOPES) {
+    const set = loadHiddenSet(scope);
+    if (set.delete(unitId)) {
+      saveHiddenSet(scope, set);
+      changed = true;
+    }
+  }
+  if (changed) dispatchModuleUnitsChange("intel");
 }
 
 function dispatchModuleUnitsChange(scope: ModuleScope): void {

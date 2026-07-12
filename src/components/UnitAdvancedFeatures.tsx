@@ -1,13 +1,14 @@
 /**
  * Shared "Advanced Features" control — identical across all five main modules.
  * Add Unit asks ONLY for Unit Name + Unit Location (module-specific data is
- * entered later inside the unit). Delete Unit is scoped to the host module only.
+ * entered later inside the unit). Delete Unit removes the unit globally so the
+ * Satellite Monitoring Dashboard stays in sync.
  */
 
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Plus, Settings2, Trash2, X } from "lucide-react";
+import { Pencil, Plus, Settings2, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,12 +29,17 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { addOperationalUnit } from "@/lib/operationalStore";
 import {
-  MODULE_SCOPE_LABELS,
-  purgeUnitFromModule,
+  addOperationalUnit,
+  purgeUnitCompletely,
+  updateOperationalUnit,
+} from "@/lib/operationalStore";
+import {
+  clearUnitFromAllHiddenLists,
+  unhideUnitInAllModules,
   type ModuleScope,
 } from "@/lib/moduleUnitRegistry";
+import { clearUnitScanHistory } from "@/lib/scanHistoryStore";
 import { useModuleUnits } from "@/hooks/useModuleUnits";
 import type { Unit } from "@/lib/queries";
 
@@ -58,11 +64,13 @@ export function UnitAdvancedFeatures({
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
   const [unitName, setUnitName] = useState("");
   const [unitLocation, setUnitLocation] = useState("");
   const [pendingDelete, setPendingDelete] = useState<Unit | null>(null);
-
-  const moduleLabel = MODULE_SCOPE_LABELS[scope];
+  const [pendingRename, setPendingRename] = useState<Unit | null>(null);
+  const [renameName, setRenameName] = useState("");
+  const [renameLocation, setRenameLocation] = useState("");
 
   function refresh() {
     queryClient.invalidateQueries({ queryKey: ["units"] });
@@ -84,6 +92,7 @@ export function UnitAdvancedFeatures({
       name: unitName.trim(),
       description: unitLocation.trim(),
     });
+    unhideUnitInAllModules(created.id);
     toast.success(`Unit "${created.name}" created.`);
     setUnitName("");
     setUnitLocation("");
@@ -93,15 +102,50 @@ export function UnitAdvancedFeatures({
 
   function confirmDelete() {
     if (!pendingDelete) return;
-    const ok = purgeUnitFromModule(pendingDelete.id, scope);
+    const label = pendingDelete.name;
+    const ok = purgeUnitCompletely(pendingDelete.id);
     if (ok) {
-      toast.success(`Unit "${pendingDelete.name}" removed from ${moduleLabel}.`);
+      clearUnitFromAllHiddenLists(pendingDelete.id);
+      clearUnitScanHistory(pendingDelete.id);
+      toast.success(`Unit "${label}" deleted from all modules.`);
     } else {
       toast.error("Unit could not be deleted.");
     }
     setPendingDelete(null);
     setDeleteOpen(false);
     refresh();
+  }
+
+  function openRenameDialog(unit: Unit) {
+    setPendingRename(unit);
+    setRenameName(unit.name);
+    setRenameLocation(unit.description ?? "");
+    setRenameOpen(true);
+  }
+
+  function handleRenameUnit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!pendingRename) return;
+    if (!renameName.trim()) {
+      toast.error("Unit Name is required.");
+      return;
+    }
+    if (!renameLocation.trim()) {
+      toast.error("Unit Location is required.");
+      return;
+    }
+    const updated = updateOperationalUnit(pendingRename.id, {
+      name: renameName.trim(),
+      description: renameLocation.trim(),
+    });
+    if (updated) {
+      toast.success(`Unit renamed to "${updated.name}".`);
+      setRenameOpen(false);
+      setPendingRename(null);
+      refresh();
+    } else {
+      toast.error("Unit could not be updated.");
+    }
   }
 
   const alignCls =
@@ -140,6 +184,18 @@ export function UnitAdvancedFeatures({
               }}
             >
               <Plus className="h-4 w-4" /> Add Unit
+            </Button>
+            <Button
+              variant="outline"
+              className="mono justify-start gap-2 uppercase text-[12px] tracking-wider"
+              disabled={units.length === 0}
+              onClick={() => {
+                setAdvancedOpen(false);
+                setPendingRename(null);
+                setRenameOpen(true);
+              }}
+            >
+              <Pencil className="h-4 w-4" /> Change Unit Name & Location
             </Button>
             <Button
               variant="outline"
@@ -197,6 +253,83 @@ export function UnitAdvancedFeatures({
         </DialogContent>
       </Dialog>
 
+      {/* Rename Unit — pick unit, then edit name + location */}
+      <Dialog open={renameOpen && !pendingRename} onOpenChange={setRenameOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="mono uppercase tracking-wide">
+              Change Unit Name & Location
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-muted-foreground">
+            Select the unit to rename. Changes apply across all administrator modules and the
+            Satellite Monitoring Dashboard.
+          </p>
+          <div className="flex flex-col gap-1.5 max-h-72 overflow-y-auto">
+            {units.map((u) => (
+              <Button
+                key={u.id}
+                variant="outline"
+                className="mono justify-between gap-2 text-[12px] w-full"
+                onClick={() => openRenameDialog(u)}
+              >
+                <span className="truncate">
+                  {u.name}
+                  {u.description ? (
+                    <span className="text-muted-foreground"> — {u.description}</span>
+                  ) : null}
+                </span>
+                <Pencil className="h-3.5 w-3.5 shrink-0" />
+              </Button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!pendingRename}
+        onOpenChange={(o) => {
+          if (!o) setPendingRename(null);
+        }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="mono uppercase tracking-wide">
+              Change Unit Name & Location
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleRenameUnit} className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="rn-unit-name" className="mono text-[11px] uppercase tracking-wider">
+                Unit Name
+              </Label>
+              <Input
+                id="rn-unit-name"
+                value={renameName}
+                onChange={(e) => setRenameName(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="rn-unit-loc" className="mono text-[11px] uppercase tracking-wider">
+                Unit Location
+              </Label>
+              <Input
+                id="rn-unit-loc"
+                value={renameLocation}
+                onChange={(e) => setRenameLocation(e.target.value)}
+              />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={() => setPendingRename(null)}>
+                Cancel
+              </Button>
+              <Button type="submit">Save Changes</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       {/* Delete Unit — pick a unit, then confirm */}
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <DialogContent className="max-w-sm">
@@ -204,7 +337,8 @@ export function UnitAdvancedFeatures({
             <DialogTitle className="mono uppercase tracking-wide">Delete Unit</DialogTitle>
           </DialogHeader>
           <p className="text-xs text-muted-foreground">
-            Select the unit to remove from {moduleLabel} only.
+            Select the unit to delete. This removes the unit and its data from all administrator
+            modules and the Satellite Monitoring Dashboard.
           </p>
           <div className="flex flex-col gap-1.5 max-h-72 overflow-y-auto">
             {units.map((u) => (
@@ -231,12 +365,12 @@ export function UnitAdvancedFeatures({
       <AlertDialog open={!!pendingDelete} onOpenChange={(o) => !o && setPendingDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove unit from {moduleLabel}?</AlertDialogTitle>
+            <AlertDialogTitle>Delete unit permanently?</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to remove{" "}
-              <span className="font-semibold text-foreground">{pendingDelete?.name}</span> from{" "}
-              {moduleLabel} only? This module&apos;s data for this unit will be cleared. The unit
-              will remain available in all other features.
+              Are you sure you want to delete{" "}
+              <span className="font-semibold text-foreground">{pendingDelete?.name}</span>? This
+              removes the unit from every administrator module and the Satellite Monitoring
+              Dashboard. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -245,7 +379,7 @@ export function UnitAdvancedFeatures({
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={confirmDelete}
             >
-              Remove from Module
+              Delete Unit
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

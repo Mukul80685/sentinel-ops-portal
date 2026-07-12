@@ -381,3 +381,18 @@ export function unitLabelFromCode(code: string): string {
   const letter = code.replace(/^GATE[-\s]?/i, "").trim().charAt(0).toUpperCase();
   return letter ? `Unit ${letter}` : code;
 }
+
+/** Prefer user-entered unit name; fall back to code-derived label. */
+export function unitDisplayLabel(unit: { code: string; name?: string | null }): string {
+  const name = unit.name?.trim();
+  return name || unitLabelFromCode(unit.code);
+}
+
+/** Prefer user-entered location; fall back to seed/default location when provided. */
+export function unitDisplayLocation(
+  unit: { description?: string | null },
+  seedLocation?: string | null,
+): string {
+  const loc = unit.description?.trim();
+  return loc || seedLocation?.trim() || "—";
+}

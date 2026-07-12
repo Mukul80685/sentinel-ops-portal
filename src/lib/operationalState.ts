@@ -9,7 +9,7 @@ import {
   countServiceableChainCapacity,
   type UnitCapability,
 } from "@/lib/liveEngagementModel";
-import { unitLabelFromCode } from "@/lib/operationalDataset";
+import { unitDisplayLabel } from "@/lib/operationalDataset";
 import { resolveIntUnitSlug } from "@/lib/operationalSync";
 import {
   getAllocationsForUnit,
@@ -18,6 +18,10 @@ import {
   type UnitSlot,
 } from "@/lib/priorityAllocation";
 import { mergeRegionsWithOverlay } from "@/lib/satelliteCatalog";
+import {
+  getUnitScanHistory,
+  syncScanHistoryFromActiveSatellites,
+} from "@/lib/scanHistoryStore";
 import { countVisibleSatellitesForUnit, normalizeSatelliteName } from "@/lib/visibilityMatrix";
 
 export type UnitOperationalState = {
@@ -106,7 +110,7 @@ export function buildOperationalFleetState(input: {
     return {
       unitDbId: unit.id,
       unitCode: unit.code,
-      unitLabel: unitLabelFromCode(unit.code),
+      unitLabel: unitDisplayLabel(unit),
       intUnitSlug: intSlug,
       prioritySlot,
       visibleSatellites,
@@ -160,21 +164,35 @@ export function buildUnitActivityFromState(
     .filter((e) => e.unit_id === state.unitDbId && e.status === "Completed")
     .slice(0, 5);
 
-  const history: UnitActivityHistoryRow[] = completed.map((e) => {
-    const name = (e.satellites?.name as string | undefined) ?? "Unknown";
-    const analysis = computeSatelliteAnalysis(e, intelRows);
-    const ratio = analysis.scanned > 0 ? analysis.analyzed / analysis.scanned : 0;
-    const outcome: UnitActivityHistoryRow["outcome"] =
-      ratio >= 0.85 ? "productive" : ratio >= 0.5 ? "mixed" : "non-productive";
-    const ts = e.observation_start ?? e.updated_at ?? "";
-    let time = "—";
-    if (ts) {
-      try {
-        time = new Date(ts).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-      } catch { /* keep default */ }
-    }
-    return { satellite: name, time, outcome };
-  });
+  const seededHistory = getUnitScanHistory(state.unitDbId);
+  const activeSatNames = activeSats.map((s) => s.satellite);
+  const history: UnitActivityHistoryRow[] =
+    seededHistory.length > 0
+      ? syncScanHistoryFromActiveSatellites(state.unitDbId, activeSatNames).map((h) => ({
+          satellite: h.satellite,
+          time: h.time,
+          outcome: h.outcome,
+        }))
+      : completed.map((e) => {
+          const name = (e.satellites?.name as string | undefined) ?? "Unknown";
+          const analysis = computeSatelliteAnalysis(e, intelRows);
+          const ratio = analysis.scanned > 0 ? analysis.analyzed / analysis.scanned : 0;
+          const outcome: UnitActivityHistoryRow["outcome"] =
+            ratio >= 0.85 ? "productive" : ratio >= 0.5 ? "mixed" : "non-productive";
+          const ts = e.observation_start ?? e.updated_at ?? "";
+          let time = "—";
+          if (ts) {
+            try {
+              time = new Date(ts).toLocaleTimeString(undefined, {
+                hour: "2-digit",
+                minute: "2-digit",
+              });
+            } catch {
+              /* keep default */
+            }
+          }
+          return { satellite: name, time, outcome };
+        });
 
   return { activeSats, history };
 }
@@ -194,9 +212,22 @@ export type UnitOptimizationData = {
   status: "OPTIMIZED" | "SUBOPTIMAL" | "MISALLOCATED";
   satelliteLoad: number;
   maxCapacity: number;
+  /** False when INT Repository shows no active satellite monitoring. */
+  monitoringActive: boolean;
   resource: OptFactorEntry;
   priority: OptFactorEntry;
   serviceability: OptFactorEntry;
+};
+
+/** Dashboard-only inputs — INT gating + cross-module factor scores. */
+export type UnitOptimizationInput = {
+  isMonitoring: boolean;
+  /** Satellites with scan data in INT Repository (current monitoring). */
+  monitoredSatelliteNames: string[];
+  /** Union of active INT satellites + recent scan history (last 5). */
+  recentScanSatelliteNames: string[];
+  /** Resource Inventory engagement % (0 when not monitoring). */
+  resourceEngagementPct: number;
 };
 
 function optFactor(
@@ -217,89 +248,117 @@ function severityFromScore(score: number): OptFactorEntry["severity"] {
   return "ok";
 }
 
-/** P1=high, P2=medium, P3=low — weights for priority alignment scoring. */
-const PRIORITY_TIER_WEIGHT: Record<number, number> = { 1: 100, 2: 65, 3: 35 };
+/** P1=10, P2=7, P3=4 — P3 always contributes; score is zero only when not monitoring. */
+const PRIORITY_TIER_POINTS: Record<1 | 2 | 3, number> = { 1: 10, 2: 7, 3: 4 };
+
+function allocationTier(
+  satelliteName: string,
+  allocations: ReturnType<typeof getAllocationsForUnit>,
+): 1 | 2 | 3 {
+  const norm = normalizeSatelliteName(satelliteName);
+  const row = allocations.find((a) => normalizeSatelliteName(a.satelliteName) === norm);
+  if (!row) return 3;
+  return Math.min(Math.max(Math.round(row.priority), 1), 3) as 1 | 2 | 3;
+}
+
+/** Best-case point total — fill `capacity` slots from P1 → P2 → P3 allocation pool. */
+function idealPriorityPoints(
+  allocations: ReturnType<typeof getAllocationsForUnit>,
+  capacity: number,
+): number {
+  const byTier: Record<1 | 2 | 3, number[]> = { 1: [], 2: [], 3: [] };
+  for (const row of allocations) {
+    const tier = Math.min(Math.max(Math.round(row.priority), 1), 3) as 1 | 2 | 3;
+    byTier[tier].push(PRIORITY_TIER_POINTS[tier]);
+  }
+
+  let points = 0;
+  let filled = 0;
+  for (const tier of [1, 2, 3] as const) {
+    for (const pt of byTier[tier]) {
+      if (filled >= capacity) return Math.max(points, PRIORITY_TIER_POINTS[3]);
+      points += pt;
+      filled++;
+    }
+  }
+  return Math.max(points, PRIORITY_TIER_POINTS[3]);
+}
+
+/** Actual points for INT-monitored satellites (cap at capacity, keep highest-priority slots). */
+function actualPriorityPoints(
+  monitoredNames: string[],
+  allocations: ReturnType<typeof getAllocationsForUnit>,
+  capacity: number,
+): number {
+  const ranked = monitoredNames
+    .map((name) => ({
+      name,
+      pts: PRIORITY_TIER_POINTS[allocationTier(name, allocations)],
+    }))
+    .sort((a, b) => b.pts - a.pts)
+    .slice(0, capacity);
+
+  return ranked.reduce((sum, r) => sum + r.pts, 0);
+}
 
 /**
- * Prioritization score — Satellite Priority & Allocation SSOT.
- * Monitoring high-priority (P1) satellites raises the score;
- * monitoring mostly low-priority (P3) or missing P1 allocations lowers it.
+ * Prioritization score — Priority & Allocation vs INT monitoring, scaled by scan capacity.
+ * Compares monitored satellite mix (P1/P2/P3 points) to the best achievable fill for that
+ * unit's resource capacity. Non-zero whenever any satellite is monitored; zero only when idle.
  */
-function computePriorityAlignmentScore(state: UnitOperationalState): {
+function computePriorityAlignmentScore(
+  state: UnitOperationalState,
+  monitoredNames: string[],
+  scanCapacity: number,
+): { score: number; issues: string[] } {
+  if (monitoredNames.length === 0) {
+    return { score: 0, issues: ["Not monitoring satellites"] };
+  }
+
+  const capacity = Math.max(
+    1,
+    scanCapacity,
+    monitoredNames.length,
+    state.capability.maxPossibleScans,
+  );
+
+  const intSlug = state.prioritySlot ?? state.intUnitSlug;
+  const allocations = intSlug ? getAllocationsForUnit(intSlug) : [];
+
+  const idealPoints =
+    allocations.length > 0
+      ? idealPriorityPoints(allocations, capacity)
+      : capacity * PRIORITY_TIER_POINTS[1];
+
+  const actualPoints = actualPriorityPoints(monitoredNames, allocations, capacity);
+
+  let score = Math.round((actualPoints / idealPoints) * 100);
+  score = Math.min(100, Math.max(1, score));
+
+  const tierCounts = { p1: 0, p2: 0, p3: 0 };
+  for (const name of monitoredNames) {
+    const t = allocationTier(name, allocations);
+    if (t === 1) tierCounts.p1++;
+    else if (t === 2) tierCounts.p2++;
+    else tierCounts.p3++;
+  }
+
+  return {
+    score,
+    issues: [
+      `${monitoredNames.length} monitored · cap ${capacity} · P1 ${tierCounts.p1} P2 ${tierCounts.p2} P3 ${tierCounts.p3}`,
+    ],
+  };
+}
+
+/** Legacy prioritization — uses live engagement assignments (control-center fallback). */
+function computePriorityAlignmentScoreLegacy(state: UnitOperationalState): {
   score: number;
   issues: string[];
 } {
-  const intSlug = state.prioritySlot ?? state.intUnitSlug;
-  if (!intSlug) {
-    return { score: 45, issues: ["No priority allocation slot for this unit"] };
-  }
-
-  const allocations = getAllocationsForUnit(intSlug);
-  if (allocations.length === 0) {
-    return { score: 45, issues: ["No priority allocations configured for this unit"] };
-  }
-
-  const activeNames = new Set(
-    state.capability.assignments.map((a) => normalizeSatelliteName(a.name)),
-  );
-
-  let activeWeighted = 0;
-  let activeCount = 0;
-  const unmonitoredP1: string[] = [];
-  let p1Total = 0;
-  let p3Active = 0;
-
-  for (const row of allocations) {
-    const tier = Math.min(Math.max(Math.round(row.priority), 1), 3);
-    const norm = normalizeSatelliteName(row.satelliteName);
-    const weight = PRIORITY_TIER_WEIGHT[tier] ?? 35;
-
-    if (tier === 1) p1Total++;
-    if (activeNames.has(norm)) {
-      activeWeighted += weight;
-      activeCount++;
-      if (tier === 3) p3Active++;
-    } else if (tier === 1) {
-      unmonitoredP1.push(row.satelliteName);
-    }
-  }
-
-  const coverageRatio =
-    allocations.length > 0 ? activeNames.size / allocations.length : 0;
-  const priorityQuality = activeCount > 0 ? activeWeighted / activeCount : 0;
-
-  let score = Math.round(coverageRatio * 45 + (priorityQuality / 100) * 55);
-
-  if (unmonitoredP1.length > 0) {
-    score = Math.max(0, score - unmonitoredP1.length * 10);
-  }
-  if (activeCount > 0 && p3Active / activeCount > 0.6) {
-    score = Math.max(0, score - 12);
-  }
-
-  const issues: string[] = [];
-  if (unmonitoredP1.length > 0) {
-    issues.push(
-      `${unmonitoredP1.length} high-priority (P1) satellite(s) allocated but not actively monitored`,
-    );
-  }
-  if (activeCount > 0 && p3Active / activeCount > 0.6) {
-    issues.push("Majority of active scans are low-priority (P3) satellites");
-  }
-  if (activeCount === 0) {
-    issues.push("No allocated satellites are actively being scanned");
-  } else if (issues.length === 0) {
-    const p1Monitored = allocations.filter(
-      (r) =>
-        Math.round(r.priority) === 1 &&
-        activeNames.has(normalizeSatelliteName(r.satelliteName)),
-    ).length;
-    issues.push(
-      `${activeCount} active · P1 monitored ${p1Monitored}/${p1Total} · ${allocations.length} allocated`,
-    );
-  }
-
-  return { score, issues };
+  const activeNames = state.capability.assignments.map((a) => a.name);
+  const capacity = Math.max(state.capability.maxPossibleScans, activeNames.length, 1);
+  return computePriorityAlignmentScore(state, activeNames, capacity);
 }
 
 /**
@@ -361,16 +420,11 @@ function computeResourceUtilizationScore(
 export function buildUnitOptimizationData(
   state: UnitOperationalState,
   unitEquipment: any[],
+  input?: UnitOptimizationInput,
 ): UnitOptimizationData {
   const cap = state.capability;
   const maxCapacity = Math.max(cap.maxPossibleScans, 1);
   const satelliteLoad = cap.activeChains;
-
-  const { score: resourceScore, issues: resourceIssues } =
-    computeResourceUtilizationScore(state, unitEquipment);
-
-  const { score: priorityScore, issues: priorityIssues } =
-    computePriorityAlignmentScore(state);
 
   const chain = countServiceableChainCapacity(unitEquipment);
   const totalEq = unitEquipment.length;
@@ -395,11 +449,62 @@ export function buildUnitOptimizationData(
     );
   }
 
-  const compositeScore = Math.round(
-    (resourceScore + priorityScore + serviceScore) / 3,
-  );
-  const status: UnitOptimizationData["status"] =
-    compositeScore >= 75
+  const monitoringActive = input ? input.isMonitoring : cap.activeChains > 0;
+
+  if (input && !input.isMonitoring) {
+    return {
+      unitDbId: state.unitDbId,
+      unitLabel: state.unitLabel,
+      compositeScore: 0,
+      status: "MISALLOCATED",
+      satelliteLoad,
+      maxCapacity,
+      monitoringActive: false,
+      resource: optFactor(0, "critical", "Not monitoring satellites — no resource engagement"),
+      priority: optFactor(0, "critical", "Not monitoring satellites — prioritization N/A"),
+      serviceability: optFactor(
+        serviceScore,
+        severityFromScore(serviceScore),
+        ...serviceIssues,
+      ),
+    };
+  }
+
+  let resourceScore: number;
+  let resourceIssues: string[];
+  if (input?.isMonitoring) {
+    resourceScore = input.resourceEngagementPct;
+    resourceIssues = [
+      `Resource Inventory engagement ${resourceScore}% (INT-gated inventory rings)`,
+    ];
+    if (resourceScore < 40) {
+      resourceIssues.push("Low inventory utilization despite active monitoring");
+    }
+  } else {
+    const resource = computeResourceUtilizationScore(state, unitEquipment);
+    resourceScore = resource.score;
+    resourceIssues = resource.issues;
+  }
+
+  const priorityResult = input?.isMonitoring
+    ? computePriorityAlignmentScore(
+        state,
+        input.monitoredSatelliteNames,
+        Math.max(
+          maxCapacity,
+          chain.totalChains,
+          input.monitoredSatelliteNames.length,
+          1,
+        ),
+      )
+    : computePriorityAlignmentScoreLegacy(state);
+
+  const compositeScore = monitoringActive
+    ? Math.round((resourceScore + priorityResult.score + serviceScore) / 3)
+    : 0;
+  const status: UnitOptimizationData["status"] = !monitoringActive
+    ? "MISALLOCATED"
+    : compositeScore >= 75
       ? "OPTIMIZED"
       : compositeScore >= 50
         ? "SUBOPTIMAL"
@@ -412,8 +517,13 @@ export function buildUnitOptimizationData(
     status,
     satelliteLoad,
     maxCapacity,
+    monitoringActive,
     resource: optFactor(resourceScore, severityFromScore(resourceScore), ...resourceIssues),
-    priority: optFactor(priorityScore, severityFromScore(priorityScore), ...priorityIssues),
+    priority: optFactor(
+      priorityResult.score,
+      severityFromScore(priorityResult.score),
+      ...priorityResult.issues,
+    ),
     serviceability: optFactor(
       serviceScore,
       severityFromScore(serviceScore),

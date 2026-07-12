@@ -43,6 +43,7 @@ function DashboardDetailShell({
     <div className="flex flex-col w-full min-h-0 gap-4 px-2 sm:px-4 pb-4">
       <Link
         to="/"
+        search={{ unit: undefined, panel: undefined }}
         className="inline-flex items-center gap-1.5 w-fit mono text-[11px] font-semibold uppercase tracking-wider text-foreground hover:text-primary transition-colors no-underline"
       >
         <ArrowLeft className="h-3.5 w-3.5 shrink-0" />

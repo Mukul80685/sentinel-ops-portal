@@ -1,7 +1,6 @@
 import { Link, createFileRoute, redirect } from "@tanstack/react-router";
 import { Empty } from "@/components/Empty";
 import { loadRingPalette, useEngagementRingVisuals } from "@/lib/engagementRingVisuals";
-import { INT_UNITS } from "@/lib/intelRepository";
 import { useDashboardData } from "@/hooks/useDashboardData";
 import { DASHBOARD_PANEL_LABELS } from "@/lib/dashboardLabels";
 
@@ -12,11 +11,12 @@ export const Route = createFileRoute("/_authenticated/engagement/")({
   component: () => null,
 });
 
-/** Resource Engagement Status — committed RF resources only (no scan progress). */
+/** Resource Engagement Status — unit tiles driven by INT Repository uploads only. */
 export function EngagementDashboardView() {
   const { engagement, isLoading } = useDashboardData();
 
-  const totalActive = engagement.totalActiveScans;
+  const monitoringUnits = engagement.units.filter((u) => u.monitoringSatelliteCount > 0);
+  const totalSatellites = monitoringUnits.reduce((s, u) => s + u.monitoringSatelliteCount, 0);
 
   if (isLoading) {
     return (
@@ -35,67 +35,43 @@ export function EngagementDashboardView() {
       <div className="panel mb-3 px-3 py-2 flex items-center gap-4 flex-wrap">
         <FleetStat label="Units" value={engagement.units.length} />
         <div className="h-4 w-px bg-border hidden sm:block" />
-        <FleetStat label="Resources Engaged" value={totalActive} accent />
+        <FleetStat label="Units Monitoring" value={monitoringUnits.length} accent />
+        <div className="h-4 w-px bg-border hidden sm:block" />
+        <FleetStat label="Satellites Monitored" value={totalSatellites} />
         <div className="h-4 w-px bg-border hidden sm:block" />
         <FleetStat label="Avg Engagement" value={`${engagement.avgOccupancy}%`} />
       </div>
 
       <div className="grid gap-2.5 grid-cols-2 sm:grid-cols-4">
-        {engagement.units.map((row) => (
-          <Link
-            key={row.unitId}
-            to="/engagement/$unitId"
-            params={{ unitId: row.unitId }}
-            className="panel flex flex-col items-center gap-2 px-3 py-3 overflow-hidden
-                       hover:border-primary/45 hover:bg-primary/5 transition-all no-underline cursor-pointer"
-          >
-            <div className="text-center w-full min-w-0">
-              <div className="mono text-[13px] font-bold uppercase tracking-tight text-foreground leading-tight">
-                Unit {unitDisplayCode(row.unitCode)}
-              </div>
-              <div className="mono text-[10px] font-semibold text-foreground mt-1 truncate">
-                {unitLocation(row.unitCode)}
-              </div>
-            </div>
-
-            <EngagementRing pct={row.occupancyPct} compact />
-
-            <div className="w-full min-h-0">
-              {row.activeSatellites.length === 0 ? (
-                <div className="mono text-[10px] font-bold uppercase tracking-wider text-foreground text-center">
-                  {row.feasibilityStatus === "NON_OPERATIONAL" ? "Non-operational" : "No resources engaged"}
+        {engagement.units.map((row) => {
+          const monitoring = row.monitoringSatelliteCount;
+          return (
+            <Link
+              key={row.unitId}
+              to="/engagement/$unitId"
+              params={{ unitId: row.unitId }}
+              className="panel flex flex-col items-center gap-2.5 px-3 py-3 overflow-hidden
+                         hover:border-primary/45 hover:bg-primary/5 transition-all no-underline cursor-pointer"
+            >
+              <div className="text-center w-full min-w-0">
+                <div className="mono text-[13px] font-bold uppercase tracking-tight text-foreground leading-tight truncate">
+                  {row.unitLabel}
                 </div>
-              ) : (
-                <div className="text-center min-w-0">
-                  <p
-                    className="mono text-[10px] font-semibold text-foreground leading-snug truncate"
-                    title={row.activeSatellites.join(", ")}
-                  >
-                    {row.satelliteDisplay.label}
-                  </p>
-                  {row.satelliteDisplay.total > 0 && (
-                    <p className="mono text-[9px] font-semibold text-foreground mt-0.5">
-                      {row.rfResourcesEngaged} resource{row.rfResourcesEngaged === 1 ? "" : "s"} engaged
-                    </p>
-                  )}
-                </div>
+              </div>
+
+              <EngagementRing pct={row.occupancyPct} compact />
+
+              {monitoring > 0 && (
+                <p className="mono text-[10px] font-semibold text-foreground text-center">
+                  {monitoring} satellite{monitoring === 1 ? "" : "s"}
+                </p>
               )}
-            </div>
-          </Link>
-        ))}
+            </Link>
+          );
+        })}
       </div>
     </>
   );
-}
-
-function unitDisplayCode(code: string): string {
-  return code.replace(/^GATE[-\s]?/i, "").trim() || code;
-}
-
-function unitLocation(code: string): string {
-  const displayCode = unitDisplayCode(code);
-  const intUnit = INT_UNITS.find((u) => u.code === displayCode);
-  return intUnit?.location ?? "—";
 }
 
 function FleetStat({ label, value, accent }: { label: string; value: string | number; accent?: boolean }) {

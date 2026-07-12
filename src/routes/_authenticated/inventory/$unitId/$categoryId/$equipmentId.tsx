@@ -1,12 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
-import { fileUrl, signedUrl, uploadFile, deleteStoredFile } from "@/lib/storage";
-import {
-  antennaPhotoLimitMessage,
-  canAddAntennaPhoto,
-  isAntennaEquipment,
-} from "@/lib/inventoryAntennaLimits";
+import { signedUrl, uploadFile } from "@/lib/storage";
 import { getEquipmentById, statusClass } from "@/lib/queries";
 import {
   getOperationalEquipmentById,
@@ -24,7 +19,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Boxes, FileText, Paperclip, Trash2, ImageOff, Save, Download } from "lucide-react";
+import { Boxes, FileText, Paperclip, Trash2, Save, Download } from "lucide-react";
 import { HomeNavIconBadge } from "@/components/home/HomeNavIcons";
 
 export const Route = createFileRoute("/_authenticated/inventory/$unitId/$categoryId/$equipmentId")({
@@ -68,29 +63,6 @@ function EquipmentDetail() {
     toast.success("Saved");
     qc.invalidateQueries({ queryKey: ["eq-detail", equipmentId] });
     qc.invalidateQueries({ queryKey: ["eq", unitId, categoryId] });
-  }
-
-  async function changePhoto(file: File) {
-    try {
-      const current = getOperationalEquipmentById(equipmentId);
-      const hadPhoto = Boolean(current?.photo_url?.trim());
-      if (isAntennaEquipment(current) && !canAddAntennaPhoto(unitId, hadPhoto)) {
-        toast.error(antennaPhotoLimitMessage(unitId));
-        return;
-      }
-      const path = await uploadFile(file, `equipment/${unitId}`);
-      if (!updateOperationalEquipment(equipmentId, { photo_url: path })) {
-        return toast.error("Equipment not found.");
-      }
-      if (current?.photo_url && current.photo_url !== path) {
-        deleteStoredFile(current.photo_url);
-      }
-      toast.success("Photo updated");
-      qc.invalidateQueries({ queryKey: ["eq-detail", equipmentId] });
-      qc.invalidateQueries({ queryKey: ["eq", unitId, categoryId] });
-    } catch (err: any) {
-      toast.error(err.message ?? "Failed to upload photo.");
-    }
   }
 
   async function addAttachment(file: File) {
@@ -169,32 +141,12 @@ function EquipmentDetail() {
         ) : null
       }
     >
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-1 space-y-3">
-          <div className="panel overflow-hidden">
-            <div className="aspect-video bg-secondary grid place-items-center">
-              {form.photo_url ? (
-                <img src={fileUrl(form.photo_url)} alt={form.name} className="w-full h-full object-cover" />
-              ) : (
-                <ImageOff className="h-10 w-10 text-secondary-foreground" />
-              )}
-            </div>
-            {canEdit && (
-              <div className="p-3 border-t border-border">
-                <Input type="file" accept="image/*" onChange={(e) => e.target.files?.[0] && changePhoto(e.target.files[0])} />
-              </div>
-            )}
-          </div>
-          <div className="panel p-3">
-            <div className="flex items-center gap-2">
-              <span className={`status-dot ${statusClass(form.serviceability)}`} />
-              <span className="mono text-sm uppercase font-bold">{form.serviceability}</span>
-            </div>
-          </div>
+      <div className="panel p-4 space-y-3">
+        <div className="flex items-center gap-2 pb-2 border-b border-border">
+          <span className={`status-dot ${statusClass(form.serviceability)}`} />
+          <span className="mono text-sm uppercase font-bold">{form.serviceability}</span>
         </div>
-
-        <div className="lg:col-span-2 panel p-4 space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <F label="Name"><Input disabled={!canEdit} value={form.name ?? ""} onChange={(e) => setForm({ ...form, name: e.target.value })} /></F>
             <F label="Serviceability">
               <Select disabled={!canEdit} value={form.serviceability} onValueChange={(v) => setForm({ ...form, serviceability: v })}>
@@ -217,7 +169,6 @@ function EquipmentDetail() {
           <F label="Remarks">
             <Textarea disabled={!canEdit} rows={2} value={form.remarks ?? ""} onChange={(e) => setForm({ ...form, remarks: e.target.value })} />
           </F>
-        </div>
       </div>
 
       <div className="panel p-4 mt-4">

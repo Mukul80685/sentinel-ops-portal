@@ -2,7 +2,7 @@
  * INT frequency actions — flags, audit trail, cross-module references (local/mock).
  */
 import { INT_UNITS } from "@/lib/intelRepository";
-import { hasIntelData } from "@/lib/intelAnalysisData";
+import { hasIntelData, getUnitIntelName } from "@/lib/intelAnalysisData";
 import { evaluateFrequencyAllocationEligibility } from "@/lib/intelIntegrity";
 import { computeBottleneckEngagement, fetchAllEngagements, buildAllocatedIds } from "@/lib/engagementEngine";
 
@@ -346,13 +346,13 @@ export function allocateToUnit(
     band: string;
   },
 ): FrequencyActionState {
-  const unit = INT_UNITS.find((u) => u.id === targetUnitId);
+  const unitLabel = getUnitIntelName(targetUnitId);
   let state = getFrequencyState(key);
   state = {
     ...state,
     flags: { ...state.flags, allocated: true },
     allocatedToUnitId: targetUnitId,
-    allocatedToUnitLabel: unit ? `Unit ${unit.code}` : targetUnitId,
+    allocatedToUnitLabel: unitLabel,
     scannedByUnitId: meta.scannedByUnitId ?? state.scannedByUnitId,
     satelliteName: meta.satelliteName,
     frequencyId: meta.frequencyId,
@@ -363,7 +363,7 @@ export function allocateToUnit(
     action: "allocate_unit",
     userLabel,
     unitId: targetUnitId,
-    unitLabel: unit ? `Unit ${unit.code}` : targetUnitId,
+    unitLabel,
     note: `Beam: ${meta.beamName}`,
   });
   setFrequencyState(key, state);
@@ -378,7 +378,7 @@ export function allocateToUnit(
     band: meta.band,
     fromUnitId: meta.scannedByUnitId ?? "",
     toUnitId: targetUnitId,
-    toUnitLabel: unit ? `Unit ${unit.code}` : targetUnitId,
+    toUnitLabel: unitLabel,
     allocatedAt: new Date().toISOString(),
     userLabel,
   });

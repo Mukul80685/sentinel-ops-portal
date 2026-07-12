@@ -14,6 +14,7 @@ import {
   hasIntelData,
   summarizeIntelSatelliteRows,
 } from "@/lib/intelAnalysisData";
+import { unitDisplayLabel, unitDisplayLocation } from "@/lib/operationalDataset";
 import { resolveIntUnitSlug, resolveOperationalUnitId } from "@/lib/operationalSync";
 import { ENGAGEMENTS_ALL_KEY, fetchAllEngagements } from "@/lib/engagementEngine";
 import { UnitAdvancedFeatures } from "@/components/UnitAdvancedFeatures";
@@ -104,8 +105,8 @@ export function IntelRepositoryView() {
         return {
           id: slug,
           code: seed?.code ?? u.code,
-          name: seed ? `Unit ${seed.code}` : u.name,
-          location: seed?.location ?? u.description ?? "—",
+          name: unitDisplayLabel(u),
+          location: unitDisplayLocation(u, seed?.location),
         };
       }),
     [dbUnits],

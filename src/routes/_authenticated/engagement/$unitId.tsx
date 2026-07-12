@@ -20,28 +20,41 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import {
-  buildAllocatedIds,
   computeSatelliteAnalysis,
-  engagementDisplayStatus,
-  NON_OPERATIONAL,
-  CHAIN_CATEGORIES,
-  ACTIVE_SCAN_STATUSES,
-  QUEUED_SCAN_STATUS,
   ENGAGEMENTS_ALL_KEY,
   fetchAllEngagements,
+  ACTIVE_SCAN_STATUSES,
 } from "@/lib/engagementEngine";
 import {
-  assignmentsToEngagementRows,
   computeUnitCapability,
 } from "@/lib/liveEngagementModel";
+import {
+  intelRowToAnalysis,
+  listIntelMonitoringSatellites,
+  computeGatedResourceEngagementPct,
+} from "@/lib/intelLiveBridge";
 import { INT_UNITS } from "@/lib/intelRepository";
+import { unitDisplayLabel, unitDisplayLocation } from "@/lib/operationalDataset";
 import { DASHBOARD_PANEL_LABELS, dashboardPanelBackLink } from "@/lib/dashboardLabels";
 import { loadRingPalette, useEngagementRingVisuals } from "@/lib/engagementRingVisuals";
+import {
+  buildInventoryAllocatedIds,
+  buildResourceRingStats,
+  resolveLnaLnbFromRow,
+  appendEquipmentMetaToRemarks,
+  parseEquipmentIdFromRemarks,
+} from "@/lib/resourceEngagementStats";
+import {
+  getPlannedSatellites,
+  newPlannedSatelliteRow,
+  setPlannedSatellites,
+  type PlannedSatelliteRow,
+} from "@/lib/plannedSatelliteStore";
+import { notifyOperationalDerivedRefresh } from "@/lib/operationalRefresh";
 import { AlertTriangle, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 const STATUSES = ["Planned", "In Progress", "Completed", "Paused", "Failed"] as const;
-const QUEUED_ENG  = QUEUED_SCAN_STATUS;
 const DEMOD_TYPES = ["Narrowband", "Wideband", "DVB-S2", "DVB-S2X"] as const;
 
 function attachEquipmentToEngagements(rows: any[], equipment: any[]) {
@@ -67,39 +80,9 @@ export const Route = createFileRoute("/_authenticated/engagement/$unitId")({
 function unitDisplayCode(code: string): string {
   return code.replace(/^GATE[-\s]?/i, "").trim() || code;
 }
-function parseLnaType(remarks: string | null): string {
-  const m = remarks?.match(/LNA\/LNB:(LNA|LNB)/);
-  return m ? m[1] : "—";
-}
 function parseDemodType(remarks: string | null): string {
   const m = remarks?.match(/DEMOD_TYPE:([\w-]+)/);
   return m ? m[1] : "—";
-}
-
-function resourceCompleteness(r: any): { isPending: boolean; missing: string[] } {
-  const missing: string[] = [];
-  if (!r.antenna_id)           missing.push("Antenna");
-  if (!r.demodulator_id)       missing.push("Demodulator");
-  if (!r.processing_server_id) missing.push("Processor");
-  return { isPending: r.status === "In Progress" && missing.length > 0, missing };
-}
-
-function StatusBadge({ label }: { label: string }) {
-  const cls =
-    label === "Pending Allocation"
-      ? "text-amber-700 bg-amber-400/12 border-amber-400/30"
-      : label === "Active"
-        ? "text-emerald-700 bg-emerald-500/10 border-emerald-500/25"
-        : label === "Under Analysis"
-          ? "text-primary bg-primary/8 border-primary/20"
-          : label === "Completed"
-            ? "text-emerald-800 bg-emerald-700/15 border-emerald-600/30"
-            : "text-foreground/80 bg-secondary/40 border-border";
-  return (
-    <span className={`inline-flex mono text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-sm border whitespace-nowrap ${cls}`}>
-      {label}
-    </span>
-  );
 }
 
 // ─── Resource rings ───────────────────────────────────────────────────────────
@@ -176,32 +159,11 @@ function ResourceHoneycomb({
 }: {
   resourceStats: { label: string; total: number; faulty: number; engaged: number; pct: number }[];
 }) {
-  const byLabel = (label: string) => resourceStats.find((r) => r.label === label);
-  const antennas     = byLabel("Antennas");
-  const lnb            = byLabel("LNB");
-  const demodulators   = byLabel("Demodulators");
-  const processors     = byLabel("Processors");
-  const other          = byLabel("Other");
-
   return (
-    <div className="flex-1 min-w-0 grid grid-cols-6 gap-x-0 gap-y-1 items-start">
-      <div className="col-span-2 flex justify-center">
-        {antennas && <SmallRing {...antennas} label="Antennas" />}
-      </div>
-      <div className="col-span-2 flex justify-center">
-        {lnb && <SmallRing {...lnb} label="LNB" />}
-      </div>
-      <div className="col-span-2 flex justify-center">
-        {demodulators && <SmallRing {...demodulators} label="Demodulators" />}
-      </div>
-      <div className="col-span-2 col-start-2 flex justify-center">
-        {processors && <SmallRing {...processors} label="Processors" />}
-      </div>
-      <div className="col-span-2 col-start-4 flex justify-center">
-        {other && other.total > 0 && (
-          <SmallRing {...other} label="Other Resources" />
-        )}
-      </div>
+    <div className="flex-1 min-w-0 grid grid-cols-3 gap-x-1 gap-y-3 items-start justify-items-center">
+      {resourceStats.map((stat) => (
+        <SmallRing key={stat.label} {...stat} />
+      ))}
     </div>
   );
 }
@@ -353,54 +315,90 @@ function EngagementUnit() {
     [unitId, unit?.code, allEngagements, rows, equipmentRaw, intelRows],
   );
 
-  const validatedActiveRows = useMemo(
-    () => assignmentsToEngagementRows(capability, enrichedRows),
-    [capability, enrichedRows],
+  /** Active monitoring rows — full INT Repository satellite list with scan data. */
+  const intelMonitoringRows = useMemo(
+    () =>
+      listIntelMonitoringSatellites(
+        unitId,
+        unit?.code,
+        allEngagements.length > 0 ? allEngagements : rows,
+        equipmentRaw,
+        intelRows,
+      ),
+    [unitId, unit?.code, allEngagements, rows, equipmentRaw, intelRows],
   );
+
+  const intelActiveRows = useMemo(() => {
+    const engBySatName = new Map<string, any>();
+    for (const r of enrichedRows) {
+      const name = r.satellites?.name as string | undefined;
+      if (name) engBySatName.set(name, r);
+    }
+
+    return intelMonitoringRows.map((satRow) => {
+      const existing = engBySatName.get(satRow.satelliteName);
+      if (existing) {
+        return {
+          ...existing,
+          satellites: { name: satRow.satelliteName },
+          _intelRow: satRow,
+        };
+      }
+
+      const assignment = capability.assignments.find((a) => a.name === satRow.satelliteName);
+      if (assignment?.engagement) {
+        return {
+          ...assignment.engagement,
+          id: assignment.engagementId,
+          satellites: { name: satRow.satelliteName },
+          _intelRow: satRow,
+        };
+      }
+
+      return {
+        id: `intel-${unitId}-${satRow.satelliteName.replace(/\s+/g, "-")}`,
+        satellites: { name: satRow.satelliteName },
+        remarks: null,
+        antenna_id: null,
+        demodulator_id: null,
+        processing_server_id: null,
+        status: satRow.engagementStatus ?? "In Progress",
+        _intelRow: satRow,
+      };
+    });
+  }, [intelMonitoringRows, enrichedRows, capability.assignments, unitId]);
 
   const rawInProgressRows = useMemo(
     () => enrichedRows.filter((r: any) => ACTIVE_SCAN_STATUSES.has(r.status)),
     [enrichedRows],
   );
-  const plannedRows = useMemo(
-    () => enrichedRows.filter((r: any) => r.status === QUEUED_ENG),
-    [enrichedRows],
-  );
+
+  const hasIntMonitoring = intelMonitoringRows.length > 0;
 
   const allocatedIds = useMemo(
-    () => buildAllocatedIds(validatedActiveRows),
-    [validatedActiveRows],
+    () =>
+      hasIntMonitoring
+        ? buildInventoryAllocatedIds(rawInProgressRows)
+        : new Set<string>(),
+    [hasIntMonitoring, rawInProgressRows],
   );
 
-  const utilPct = capability.occupancyPct;
+  const resourceStats = useMemo(
+    () => buildResourceRingStats(equipmentRaw, allocatedIds),
+    [equipmentRaw, allocatedIds],
+  );
 
-  // Per-category stats including "Other"
-  const resourceStats = useMemo(() => {
-    const claimed = new Set<string>();
-    type ResourceStat = { label: string; total: number; faulty: number; allocated: number; engaged: number; pct: number };
-    const named: ResourceStat[] = CHAIN_CATEGORIES.map(({ label, match }) => {
-      const catEq = equipmentRaw.filter((e: any) => {
-        const name = (e.category?.name ?? "").toLowerCase();
-        return name.includes(match) && !claimed.has(e.id);
-      });
-      catEq.forEach((e: any) => claimed.add(e.id));
-      const total   = catEq.length;
-      const faulty  = catEq.filter((e: any) => NON_OPERATIONAL.has(e.serviceability)).length;
-      const active  = catEq.filter((e: any) => e.serviceability === "Operational" && allocatedIds.has(e.id)).length;
-      const engaged = faulty + active;
-      const pct     = total === 0 ? 0 : Math.min(100, Math.round((engaged / total) * 100));
-      return { label, total, faulty, allocated: active, engaged, pct };
-    });
-
-    const otherEq = equipmentRaw.filter((e: any) => !claimed.has(e.id));
-    const otherTotal   = otherEq.length;
-    const otherFaulty  = otherEq.filter((e: any) => NON_OPERATIONAL.has(e.serviceability)).length;
-    const otherActive  = otherEq.filter((e: any) => e.serviceability === "Operational" && allocatedIds.has(e.id)).length;
-    const otherEngaged = otherFaulty + otherActive;
-    const otherPct     = otherTotal === 0 ? 0 : Math.min(100, Math.round((otherEngaged / otherTotal) * 100));
-    named.push({ label: "Other", total: otherTotal, faulty: otherFaulty, allocated: otherActive, engaged: otherEngaged, pct: otherPct });
-    return named;
-  }, [equipmentRaw, allocatedIds]);
+  const utilPct = useMemo(
+    () =>
+      computeGatedResourceEngagementPct(
+        unitId,
+        unit?.code,
+        equipmentRaw,
+        allEngagements.length > 0 ? allEngagements : rows,
+        intelRows,
+      ),
+    [unitId, unit?.code, equipmentRaw, allEngagements, rows, intelRows],
+  );
 
   const analysisByEngId = useMemo(() => {
     const map = new Map<string, ReturnType<typeof computeSatelliteAnalysis>>();
@@ -426,22 +424,20 @@ function EngagementUnit() {
     qc.invalidateQueries({ queryKey: ENGAGEMENTS_ALL_KEY });
   }
 
-  const displayCode = unitDisplayCode(unit?.code ?? "—");
-  const unitLabel   = `Unit ${displayCode}`;
-  const unitLocation = (() => {
-    const intUnit = INT_UNITS.find((u) => u.code === displayCode);
-    return intUnit?.location ?? (unit as any)?.description ?? undefined;
-  })();
+  const unitLabel = unit ? unitDisplayLabel(unit) : "Unit";
+  const unitLocation = unit
+    ? unitDisplayLocation(unit, INT_UNITS.find((u) => u.code === unitDisplayCode(unit.code))?.location)
+    : undefined;
 
   const RESOURCE_HEADERS = [
     "#",
     "Satellite",
     "Polarization",
     "Antenna",
-    "LNA/LNB",
+    "LNA",
+    "LNB",
     "Demodulator",
     "Processor",
-    "Allocation Status",
     "",
   ];
 
@@ -471,13 +467,13 @@ function EngagementUnit() {
             Engaged Resources — Active Monitoring
           </span>
           <span className="mono text-[7.5px] uppercase tracking-[0.15em] text-foreground/70">
-            {validatedActiveRows.length} sessions
+            {intelActiveRows.length} sessions · synced with Intelligence Repository
           </span>
         </div>
 
-        {validatedActiveRows.length === 0 ? (
+        {intelActiveRows.length === 0 ? (
           <div className="px-4 py-5 text-center mono text-[9px] text-foreground/70 uppercase tracking-wider">
-            No resources currently engaged
+            No satellites actively monitored in Intelligence Repository
           </div>
         ) : (
           <div className="overflow-auto" style={{ maxHeight: 320 }}>
@@ -496,21 +492,14 @@ function EngagementUnit() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {validatedActiveRows.map((r: any, idx: number) => {
-                  const { isPending, missing } = resourceCompleteness(r);
-                  const analysis =
-                    analysisByEngId.get(r.id) ?? computeSatelliteAnalysis(r, intelRows);
-                  const allocationLabel = isPending
-                    ? "Pending Allocation"
-                    : engagementDisplayStatus(r.status, false, analysis.pending);
+                {intelActiveRows.map((r: any, idx: number) => {
+                  const analysis = r._intelRow
+                    ? intelRowToAnalysis(r._intelRow)
+                    : analysisByEngId.get(r.id) ?? computeSatelliteAnalysis(r, intelRows);
+                  const { lna, lnb } = resolveLnaLnbFromRow(r, equipmentRaw);
 
                   return (
-                    <tr
-                      key={r.id}
-                      className={`transition-colors ${
-                        isPending ? "bg-amber-500/5 hover:bg-amber-500/10" : "hover:bg-secondary/20"
-                      }`}
-                    >
+                    <tr key={r.id} className="hover:bg-secondary/20 transition-colors">
                       <td className="px-3 py-2.5 text-foreground/70">{idx + 1}</td>
 
                       <td className="px-3 py-2.5 font-bold text-foreground whitespace-nowrap">
@@ -535,14 +524,12 @@ function EngagementUnit() {
                         )}
                       </td>
 
-                      <td className="px-3 py-2.5 whitespace-nowrap">
-                        {r.antenna_id ? (
-                          <span className="px-1.5 py-0.5 rounded-sm bg-secondary/60 text-secondary-foreground text-[8px] uppercase">
-                            {parseLnaType(r.remarks)}
-                          </span>
-                        ) : (
-                          <span className="text-foreground/60">—</span>
-                        )}
+                      <td className="px-3 py-2.5 whitespace-nowrap text-foreground">
+                        {lna}
+                      </td>
+
+                      <td className="px-3 py-2.5 whitespace-nowrap text-foreground">
+                        {lnb}
                       </td>
 
                       <td className="px-3 py-2.5 whitespace-nowrap">
@@ -568,15 +555,6 @@ function EngagementUnit() {
                         )}
                       </td>
 
-                      <td className="px-3 py-2.5 whitespace-nowrap">
-                        <StatusBadge label={allocationLabel} />
-                        {isPending && missing.length > 0 && (
-                          <div className="mono text-[8px] text-amber-700 mt-0.5">
-                            Missing: {missing.join(", ")}
-                          </div>
-                        )}
-                      </td>
-
                       <td className="px-2 py-2.5">
                         {canEdit && (
                           <EditEngagement
@@ -597,66 +575,7 @@ function EngagementUnit() {
         )}
       </div>
 
-      {/* Planned Satellites */}
-      <div className="panel overflow-hidden mb-3">
-        <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-secondary/20">
-          <span className="mono text-[10.5px] font-bold uppercase tracking-wider text-foreground">
-            Planned Satellites
-          </span>
-          <span className="mono text-[7.5px] uppercase tracking-[0.15em] text-foreground/70">
-            Queued · Awaiting resource assignment
-          </span>
-        </div>
-
-        {plannedRows.length === 0 ? (
-          <div className="px-4 py-5 text-center mono text-[9px] text-foreground/70 uppercase tracking-wider">
-            No missions queued
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full mono text-[11px]">
-              <thead className="bg-card border-b border-border">
-                <tr>
-                  {["#", "Satellite", "Scheduled Start", "Status", ""].map((h) => (
-                    <th key={h}
-                      className="text-left px-3 py-2 text-[8.5px] uppercase tracking-wider text-foreground
-                                 font-bold whitespace-nowrap border-r border-border/50 last:border-r-0">
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {plannedRows.slice(0, 4).map((r: any, idx: number) => (
-                  <tr key={r.id} className="hover:bg-secondary/20 transition-colors">
-                    <td className="px-3 py-2 text-foreground/70">{idx + 1}</td>
-                    <td className="px-3 py-2 font-bold text-foreground whitespace-nowrap">
-                      {r.satellites?.name ?? "—"}
-                    </td>
-                    <td className="px-3 py-2 text-foreground/80 whitespace-nowrap">
-                      {r.observation_start ? new Date(r.observation_start).toLocaleString() : "—"}
-                    </td>
-                    <td className="px-3 py-2">
-                      <StatusBadge label={engagementDisplayStatus(r.status, false, 0)} />
-                    </td>
-                    <td className="px-2 py-2">
-                      {canEdit && (
-                        <EditEngagement
-                          row={r}
-                          activeRows={rawInProgressRows}
-                          equipment={equipmentRaw}
-                          onUpdate={update}
-                          onRemove={remove}
-                        />
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      <PlannedSatellitesTable unitId={unitId} canEdit={canEdit} />
 
       {engError && (
         <div className="panel mb-3 px-3 py-2 mono text-[10px] text-amber-800 border border-amber-400/30 bg-amber-400/10">
@@ -666,6 +585,195 @@ function EngagementUnit() {
 
       {enrichedRows.length === 0 && !engError && <Empty title="No engagements recorded" />}
     </AppShell>
+  );
+}
+
+function PlannedSatellitesTable({ unitId, canEdit }: { unitId: string; canEdit: boolean }) {
+  const [rows, setRows] = useState<PlannedSatelliteRow[]>(() => getPlannedSatellites(unitId));
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<PlannedSatelliteRow | null>(null);
+
+  useEffect(() => {
+    setRows(getPlannedSatellites(unitId));
+  }, [unitId]);
+
+  function persist(next: PlannedSatelliteRow[]) {
+    setRows(next);
+    setPlannedSatellites(unitId, next);
+    notifyOperationalDerivedRefresh();
+  }
+
+  function startEdit(row: PlannedSatelliteRow) {
+    setEditingId(row.id);
+    setDraft({ ...row });
+  }
+
+  function saveEdit() {
+    if (!draft) return;
+    persist(rows.map((r) => (r.id === draft.id ? draft : r)));
+    setEditingId(null);
+    setDraft(null);
+    toast.success("Planned satellite row saved.");
+  }
+
+  function addRow() {
+    const row = newPlannedSatelliteRow();
+    persist([...rows, row]);
+    startEdit(row);
+  }
+
+  function removeRow(id: string) {
+    persist(rows.filter((r) => r.id !== id));
+    if (editingId === id) {
+      setEditingId(null);
+      setDraft(null);
+    }
+  }
+
+  return (
+    <div className="panel overflow-hidden mb-3">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-secondary/20">
+        <span className="mono text-[10.5px] font-bold uppercase tracking-wider text-foreground">
+          Planned Satellite — Next Three Months
+        </span>
+        {canEdit && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="mono text-[9px] uppercase tracking-wider h-7"
+            onClick={addRow}
+          >
+            <Plus className="h-3 w-3 mr-1" /> Add Row
+          </Button>
+        )}
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="px-4 py-5 text-center mono text-[9px] text-foreground/70 uppercase tracking-wider">
+          No planned satellites — use Add Row to enter upcoming missions
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="min-w-full mono text-[11px]">
+            <thead className="bg-card border-b border-border">
+              <tr>
+                {["Serial Number", "Satellite", "Date of Launch", "Last Scanned Date", ""].map((h) => (
+                  <th
+                    key={h || "actions"}
+                    className="text-left px-3 py-2 text-[8.5px] uppercase tracking-wider text-foreground
+                               font-bold whitespace-nowrap border-r border-border/50 last:border-r-0"
+                  >
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {rows.map((row) => {
+                const isEditing = editingId === row.id && draft != null;
+                const data = isEditing ? draft : row;
+
+                return (
+                  <tr key={row.id} className="hover:bg-secondary/20 transition-colors">
+                    <td className="px-3 py-2">
+                      {isEditing ? (
+                        <Input
+                          value={data.serialNumber}
+                          onChange={(e) =>
+                            setDraft((d) => (d ? { ...d, serialNumber: e.target.value } : d))
+                          }
+                          className="h-8 mono text-[11px]"
+                        />
+                      ) : (
+                        <span className="text-foreground">{row.serialNumber || "—"}</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">
+                      {isEditing ? (
+                        <Input
+                          value={data.satellite}
+                          onChange={(e) =>
+                            setDraft((d) => (d ? { ...d, satellite: e.target.value } : d))
+                          }
+                          className="h-8 mono text-[11px]"
+                        />
+                      ) : (
+                        <span className="font-bold text-foreground">{row.satellite || "—"}</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">
+                      {isEditing ? (
+                        <Input
+                          type="date"
+                          value={data.launchDate}
+                          onChange={(e) =>
+                            setDraft((d) => (d ? { ...d, launchDate: e.target.value } : d))
+                          }
+                          className="h-8 mono text-[11px]"
+                        />
+                      ) : (
+                        <span className="text-foreground">{row.launchDate || "—"}</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">
+                      {isEditing ? (
+                        <Input
+                          type="date"
+                          value={data.lastScannedDate}
+                          onChange={(e) =>
+                            setDraft((d) => (d ? { ...d, lastScannedDate: e.target.value } : d))
+                          }
+                          className="h-8 mono text-[11px]"
+                        />
+                      ) : (
+                        <span className="text-foreground">{row.lastScannedDate || "—"}</span>
+                      )}
+                    </td>
+                    <td className="px-2 py-2 whitespace-nowrap">
+                      {canEdit && (
+                        <div className="flex items-center gap-1">
+                          {isEditing ? (
+                            <Button
+                              type="button"
+                              variant="default"
+                              size="sm"
+                              className="h-7 px-2 mono text-[9px] uppercase tracking-wider"
+                              onClick={saveEdit}
+                            >
+                              OK
+                            </Button>
+                          ) : (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 mono text-[9px] uppercase tracking-wider gap-1"
+                              onClick={() => startEdit(row)}
+                            >
+                              <Pencil className="h-3 w-3" /> Edit
+                            </Button>
+                          )}
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-destructive hover:text-destructive"
+                            onClick={() => removeRow(row.id)}
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -725,6 +833,16 @@ function EditEngagement({
   const availableServers = serviceable("processing").filter(
     (e: any) => !allocatedServerIds.has(e.id) || e.id === row.processing_server_id,
   );
+  const availableLNA = equipment.filter(
+    (e: any) =>
+      (e.category?.name ?? "").toLowerCase() === "lna" &&
+      e.serviceability === "Operational",
+  );
+  const availableLNB = equipment.filter(
+    (e: any) =>
+      (e.category?.name ?? "").toLowerCase().includes("lnb") &&
+      e.serviceability === "Operational",
+  );
 
   const initialLnaType = (() => {
     const m = row.remarks?.match(/LNA\/LNB:(LNA|LNB)/);
@@ -739,6 +857,8 @@ function EditEngagement({
     satellite_id: row.satellite_id ?? "",
     antenna_id: row.antenna_id ?? "",
     lna_type: initialLnaType,
+    lna_id: parseEquipmentIdFromRemarks(row.remarks, "LNA_ID") ?? "",
+    lnb_id: parseEquipmentIdFromRemarks(row.remarks, "LNB_ID") ?? "",
     demodulator_type: initialDemodType,
     demodulator_id: row.demodulator_id ?? "",
     processing_server_id: row.processing_server_id ?? "",
@@ -746,7 +866,12 @@ function EditEngagement({
       ? new Date(row.observation_start).toISOString().slice(0, 16)
       : "",
     status: row.status ?? "Planned",
-    remarks: (row.remarks ?? "").replace(/LNA\/LNB:(LNA|LNB)\s*\|\s*/g, "").replace(/DEMOD_TYPE:[\w-]+\s*\|\s*/g, "").trim(),
+    remarks: (row.remarks ?? "")
+      .replace(/LNA\/LNB:(LNA|LNB)\s*\|\s*/g, "")
+      .replace(/LNA_ID:[^\s|]+\s*\|\s*/g, "")
+      .replace(/LNB_ID:[^\s|]+\s*\|\s*/g, "")
+      .replace(/DEMOD_TYPE:[\w-]+\s*\|\s*/g, "")
+      .trim(),
   });
 
   useEffect(() => {
@@ -755,6 +880,8 @@ function EditEngagement({
       satellite_id: row.satellite_id ?? "",
       antenna_id: row.antenna_id ?? "",
       lna_type: initialLnaType,
+      lna_id: parseEquipmentIdFromRemarks(row.remarks, "LNA_ID") ?? "",
+      lnb_id: parseEquipmentIdFromRemarks(row.remarks, "LNB_ID") ?? "",
       demodulator_type: initialDemodType,
       demodulator_id: row.demodulator_id ?? "",
       processing_server_id: row.processing_server_id ?? "",
@@ -762,7 +889,12 @@ function EditEngagement({
         ? new Date(row.observation_start).toISOString().slice(0, 16)
         : "",
       status: row.status ?? "Planned",
-      remarks: (row.remarks ?? "").replace(/LNA\/LNB:(LNA|LNB)\s*\|\s*/g, "").replace(/DEMOD_TYPE:[\w-]+(\s*\|\s*)?/g, "").trim(),
+      remarks: (row.remarks ?? "")
+        .replace(/LNA\/LNB:(LNA|LNB)\s*\|\s*/g, "")
+        .replace(/LNA_ID:[^\s|]+\s*\|\s*/g, "")
+        .replace(/LNB_ID:[^\s|]+\s*\|\s*/g, "")
+        .replace(/DEMOD_TYPE:[\w-]+(\s*\|\s*)?/g, "")
+        .trim(),
     });
   }, [open, row.id]);
 
@@ -775,11 +907,13 @@ function EditEngagement({
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (inProgressMissingResources) return;
-    const metaParts = [
-      `LNA/LNB:${form.lna_type}`,
-      `DEMOD_TYPE:${form.demodulator_type}`,
+    const metaParts = appendEquipmentMetaToRemarks(
       form.remarks,
-    ].filter(Boolean).join(" | ");
+      form.lna_type,
+      form.demodulator_type,
+      form.lna_id || undefined,
+      form.lnb_id || undefined,
+    );
     await onUpdate(row.id, {
       satellite_id: form.satellite_id,
       antenna_id: form.antenna_id || null,
@@ -838,22 +972,28 @@ function EditEngagement({
             </Select>
           </F>
 
-          <F label="LNA / LNB">
-            <div className="flex gap-2 items-center">
-              <div className="flex rounded-sm border border-border overflow-hidden shrink-0">
-                {(["LNA", "LNB"] as const).map((t) => (
-                  <button type="button" key={t} onClick={() => set("lna_type", t)}
-                    className={`px-3 py-1.5 mono text-[9px] uppercase tracking-wider transition-colors ${
-                      form.lna_type === t
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-card text-foreground/75 hover:bg-secondary/50"
-                    }`}>
-                    {t}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </F>
+          <div className="grid grid-cols-2 gap-2">
+            <F label="LNA">
+              <Select value={form.lna_id} onValueChange={(v) => set("lna_id", v)}>
+                <SelectTrigger><SelectValue placeholder="Select LNA" /></SelectTrigger>
+                <SelectContent>
+                  {availableLNA.map((e: any) => (
+                    <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </F>
+            <F label="LNB">
+              <Select value={form.lnb_id} onValueChange={(v) => set("lnb_id", v)}>
+                <SelectTrigger><SelectValue placeholder="Select LNB" /></SelectTrigger>
+                <SelectContent>
+                  {availableLNB.map((e: any) => (
+                    <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </F>
+          </div>
 
           <div className="grid grid-cols-2 gap-2">
             <F label="Demodulator Type">
@@ -963,6 +1103,7 @@ function AddEngagement({ unitId, activeRows, equipment, primary }: AddEngagement
     antenna_id: "",
     lna_type: "LNA" as "LNA" | "LNB",
     lna_id: "",
+    lnb_id: "",
     demodulator_type: "DVB-S2",
     demodulator_id: "",
     processing_server_id: "",
@@ -979,16 +1120,16 @@ function AddEngagement({ unitId, activeRows, equipment, primary }: AddEngagement
 
   const canSubmit = !noAntenna && !!form.satellite_id && !inProgressMissingResources;
 
-  const lnaDevices = form.lna_type === "LNA" ? availableLNA : availableLNB;
-
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!canSubmit) return;
-    const metaParts = [
-      `LNA/LNB:${form.lna_type}`,
-      `DEMOD_TYPE:${form.demodulator_type}`,
+    const metaParts = appendEquipmentMetaToRemarks(
       form.remarks,
-    ].filter(Boolean).join(" | ");
+      form.lna_type,
+      form.demodulator_type,
+      form.lna_id || undefined,
+      form.lnb_id || undefined,
+    );
     const created = insertOperationalEngagement({
       unit_id: unitId,
       satellite_id: form.satellite_id,
@@ -1076,34 +1217,28 @@ function AddEngagement({ unitId, activeRows, equipment, primary }: AddEngagement
             </Select>
           </F>
 
-          <F label="LNA / LNB">
-            <div className="flex gap-2 items-center">
-              <div className="flex rounded-sm border border-border overflow-hidden shrink-0">
-                {(["LNA", "LNB"] as const).map((t) => (
-                  <button type="button" key={t} onClick={() => set("lna_type", t)}
-                    className={`px-3 py-1.5 mono text-[9px] uppercase tracking-wider transition-colors ${
-                      form.lna_type === t
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-card text-foreground/75 hover:bg-secondary/50"
-                    }`}>
-                    {t}
-                  </button>
-                ))}
-              </div>
-              {lnaDevices.length > 0 ? (
-                <Select value={form.lna_id} onValueChange={(v) => set("lna_id", v)}>
-                  <SelectTrigger className="flex-1"><SelectValue placeholder={`Select ${form.lna_type}`} /></SelectTrigger>
-                  <SelectContent>
-                    {lnaDevices.map((e: any) => <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <span className="mono text-[8.5px] text-foreground/70 flex-1 px-2">
-                  {form.lna_type} auto-paired with antenna
-                </span>
-              )}
-            </div>
-          </F>
+          <div className="grid grid-cols-2 gap-2">
+            <F label="LNA">
+              <Select value={form.lna_id} onValueChange={(v) => set("lna_id", v)}>
+                <SelectTrigger><SelectValue placeholder="Select LNA" /></SelectTrigger>
+                <SelectContent>
+                  {availableLNA.map((e: any) => (
+                    <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </F>
+            <F label="LNB">
+              <Select value={form.lnb_id} onValueChange={(v) => set("lnb_id", v)}>
+                <SelectTrigger><SelectValue placeholder="Select LNB" /></SelectTrigger>
+                <SelectContent>
+                  {availableLNB.map((e: any) => (
+                    <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </F>
+          </div>
 
           <div className="grid grid-cols-2 gap-2">
             <F label="Demodulator Type *">

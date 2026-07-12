@@ -45,7 +45,12 @@ async function startServer() {
 
   server = http.createServer(async (req, res) => {
     // Serve static assets directly from dist/client
-    if (req.url && (req.url.startsWith('/assets/') || req.url.startsWith('/home/'))) {
+    if (
+      req.url &&
+      (req.url.startsWith('/assets/') ||
+        req.url.startsWith('/home/') ||
+        req.url.startsWith('/flags/'))
+    ) {
       if (serveStatic(req, res)) return;
     }
 

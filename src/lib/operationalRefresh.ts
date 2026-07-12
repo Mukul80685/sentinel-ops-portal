@@ -13,6 +13,8 @@ import { OPERATIONAL_STORE_EVENT } from "@/lib/operationalConstants";
 import { PRIORITY_ALLOCATION_EVENT } from "@/lib/priorityAllocation";
 import { VISIBILITY_OVERLAY_EVENT } from "@/lib/visibilityOverlay";
 import { MODULE_UNITS_EVENT } from "@/lib/moduleUnitRegistry";
+import { SCAN_HISTORY_EVENT } from "@/lib/scanHistoryStore";
+import { PLANNED_SATELLITES_EVENT } from "@/lib/plannedSatelliteStore";
 
 /** Fired after derived fleet metrics should be recomputed (localStorage-only sources). */
 export const OPERATIONAL_DERIVED_REFRESH_EVENT = "ssacc-operational-derived-refresh";
@@ -23,6 +25,8 @@ export const OPERATIONAL_SYNC_EVENTS = [
   PRIORITY_ALLOCATION_EVENT,
   VISIBILITY_OVERLAY_EVENT,
   MODULE_UNITS_EVENT,
+  SCAN_HISTORY_EVENT,
+  PLANNED_SATELLITES_EVENT,
   OPERATIONAL_DERIVED_REFRESH_EVENT,
   INTEL_CELL_EDITS_EVENT,
   INTEL_FREQ_EVENT,

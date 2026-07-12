@@ -360,34 +360,31 @@ export function intelReportIdForSatellite(unitId: string, satelliteName: string)
   return `${unitId}__${satelliteName.replace(/\s+/g, "-")}`;
 }
 
-/** Look up a dynamically created unit in the operational store (avoids import cycle). */
-function findDynamicUnit(slug: string): { name: string; code: string } | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = localStorage.getItem("ssacc_operational_store_v2");
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { units?: { id: string; name: string; code: string }[] };
-    const unit = parsed.units?.find((u) => u.id === `op-unit-${slug}`);
-    return unit ? { name: unit.name, code: unit.code } : null;
-  } catch {
-    return null;
-  }
+/** Resolve unit identity from operational SSOT (seed + user-created units). */
+function findOperationalUnitBySlug(slug: string) {
+  return (
+    getOperationalDataset().units.find(
+      (u) => u.id === `op-unit-${slug}` || u.slot === slug,
+    ) ?? null
+  );
 }
 
 export function getUnitIntelName(unitId: string): string {
-  return (
-    INT_UNITS.find((u) => u.id === unitId)?.name ??
-    findDynamicUnit(unitId)?.name ??
-    "Current Unit"
-  );
+  const fromStore = findOperationalUnitBySlug(unitId);
+  if (fromStore?.name?.trim()) return fromStore.name.trim();
+  return INT_UNITS.find((u) => u.id === unitId)?.name ?? "Current Unit";
+}
+
+export function getUnitIntelLocation(unitId: string): string | null {
+  const fromStore = findOperationalUnitBySlug(unitId);
+  if (fromStore?.description?.trim()) return fromStore.description.trim();
+  return INT_UNITS.find((u) => u.id === unitId)?.location ?? null;
 }
 
 export function getUnitIntelCode(unitId: string): string {
-  return (
-    INT_UNITS.find((u) => u.id === unitId)?.code ??
-    findDynamicUnit(unitId)?.code ??
-    "A"
-  );
+  const fromStore = findOperationalUnitBySlug(unitId);
+  if (fromStore?.code) return fromStore.code;
+  return INT_UNITS.find((u) => u.id === unitId)?.code ?? "A";
 }
 
 /** Beam inventory from Visibility Matrix SSOT (inventory is unit-independent). */
