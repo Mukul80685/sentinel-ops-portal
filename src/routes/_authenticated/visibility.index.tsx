@@ -102,8 +102,7 @@ import {
   VISIBILITY_OVERLAY_EVENT,
 } from "@/lib/visibilityOverlay";
 import { mergeRegionsWithOverlay, useVisibleSatelliteCounts } from "@/lib/satelliteCatalog";
-import { INT_UNITS } from "@/lib/intelRepository";
-import { unitDisplayLabel, unitDisplayLocation } from "@/lib/operationalDataset";
+import { unitDisplayFromRecord } from "@/lib/unitDisplay";
 import { resolveIntUnitSlug } from "@/lib/operationalSync";
 import { UnitAdvancedFeatures } from "@/components/UnitAdvancedFeatures";
 import { RegionFlagIcon } from "@/components/visibility/RegionFlagIcon";
