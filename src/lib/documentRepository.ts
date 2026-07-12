@@ -1,5 +1,8 @@
 /**
  * Document repository SSOT — Recent Discussions and Reports modules.
+ *
+ * In Electron, file bytes are stored on disk via IPC (same as equipment attachments).
+ * Only metadata is kept in localStorage. Browser fallback stores small files inline.
  */
 
 import { useEffect, useState } from "react";
@@ -21,8 +24,10 @@ export type StoredDocument = {
   size: number;
   uploadedAt: string;
   folderId: string | null;
-  /** Base64 data URL for local persistence */
-  dataUrl: string;
+  /** Inline base64 data URL (browser fallback for small files) */
+  dataUrl?: string;
+  /** Electron attachment path when stored on disk */
+  storagePath?: string;
 };
 
 type DocumentStore = {
@@ -34,6 +39,20 @@ const STORAGE_PREFIX = "ssacc_documents_";
 
 const DISCUSSIONS_ALLOWED = ["pdf", "xlsx", "xls", "csv"];
 const REPORTS_ALLOWED = ["xlsx", "xls", "csv"];
+
+/** Browser-only inline limit — localStorage cannot hold large base64 blobs. */
+const BROWSER_INLINE_MAX_BYTES = 4 * 1024 * 1024;
+const DESKTOP_MAX_BYTES = 50 * 1024 * 1024;
+
+type ElectronIpc = {
+  invoke(channel: string, ...args: unknown[]): Promise<unknown>;
+};
+
+const ipc: ElectronIpc | undefined =
+  typeof window !== "undefined"
+    ? (window as Window & { electron?: { ipcRenderer: ElectronIpc } }).electron?.ipcRenderer
+    : undefined;
+const USE_IPC = !!ipc;
 
 function storageKey(module: DocumentModule): string {
   return `${STORAGE_PREFIX}${module}`;
@@ -53,14 +72,38 @@ function loadStore(module: DocumentModule): DocumentStore {
   }
 }
 
-function saveStore(module: DocumentModule, store: DocumentStore): void {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(storageKey(module), JSON.stringify(store));
-  window.dispatchEvent(new CustomEvent(DOCUMENT_REPO_EVENT, { detail: { module } }));
+function saveStore(
+  module: DocumentModule,
+  store: DocumentStore,
+): { ok: true } | { ok: false; error: string } {
+  if (typeof window === "undefined") return { ok: true };
+  try {
+    localStorage.setItem(storageKey(module), JSON.stringify(store));
+    window.dispatchEvent(new CustomEvent(DOCUMENT_REPO_EVENT, { detail: { module } }));
+    return { ok: true };
+  } catch (err) {
+    const isQuota =
+      err instanceof DOMException &&
+      (err.name === "QuotaExceededError" || err.code === 22);
+    return {
+      ok: false,
+      error: isQuota
+        ? "Storage is full. Remove older documents or use a smaller file."
+        : "Could not save document metadata.",
+    };
+  }
 }
 
 function ext(name: string): string {
   return name.split(".").pop()?.toLowerCase() ?? "";
+}
+
+function sanitizeFilename(name: string): string {
+  return name.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function documentStoragePath(module: DocumentModule, docId: string, filename: string): string {
+  return `documents/${module}/${docId}_${sanitizeFilename(filename)}`;
 }
 
 export function validateDocumentUpload(
@@ -72,11 +115,18 @@ export function validateDocumentUpload(
     if (!DISCUSSIONS_ALLOWED.includes(e)) {
       return { ok: false, error: "Incorrect file format. Only PDF/Excel/CSV allowed." };
     }
-    return { ok: true };
-  }
-  if (!REPORTS_ALLOWED.includes(e)) {
+  } else if (!REPORTS_ALLOWED.includes(e)) {
     return { ok: false, error: "Report upload failed: only Excel/CSV formats allowed." };
   }
+
+  const maxBytes = USE_IPC ? DESKTOP_MAX_BYTES : BROWSER_INLINE_MAX_BYTES;
+  if (file.size > maxBytes) {
+    return {
+      ok: false,
+      error: `File is too large (max ${formatFileSize(maxBytes)}).`,
+    };
+  }
+
   return { ok: true };
 }
 
@@ -84,9 +134,30 @@ function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error);
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to read file."));
     reader.readAsDataURL(file);
   });
+}
+
+async function persistDocumentBlob(storagePath: string, file: File): Promise<void> {
+  const dataUrl = await readFileAsDataUrl(file);
+  const base64 = dataUrl.split(",")[1];
+  if (!base64) throw new Error("Could not read file contents.");
+  await ipc!.invoke("attachment-save", storagePath, base64);
+}
+
+function deleteDocumentBlob(storagePath: string): void {
+  void ipc?.invoke("attachment-delete", storagePath);
+}
+
+export async function resolveDocumentDataUrl(doc: StoredDocument): Promise<string> {
+  if (doc.dataUrl) return doc.dataUrl;
+  if (doc.storagePath && USE_IPC) {
+    const base64 = (await ipc!.invoke("attachment-load", doc.storagePath)) as string | null;
+    if (!base64) throw new Error("Stored file is missing on disk.");
+    return `data:${doc.mimeType};base64,${base64}`;
+  }
+  throw new Error("Document data is unavailable.");
 }
 
 export async function uploadDocument(
@@ -97,21 +168,51 @@ export async function uploadDocument(
   const validation = validateDocumentUpload(module, file);
   if (!validation.ok) return { error: validation.error };
 
-  const dataUrl = await readFileAsDataUrl(file);
-  const doc: StoredDocument = {
-    id: crypto.randomUUID(),
-    filename: file.name,
-    mimeType: file.type || "application/octet-stream",
-    size: file.size,
-    uploadedAt: new Date().toISOString(),
-    folderId,
-    dataUrl,
-  };
+  try {
+    const id = crypto.randomUUID();
+    const uploadedAt = new Date().toISOString();
+    const mimeType = file.type || "application/octet-stream";
 
-  const store = loadStore(module);
-  store.documents.unshift(doc);
-  saveStore(module, store);
-  return doc;
+    let doc: StoredDocument;
+
+    if (USE_IPC) {
+      const storagePath = documentStoragePath(module, id, file.name);
+      await persistDocumentBlob(storagePath, file);
+      doc = {
+        id,
+        filename: file.name,
+        mimeType,
+        size: file.size,
+        uploadedAt,
+        folderId,
+        storagePath,
+      };
+    } else {
+      const dataUrl = await readFileAsDataUrl(file);
+      doc = {
+        id,
+        filename: file.name,
+        mimeType,
+        size: file.size,
+        uploadedAt,
+        folderId,
+        dataUrl,
+      };
+    }
+
+    const store = loadStore(module);
+    store.documents.unshift(doc);
+    const saved = saveStore(module, store);
+    if (!saved.ok) {
+      if (doc.storagePath) deleteDocumentBlob(doc.storagePath);
+      return { error: saved.error };
+    }
+    return doc;
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : "Upload failed unexpectedly.",
+    };
+  }
 }
 
 export function createFolder(module: DocumentModule, name: string): DocFolder {
@@ -148,16 +249,41 @@ export function moveDocuments(
 }
 
 /** Duplicate documents into a target folder (null = home). Copies get new ids. */
-export function copyDocuments(
+export async function copyDocuments(
   module: DocumentModule,
   docIds: string[],
   folderId: string | null,
-): void {
+): Promise<void> {
   const ids = new Set(docIds);
   const store = loadStore(module);
-  const copies = store.documents
-    .filter((d) => ids.has(d.id))
-    .map((d) => ({ ...d, id: crypto.randomUUID(), folderId }));
+  const copies: StoredDocument[] = [];
+
+  for (const d of store.documents.filter((doc) => ids.has(doc.id))) {
+    const newId = crypto.randomUUID();
+    if (d.storagePath && USE_IPC) {
+      const dataUrl = await resolveDocumentDataUrl(d);
+      const base64 = dataUrl.split(",")[1];
+      if (!base64) continue;
+      const storagePath = documentStoragePath(module, newId, d.filename);
+      await ipc!.invoke("attachment-save", storagePath, base64);
+      copies.push({
+        ...d,
+        id: newId,
+        folderId,
+        storagePath,
+        dataUrl: undefined,
+        uploadedAt: new Date().toISOString(),
+      });
+    } else {
+      copies.push({
+        ...d,
+        id: newId,
+        folderId,
+        uploadedAt: new Date().toISOString(),
+      });
+    }
+  }
+
   store.documents.unshift(...copies);
   saveStore(module, store);
 }
@@ -165,6 +291,9 @@ export function copyDocuments(
 export function deleteDocuments(module: DocumentModule, docIds: string[]): void {
   const ids = new Set(docIds);
   const store = loadStore(module);
+  for (const d of store.documents) {
+    if (ids.has(d.id) && d.storagePath) deleteDocumentBlob(d.storagePath);
+  }
   store.documents = store.documents.filter((d) => !ids.has(d.id));
   saveStore(module, store);
 }
@@ -172,6 +301,9 @@ export function deleteDocuments(module: DocumentModule, docIds: string[]): void 
 /** Delete a folder and every document inside it. */
 export function deleteFolder(module: DocumentModule, folderId: string): void {
   const store = loadStore(module);
+  for (const d of store.documents) {
+    if (d.folderId === folderId && d.storagePath) deleteDocumentBlob(d.storagePath);
+  }
   store.folders = store.folders.filter((f) => f.id !== folderId);
   store.documents = store.documents.filter((d) => d.folderId !== folderId);
   saveStore(module, store);
@@ -219,9 +351,10 @@ export function sortDocuments(
   return copy;
 }
 
-export function downloadDocument(doc: StoredDocument): void {
+export async function downloadDocument(doc: StoredDocument): Promise<void> {
+  const dataUrl = await resolveDocumentDataUrl(doc);
   const a = document.createElement("a");
-  a.href = doc.dataUrl;
+  a.href = dataUrl;
   a.download = doc.filename;
   document.body.appendChild(a);
   a.click();
@@ -229,9 +362,15 @@ export function downloadDocument(doc: StoredDocument): void {
 }
 
 /** Download file and open with the OS default application where supported. */
-export function downloadAndView(doc: StoredDocument): void {
-  downloadDocument(doc);
-  window.open(doc.dataUrl, "_blank", "noopener,noreferrer");
+export async function downloadAndView(doc: StoredDocument): Promise<void> {
+  const dataUrl = await resolveDocumentDataUrl(doc);
+  const a = document.createElement("a");
+  a.href = dataUrl;
+  a.download = doc.filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  window.open(dataUrl, "_blank", "noopener,noreferrer");
 }
 
 export function formatFileSize(bytes: number): string {

@@ -3,13 +3,15 @@
  */
 
 import { computeSatelliteAnalysis, type UnitScanSnapshot } from "@/lib/engagementEngine";
+import { hasIntRepositoryContent } from "@/lib/intelAnalysisData";
+import { buildIntelActiveMonitoringRows } from "@/lib/intelLiveBridge";
 import { canUnitScanSatellite } from "@/lib/intelIntegrity";
 import {
   buildLiveEngagementFleetModel,
   countServiceableChainCapacity,
   type UnitCapability,
 } from "@/lib/liveEngagementModel";
-import { unitDisplayLabel } from "@/lib/operationalDataset";
+import { unitDisplayFromRecord } from "@/lib/unitDisplay";
 import { resolveIntUnitSlug } from "@/lib/operationalSync";
 import {
   getAllocationsForUnit,
@@ -28,6 +30,7 @@ export type UnitOperationalState = {
   unitDbId: string;
   unitCode: string;
   unitLabel: string;
+  unitLocation: string;
   intUnitSlug: UnitSlot | null;
   /** Slot used by Priority & Allocation storage (may differ from intUnitSlug). */
   prioritySlot: UnitSlot | null;
@@ -61,7 +64,7 @@ export type UnitActivityHistoryRow = {
 };
 
 export function buildOperationalFleetState(input: {
-  dbUnits: { id: string; code: string; name?: string }[];
+  dbUnits: { id: string; code: string; name: string; description?: string | null }[];
   equipment: any[];
   engagements: any[];
   intelRows: any[];
@@ -107,10 +110,13 @@ export function buildOperationalFleetState(input: {
     const allocations = getAllocationsForUnit(prioritySlot);
     const allocatedSatellites = allocations.length;
 
+    const display = unitDisplayFromRecord(unit);
+
     return {
       unitDbId: unit.id,
       unitCode: unit.code,
-      unitLabel: unitDisplayLabel(unit),
+      unitLabel: display.name,
+      unitLocation: display.location,
       intUnitSlug: intSlug,
       prioritySlot,
       visibleSatellites,
@@ -128,52 +134,77 @@ export function buildOperationalFleetState(input: {
   };
 }
 
-/** Control Center rows — exact same assignments + analysis as Live Engagement. */
+/** Map INT / capability assignment analysis → Active Satellite Monitoring row. */
+function assignmentToActivitySatRow(a: {
+  name: string;
+  analysis: {
+    polarization: string;
+    scanned: number;
+    analyzed: number;
+  };
+  productiveCount?: number;
+  nonProductiveCount?: number;
+}): UnitActivitySatRow {
+  const analysis = a.analysis;
+  const pol = analysis.polarization !== "—" ? analysis.polarization : "KU-HH";
+  const band = pol.startsWith("C")
+    ? "C-band"
+    : pol.startsWith("KA")
+      ? "KA band"
+      : pol.startsWith("KU")
+        ? "KU band"
+        : "Extended C-band";
+  const productive = a.productiveCount ?? Math.floor(analysis.analyzed * 0.7);
+  const nonProductive = a.nonProductiveCount ?? Math.max(0, analysis.analyzed - productive);
+
+  return {
+    satellite: a.name,
+    band,
+    pol,
+    scanned: analysis.scanned,
+    analyzed: analysis.analyzed,
+    productive,
+    nonProductive,
+  };
+}
+
+/** Control Center + dashboard activity — INT Repository SSOT for active satellites. */
 export function buildUnitActivityFromState(
   state: UnitOperationalState,
   engagements: any[],
   intelRows: any[],
+  equipment: any[] = [],
 ): { activeSats: UnitActivitySatRow[]; history: UnitActivityHistoryRow[] } {
-  const activeSats: UnitActivitySatRow[] = state.capability.assignments.map((a) => {
-    const analysis = a.analysis;
-    const pol = analysis.polarization !== "—" ? analysis.polarization : "KU-HH";
-    const band = pol.startsWith("C")
-      ? "C-band"
-      : pol.startsWith("KA")
-        ? "KA band"
-        : pol.startsWith("KU")
-          ? "KU band"
-          : "Extended C-band";
-    const productive =
-      a.productiveCount ?? Math.floor(analysis.analyzed * 0.7);
-    const nonProductive =
-      a.nonProductiveCount ?? Math.max(0, analysis.analyzed - productive);
+  let activeSats: UnitActivitySatRow[] = [];
 
-    return {
-      satellite: a.name,
-      band,
-      pol,
-      scanned: analysis.scanned,
-      analyzed: analysis.analyzed,
-      productive,
-      nonProductive,
-    };
-  });
+  if (state.intUnitSlug && hasIntRepositoryContent(state.intUnitSlug, state.unitCode)) {
+    const intelAssignments = buildIntelActiveMonitoringRows(
+      state.intUnitSlug,
+      state.unitDbId,
+      engagements,
+      equipment,
+      intelRows,
+      state.unitCode,
+    );
+    activeSats = intelAssignments.map(assignmentToActivitySatRow);
+  }
 
-  const completed = engagements
-    .filter((e) => e.unit_id === state.unitDbId && e.status === "Completed")
-    .slice(0, 5);
-
-  const seededHistory = getUnitScanHistory(state.unitDbId);
-  const activeSatNames = activeSats.map((s) => s.satellite);
   const history: UnitActivityHistoryRow[] =
-    seededHistory.length > 0
-      ? syncScanHistoryFromActiveSatellites(state.unitDbId, activeSatNames).map((h) => ({
-          satellite: h.satellite,
-          time: h.time,
-          outcome: h.outcome,
-        }))
-      : completed.map((e) => {
+    state.intUnitSlug && hasIntRepositoryContent(state.intUnitSlug, state.unitCode)
+      ? (() => {
+          const seededHistory = getUnitScanHistory(state.unitDbId);
+          const activeSatNames = activeSats.map((s) => s.satellite);
+          if (seededHistory.length > 0) {
+            return syncScanHistoryFromActiveSatellites(state.unitDbId, activeSatNames).map((h) => ({
+              satellite: h.satellite,
+              time: h.time,
+              outcome: h.outcome,
+            }));
+          }
+          const completed = engagements
+            .filter((e) => e.unit_id === state.unitDbId && e.status === "Completed")
+            .slice(0, 5);
+          return completed.map((e) => {
           const name = (e.satellites?.name as string | undefined) ?? "Unknown";
           const analysis = computeSatelliteAnalysis(e, intelRows);
           const ratio = analysis.scanned > 0 ? analysis.analyzed / analysis.scanned : 0;
@@ -193,6 +224,8 @@ export function buildUnitActivityFromState(
           }
           return { satellite: name, time, outcome };
         });
+        })()
+      : [];
 
   return { activeSats, history };
 }
@@ -209,7 +242,7 @@ export type UnitOptimizationData = {
   unitDbId: string;
   unitLabel: string;
   compositeScore: number;
-  status: "OPTIMIZED" | "SUBOPTIMAL" | "MISALLOCATED";
+  status: "OPTIMIZED" | "SUBOPTIMAL" | "MISALLOCATED" | "NOT_ALLOTTED";
   satelliteLoad: number;
   maxCapacity: number;
   /** False when INT Repository shows no active satellite monitoring. */
@@ -392,13 +425,15 @@ function computeResourceUtilizationScore(
   const antennaUtil =
     antennas.length > 0 ? (operationalAntennas / antennas.length) * 100 : equipmentUtil;
 
+  const actualEngagementUtil = chainUtil;
+
   let score: number;
   if (cap.feasibilityStatus === "NON_OPERATIONAL") {
     score = 15;
   } else if (cap.feasibilityStatus === "DEGRADED") {
-    score = Math.round((chainUtil * 0.5 + equipmentUtil * 0.3 + antennaUtil * 0.2) * 0.75);
+    score = Math.round((actualEngagementUtil * 0.6 + equipmentUtil * 0.25 + antennaUtil * 0.15) * 0.75);
   } else {
-    score = Math.round(chainUtil * 0.5 + equipmentUtil * 0.3 + antennaUtil * 0.2);
+    score = Math.round(actualEngagementUtil * 0.6 + equipmentUtil * 0.25 + antennaUtil * 0.15);
   }
 
   const issues: string[] = [];

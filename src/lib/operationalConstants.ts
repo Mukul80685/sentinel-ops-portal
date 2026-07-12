@@ -92,6 +92,8 @@ export const INTEL_ROW_ENGAGEMENT_RATIO = 0.65;
 
 export const OPERATIONAL_STORE_KEY = "ssacc_operational_store_v2";
 export const OPERATIONAL_STORE_EVENT = "ssacc-operational-store-change";
+/** Dedicated persistence for unit renames — survives store regeneration and SSR hydration. */
+export const UNIT_IDENTITY_OVERRIDES_KEY = "ssacc_unit_identity_v1";
 export const OPERATIONAL_DATASET_VERSION = 9 as const;
 
 /** Supabase must exceed these counts to override the local operational SSOT. */

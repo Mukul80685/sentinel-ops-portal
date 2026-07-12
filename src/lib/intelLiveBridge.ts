@@ -16,6 +16,7 @@ import {
   buildIntelSatelliteTable,
   deriveIntScanPhaseStatus,
   hasIntelData,
+  hasIntRepositoryContent,
   UNIT_SATELLITE_ROSTER,
   type IntelSatelliteReportRow,
 } from "@/lib/intelAnalysisData";
@@ -108,22 +109,20 @@ export type IntelBackedAssignmentResult = {
   violations: string[];
 };
 
-/**
- * Build Live Engagement assignments from INT Repository active scan rows.
- * Only satellites with engagementStatus In Progress / Paused appear (matches INT unit page).
- */
-export function buildIntelBackedAssignments(
+function buildIntelActiveScanTable(
   intUnitSlug: string,
   unitDbId: string,
   engagements: any[],
   equipment: any[],
   intelRows: any[],
-  maxAssignments: number,
   unitCode?: string,
-): IntelBackedAssignmentResult {
-  if (!hasIntelData(intUnitSlug, unitDbId)) {
-    return { assignments: [], violations: [] };
-  }
+): {
+  activeIntelRows: IntelSatelliteReportRow[];
+  unitEngs: any[];
+  unitEq: any[];
+  eqById: Map<string, any>;
+} | null {
+  if (!hasIntRepositoryContent(intUnitSlug, unitCode)) return null;
 
   const unitEngs = engagements.filter((e) => e.unit_id === unitDbId);
   const unitEq = equipment.filter((e) => e.unit_id === unitDbId);
@@ -140,6 +139,116 @@ export function buildIntelBackedAssignments(
       r.engagementStatus != null &&
       isActiveScanStatus(r.engagementStatus),
   );
+
+  return { activeIntelRows, unitEngs, unitEq, eqById };
+}
+
+function engagementForSatellite(unitEngs: any[], satelliteName: string): any | null {
+  const active = unitEngs.find(
+    (e) =>
+      (e.satellites?.name as string | undefined) === satelliteName &&
+      isActiveScanStatus(e.status as string),
+  );
+  if (active) return active;
+  return (
+    unitEngs.find((e) => (e.satellites?.name as string | undefined) === satelliteName) ?? null
+  );
+}
+
+/**
+ * INT Repository satellites in active scan — full list for Engagement detail monitoring table.
+ * Matches INT unit page badges; no chain-cap or hardware dedup filtering.
+ */
+export function buildIntelActiveMonitoringRows(
+  intUnitSlug: string,
+  unitDbId: string,
+  engagements: any[],
+  equipment: any[],
+  intelRows: any[],
+  unitCode?: string,
+): IntelBackedAssignment[] {
+  const built = buildIntelActiveScanTable(
+    intUnitSlug,
+    unitDbId,
+    engagements,
+    equipment,
+    intelRows,
+    unitCode,
+  );
+  if (!built) return [];
+
+  const { activeIntelRows, unitEngs, unitEq, eqById } = built;
+  const emptyUsed = new Set<string>();
+  const assignments: IntelBackedAssignment[] = [];
+
+  for (const row of activeIntelRows) {
+    let eng = engagementForSatellite(unitEngs, row.satelliteName);
+    if (eng) {
+      const rebound = resolveEngagementWithHardware(
+        eng,
+        unitEq,
+        eqById,
+        emptyUsed,
+        emptyUsed,
+        emptyUsed,
+      );
+      eng = rebound ?? eng;
+    } else {
+      eng = {
+        id: `monitoring-${unitDbId}-${row.satelliteName.replace(/\s+/g, "-")}`,
+        unit_id: unitDbId,
+        status: row.engagementStatus,
+        satellites: { name: row.satelliteName },
+        antenna_id: null,
+        demodulator_id: null,
+        processing_server_id: null,
+      };
+    }
+
+    const { productive, nonProductive } = intelRowProductiveCounts(row);
+    const status = (eng.status as string) ?? row.engagementStatus!;
+
+    assignments.push({
+      engagementId: eng.id as string,
+      name: row.satelliteName,
+      status,
+      displayStatus: scanStatusLabel(status),
+      engagement: eng,
+      analysis: intelRowToAnalysis(row),
+      productiveCount: productive,
+      nonProductiveCount: nonProductive,
+    });
+  }
+
+  return assignments;
+}
+
+/**
+ * Build Live Engagement assignments from INT Repository active scan rows.
+ * Only satellites with engagementStatus In Progress / Paused appear (matches INT unit page).
+ */
+export function buildIntelBackedAssignments(
+  intUnitSlug: string,
+  unitDbId: string,
+  engagements: any[],
+  equipment: any[],
+  intelRows: any[],
+  maxAssignments: number,
+  unitCode?: string,
+): IntelBackedAssignmentResult {
+  const built = buildIntelActiveScanTable(
+    intUnitSlug,
+    unitDbId,
+    engagements,
+    equipment,
+    intelRows,
+    unitCode,
+  );
+  if (!built) {
+    return { assignments: [], violations: [] };
+  }
+
+  const { activeIntelRows, unitEngs, unitEq, eqById } = built;
 
   const engBySatName = new Map<string, any>();
   for (const e of unitEngs) {

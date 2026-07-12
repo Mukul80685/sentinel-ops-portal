@@ -23,12 +23,18 @@ export function OperationalStoreGate() {
 
     resetOperationalDataSourceCache();
 
-    // Regenerate if version stale or inventory too small (prior cached datasets).
+    // Regenerate only for stale auto-seeded datasets — never wipe user-managed stores.
     try {
       const raw = localStorage.getItem("ssacc_operational_store_v2");
       if (raw) {
-        const parsed = JSON.parse(raw) as { version?: number; equipment?: unknown[] };
-        if (
+        const parsed = JSON.parse(raw) as {
+          version?: number;
+          equipment?: unknown[];
+          userManaged?: boolean;
+        };
+        if (parsed.userManaged) {
+          ensureOperationalDataset();
+        } else if (
           parsed.version !== OPERATIONAL_DATASET_VERSION ||
           (parsed.equipment?.length ?? 0) < 300
         ) {

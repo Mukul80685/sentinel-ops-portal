@@ -5,7 +5,7 @@ import { ChevronRight, Database } from "lucide-react";
 import { loadScanOverrides } from "@/lib/intelScanStorage";
 import { intelStorageSlug } from "@/lib/intelStorageKeys";
 import { listAllIntelRecords, listAllEquipment, INTEL_RECORDS_ALL_KEY } from "@/lib/queries";
-import { INT_UNITS } from "@/lib/intelUnits";
+import { unitDisplayFromRecord } from "@/lib/unitDisplay";
 import {
   buildIntelLinkageContext,
   buildIntelLinkageVisibilityRows,
@@ -101,12 +101,12 @@ export function IntelRepositoryView() {
     () =>
       dbUnits.map((u: { id: string; code: string; name: string; description?: string | null }) => {
         const slug = resolveIntUnitSlug(u.id, u.code) ?? u.id;
-        const seed = INT_UNITS.find((s) => s.id === slug);
+        const display = unitDisplayFromRecord(u);
         return {
           id: slug,
-          code: seed?.code ?? u.code,
-          name: unitDisplayLabel(u),
-          location: unitDisplayLocation(u, seed?.location),
+          code: u.code,
+          name: display.name,
+          location: display.location,
         };
       }),
     [dbUnits],

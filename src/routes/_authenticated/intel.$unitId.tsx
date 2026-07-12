@@ -729,10 +729,10 @@ function IntelUnitView() {
   const { data: dbUnits = [] } = useQuery({ queryKey: ["units"], queryFn: listUnits });
 
   const unit = useMemo(() => {
-    const local = INT_UNITS.find((u) => u.id === unitId);
-    if (local) return local;
     const db = dbUnits.find((u) => u.id === unitId || u.id === `op-unit-${unitId}`);
     if (db) return { id: db.id, code: db.code, name: db.name, location: db.description ?? "—" };
+    const local = INT_UNITS.find((u) => u.id === unitId);
+    if (local) return local;
     return null;
   }, [unitId, dbUnits]);
 

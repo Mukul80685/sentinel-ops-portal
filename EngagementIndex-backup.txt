@@ -1,6 +1,7 @@
-import { Link, createFileRoute, redirect } from "@tanstack/react-router";
+﻿import { Link, createFileRoute, redirect } from "@tanstack/react-router";
 import { Empty } from "@/components/Empty";
 import { loadRingPalette, useEngagementRingVisuals } from "@/lib/engagementRingVisuals";
+import { INT_UNITS } from "@/lib/intelRepository";
 import { useDashboardData } from "@/hooks/useDashboardData";
 import { DASHBOARD_PANEL_LABELS } from "@/lib/dashboardLabels";
 
@@ -11,17 +12,16 @@ export const Route = createFileRoute("/_authenticated/engagement/")({
   component: () => null,
 });
 
-/** Resource Engagement Status — unit tiles driven by INT Repository uploads only. */
+/** Resource Engagement Status â€” committed RF resources only (no scan progress). */
 export function EngagementDashboardView() {
   const { engagement, isLoading } = useDashboardData();
 
-  const monitoringUnits = engagement.units.filter((u) => u.monitoringSatelliteCount > 0);
-  const totalSatellites = monitoringUnits.reduce((s, u) => s + u.monitoringSatelliteCount, 0);
+  const totalActive = engagement.totalActiveScans;
 
   if (isLoading) {
     return (
       <div className="py-12 text-center mono text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-        Loading {DASHBOARD_PANEL_LABELS.engagement.toLowerCase()}…
+        Loading {DASHBOARD_PANEL_LABELS.engagement.toLowerCase()}â€¦
       </div>
     );
   }
@@ -35,9 +35,7 @@ export function EngagementDashboardView() {
       <div className="panel mb-3 px-3 py-2 flex items-center gap-4 flex-wrap">
         <FleetStat label="Units" value={engagement.units.length} />
         <div className="h-4 w-px bg-border hidden sm:block" />
-        <FleetStat label="Units Monitoring" value={monitoringUnits.length} accent />
-        <div className="h-4 w-px bg-border hidden sm:block" />
-        <FleetStat label="Satellites Monitored" value={totalSatellites} />
+        <FleetStat label="Resources Engaged" value={totalActive} accent />
         <div className="h-4 w-px bg-border hidden sm:block" />
         <FleetStat label="Avg Engagement" value={`${engagement.avgOccupancy}%`} />
       </div>
@@ -52,11 +50,11 @@ export function EngagementDashboardView() {
                        hover:border-primary/45 hover:bg-primary/5 transition-all no-underline cursor-pointer"
           >
             <div className="text-center w-full min-w-0">
-              <div className="mono text-[13px] font-bold uppercase tracking-tight text-foreground leading-tight truncate">
-                {row.unitLabel}
+              <div className="mono text-[13px] font-bold uppercase tracking-tight text-foreground leading-tight">
+                Unit {unitDisplayCode(row.unitCode)}
               </div>
               <div className="mono text-[10px] font-semibold text-foreground mt-1 truncate">
-                {row.unitLocation}
+                {unitLocation(row.unitCode)}
               </div>
             </div>
 
@@ -88,6 +86,16 @@ export function EngagementDashboardView() {
       </div>
     </>
   );
+}
+
+function unitDisplayCode(code: string): string {
+  return code.replace(/^GATE[-\s]?/i, "").trim() || code;
+}
+
+function unitLocation(code: string): string {
+  const displayCode = unitDisplayCode(code);
+  const intUnit = INT_UNITS.find((u) => u.code === displayCode);
+  return intUnit?.location ?? "â€”";
 }
 
 function FleetStat({ label, value, accent }: { label: string; value: string | number; accent?: boolean }) {

@@ -139,9 +139,11 @@ export function UnitAdvancedFeatures({
       description: renameLocation.trim(),
     });
     if (updated) {
-      toast.success(`Unit renamed to "${updated.name}".`);
+      toast.success(`Unit renamed to "${updated.name}" across all modules.`);
       setRenameOpen(false);
       setPendingRename(null);
+      setRenameName("");
+      setRenameLocation("");
       refresh();
     } else {
       toast.error("Unit could not be updated.");

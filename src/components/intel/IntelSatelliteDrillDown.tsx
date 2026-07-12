@@ -1114,8 +1114,8 @@ function AllocateUnitDialog({ open, onClose, freqKey, frequency, report, dbUnits
                 <li key={u.unitId}>
                   <button type="button"
                     className="w-full text-left px-2 py-1.5 rounded-sm border border-border hover:border-primary/40 hover:bg-primary/5"
-                    onClick={() => { allocateToUnit(freqKey, u.unitId, userLabel, { scannedByUnitId: report.unitId, satelliteName: report.satelliteName, frequencyId: frequency, beamName: u.matchingBeams[0] ?? freqCtx.beamName, band: u.band }); toast.success(`Allocated to Unit ${u.code}`); onDone(); }}>
-                    <div className="mono text-[11px] font-bold">Unit {u.code}</div>
+                    onClick={() => { allocateToUnit(freqKey, u.unitId, userLabel, { scannedByUnitId: report.unitId, satelliteName: report.satelliteName, frequencyId: frequency, beamName: u.matchingBeams[0] ?? freqCtx.beamName, band: u.band }); toast.success(`Allocated to ${u.name}`); onDone(); }}>
+                    <div className="mono text-[11px] font-bold">{u.name}</div>
                     <div className="mono text-[9px] text-foreground/70">{u.reason}</div>
                   </button>
                 </li>

@@ -19,7 +19,8 @@ export const NON_OPERATIONAL = new Set([
 
 export const CHAIN_CATEGORIES = [
   { label: "Antennas",      match: "antenna",    short: "Antenna"      },
-  { label: "LNB",           match: "lna",         short: "LNB"         },
+  { label: "LNA",           match: "lna",        short: "LNA"          },
+  { label: "LNB",           match: "lnb",        short: "LNB"          },
   { label: "Demodulators",  match: "demodulat",  short: "Demodulator"  },
   { label: "Processors",    match: "processing", short: "Processor"    },
 ] as const;
@@ -87,7 +88,7 @@ export function computeBottleneckEngagement(
   }
 
   const bottleneck = withInventory.reduce(
-    (max, c) => (c.pct >= max.pct ? c : max),
+    (min, c) => (c.pct <= min.pct ? c : min),
     withInventory[0],
   );
 

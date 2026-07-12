@@ -228,11 +228,23 @@ export function DocumentModuleModal({ module, open, onClose, title, accept }: Pr
         toast.error(validation.error);
         continue;
       }
-      const result = await uploadDocument(module, file, targetId);
-      if ("error" in result) toast.error(result.error);
-      else toast.success(`Uploaded ${file.name}`);
+      try {
+        const result = await uploadDocument(module, file, targetId);
+        if ("error" in result) toast.error(result.error);
+        else toast.success(`Uploaded ${file.name}`);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Upload failed.");
+      }
     }
     if (fileRef.current) fileRef.current.value = "";
+  }
+
+  async function handleDownloadAndView(doc: StoredDocument) {
+    try {
+      await downloadAndView(doc);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not open document.");
+    }
   }
 
   function cycleSort(field: DocSortField) {
@@ -267,14 +279,18 @@ export function DocumentModuleModal({ module, open, onClose, title, accept }: Pr
     setSelectedDocIds(new Set());
   }
 
-  function handleCopySelected() {
+  async function handleCopySelected() {
     if (selectedDocIds.size === 0) {
       toast.error("Select at least one document to copy.");
       return;
     }
-    copyDocuments(module, Array.from(selectedDocIds), resolveTargetFolderId());
-    toast.success(`${selectedDocIds.size} document${selectedDocIds.size !== 1 ? "s" : ""} copied.`);
-    setSelectedDocIds(new Set());
+    try {
+      await copyDocuments(module, Array.from(selectedDocIds), resolveTargetFolderId());
+      toast.success(`${selectedDocIds.size} document${selectedDocIds.size !== 1 ? "s" : ""} copied.`);
+      setSelectedDocIds(new Set());
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not copy documents.");
+    }
   }
 
   function confirmDelete() {
@@ -433,7 +449,7 @@ export function DocumentModuleModal({ module, open, onClose, title, accept }: Pr
                         doc={doc}
                         selected={selectedDocIds.has(doc.id)}
                         onToggleSelect={() => setSelectedDocIds((s) => toggleSelection(s, doc.id))}
-                        onDownloadAndView={() => downloadAndView(doc)}
+                        onDownloadAndView={() => void handleDownloadAndView(doc)}
                       />
                     ))}
                   </div>

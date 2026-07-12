@@ -121,9 +121,14 @@ import {
   normalizeLaunchDateForStorage,
 } from "@/lib/launchDateFormat";
 
-// ─── Static unit roster for visibility layer (shared naming with INT) ─────────
+// ─── Unit display shape (names/locations from operational store SSOT) ───────
 
-type VisibilityUnit = (typeof INT_UNITS)[number];
+type VisibilityUnit = {
+  id: string;
+  code: string;
+  name: string;
+  location: string;
+};
 
 // GeoSatellite / GeoRegion / GEO_REGIONS / REGION_BEAMS / beam helpers — @/lib/visibilityMatrix (SSOT)
 
@@ -276,12 +281,12 @@ function VisibilityPage() {
     () =>
       visibleDbUnits.map((u: { id: string; code: string; name: string; description?: string | null }) => {
         const slug = resolveIntUnitSlug(u.id, u.code) ?? u.id;
-        const seed = INT_UNITS.find((s) => s.id === slug);
+        const display = unitDisplayFromRecord(u);
         return {
           id: slug,
-          code: seed?.code ?? u.code,
-          name: unitDisplayLabel(u),
-          location: unitDisplayLocation(u, seed?.location),
+          code: u.code,
+          name: display.name,
+          location: display.location,
         };
       }),
     [visibleDbUnits],

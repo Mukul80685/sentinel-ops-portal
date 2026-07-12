@@ -1,8 +1,8 @@
 /**
  * INT frequency actions — flags, audit trail, cross-module references (local/mock).
  */
-import { INT_UNITS } from "@/lib/intelRepository";
 import { hasIntelData, getUnitIntelName } from "@/lib/intelAnalysisData";
+import { INT_UNITS } from "@/lib/intelRepository";
 import { evaluateFrequencyAllocationEligibility } from "@/lib/intelIntegrity";
 import { computeBottleneckEngagement, fetchAllEngagements, buildAllocatedIds } from "@/lib/engagementEngine";
 
@@ -712,8 +712,8 @@ export async function getEligibleAllocationUnits(
     if (hasCapacity) {
       eligible.push({
         unitId: intelUnit.id,
-        code: intelUnit.code,
-        name: intelUnit.name,
+        code: db.code,
+        name: db.name,
         reason: `${visibility.reason} · Capacity ${100 - pct}%`,
         matchingBeams: visibility.matchingBeams,
         band: visibility.band,
