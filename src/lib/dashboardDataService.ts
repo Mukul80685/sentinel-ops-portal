@@ -23,6 +23,8 @@ import {
   listIntelMonitoringSatellites,
 } from "@/lib/intelLiveBridge";
 import type { IntelSatelliteReportRow } from "@/lib/intelAnalysisData";
+import { canonicalSatelliteKey, normalizeSatelliteName, resolveMatrixVisibility } from "@/lib/visibilityMatrix";
+import { beamNameToBand, polarizationToBand } from "@/lib/intelIntegrity";
 import { computeSatelliteAnalysis } from "@/lib/engagementEngine";
 import {
   getUnitScanHistory,
@@ -92,6 +94,22 @@ export type UnitActivitySnapshotData = {
   totalMonitoredSatellites: number;
 };
 
+export type DuplicateMonitoringUnitEntry = {
+  unitLabel: string;
+  bandPolarisation: string;
+  beams: string;
+  scanDate: string;
+};
+
+export type DuplicateMonitoringRow = {
+  satellite: string;
+  units: DuplicateMonitoringUnitEntry[];
+};
+
+export type DuplicateMonitoringSnapshot = {
+  rows: DuplicateMonitoringRow[];
+};
+
 export type OptimizationScoresSnapshot = {
   byUnitId: Map<string, UnitOptimizationData>;
   units: UnitOptimizationData[];
@@ -102,6 +120,7 @@ export type DashboardMetrics = {
   fleetState: OperationalFleetState | null;
   engagement: EngagementStatusSnapshot;
   activity: UnitActivitySnapshotData;
+  duplicateMonitoring: DuplicateMonitoringSnapshot;
   optimization: OptimizationScoresSnapshot;
 };
 
@@ -167,6 +186,12 @@ export function buildDashboardMetrics(input: DashboardSourceInput): DashboardMet
       engagements,
       intelRows,
     ),
+    duplicateMonitoring: buildDuplicateMonitoringSnapshot(
+      activityFleet,
+      equipment,
+      engagements,
+      intelRows,
+    ),
     optimization: buildOptimizationScores(
       optimizationFleet,
       equipment,
@@ -181,6 +206,7 @@ function emptyDashboardMetrics(): DashboardMetrics {
     fleetState: null,
     engagement: { units: [], totalActiveScans: 0, avgOccupancy: 0 },
     activity: { units: [], totalMonitoredSatellites: 0 },
+    duplicateMonitoring: { rows: [] },
     optimization: { byUnitId: new Map(), units: [], avgCompositeScore: 0 },
   };
 }
@@ -309,6 +335,130 @@ function intelReportRowsToActivitySats(rows: IntelSatelliteReportRow[]): UnitAct
       nonProductive,
     };
   });
+}
+
+function formatBandPolarisation(polarization: string): string {
+  const pol = polarization && polarization !== "—" ? polarization : "—";
+  if (pol === "—") return "—";
+  const band = pol.startsWith("C")
+    ? "C-band"
+    : pol.startsWith("KA")
+      ? "KA band"
+      : pol.startsWith("KU")
+        ? "KU band"
+        : "Extended C-band";
+  return `${band} · ${pol}`;
+}
+
+function formatScanStartDate(
+  reportTimestamp: string | null,
+  unitDbId: string,
+  satelliteName: string,
+  engagements: any[],
+): string {
+  const eng = engagements.find((e) => {
+    if (e.unit_id !== unitDbId) return false;
+    const name = e.satellites?.name as string | undefined;
+    if (!name) return false;
+    return (
+      normalizeSatelliteName(name) === normalizeSatelliteName(satelliteName) ||
+      canonicalSatelliteKey(name) === canonicalSatelliteKey(satelliteName)
+    );
+  });
+  const raw = reportTimestamp ?? eng?.observation_start ?? eng?.updated_at ?? null;
+  if (!raw) return "—";
+  try {
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return "—";
+    return d.toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  } catch {
+    return "—";
+  }
+}
+
+function formatVisibleBeamsForScan(
+  intUnitSlug: string | null,
+  satelliteName: string,
+  polarization: string,
+): string {
+  if (!intUnitSlug) return "—";
+  const snap = resolveMatrixVisibility(intUnitSlug, satelliteName);
+  if (!snap || snap.beamsVisibleToUnit.length === 0) return "—";
+
+  const scanBand = polarization && polarization !== "—" ? polarizationToBand(polarization) : "";
+  const matched = scanBand
+    ? snap.beamsVisibleToUnit.filter((beam) => {
+        const beamBand = beamNameToBand(beam);
+        return beamBand === scanBand || beam.toLowerCase().includes(scanBand.toLowerCase());
+      })
+    : snap.beamsVisibleToUnit;
+
+  const beams = matched.length > 0 ? matched : snap.beamsVisibleToUnit;
+  return beams.length > 0 ? beams.join(", ") : "—";
+}
+
+/** Satellites actively scanned by more than one unit — derived from INT Repository. */
+export function buildDuplicateMonitoringSnapshot(
+  fleetState: OperationalFleetState,
+  equipment: any[],
+  engagements: any[],
+  intelRows: any[],
+): DuplicateMonitoringSnapshot {
+  const bySatellite = new Map<
+    string,
+    { displayName: string; units: DuplicateMonitoringUnitEntry[] }
+  >();
+
+  for (const state of fleetState.units) {
+    if (!state.intUnitSlug) continue;
+
+    const intRows = listIntelMonitoringSatellites(
+      state.unitDbId,
+      state.unitCode,
+      engagements,
+      equipment,
+      intelRows,
+    );
+    if (intRows.length === 0) continue;
+
+    for (const row of intRows) {
+      const key = canonicalSatelliteKey(row.satelliteName) || normalizeSatelliteName(row.satelliteName);
+      const entry: DuplicateMonitoringUnitEntry = {
+        unitLabel: state.unitLabel,
+        bandPolarisation: formatBandPolarisation(row.polarization),
+        beams: formatVisibleBeamsForScan(state.intUnitSlug, row.satelliteName, row.polarization),
+        scanDate: formatScanStartDate(
+          row.reportTimestamp,
+          state.unitDbId,
+          row.satelliteName,
+          engagements,
+        ),
+      };
+
+      const existing = bySatellite.get(key);
+      if (existing) {
+        existing.units.push(entry);
+      } else {
+        bySatellite.set(key, { displayName: row.satelliteName, units: [entry] });
+      }
+    }
+  }
+
+  const rows: DuplicateMonitoringRow[] = [];
+  for (const { displayName, units } of bySatellite.values()) {
+    if (units.length < 2) continue;
+    rows.push({
+      satellite: displayName,
+      units: [...units].sort((a, b) => a.unitLabel.localeCompare(b.unitLabel)),
+    });
+  }
+
+  rows.sort((a, b) => a.satellite.localeCompare(b.satellite));
+  return { rows };
 }
 
 function buildActivityScanHistory(

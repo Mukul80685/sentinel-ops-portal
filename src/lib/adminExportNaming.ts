@@ -1,9 +1,10 @@
-/** Shared export filename prefixes for the four Administrator data modules. */
+/** Shared export filename prefixes for Administrator data modules. */
 export const ADMIN_EXPORT_PREFIX = {
   intel: "int_repo",
   priority: "Satl_Allo",
   visibility: "vis_matrix",
   inventory: "res_inv",
+  serviceability: "serv_state",
 } as const;
 
 export type AdminExportModule = keyof typeof ADMIN_EXPORT_PREFIX;

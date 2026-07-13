@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
 import { HomeNavIconBadge } from "@/components/home/HomeNavIcons";
 import { UnitAdvancedFeatures } from "@/components/UnitAdvancedFeatures";
+import { BackupRestore } from "@/components/BackupRestore";
 import { useModuleUnits } from "@/hooks/useModuleUnits";
 import { Button } from "@/components/ui/button";
 import {
@@ -264,6 +265,7 @@ export function ResourceInventoryHome() {
         {/* ── Advanced Features — shared across all modules ── */}
         <div className="shrink-0">
           <UnitAdvancedFeatures scope="inventory" />
+          <BackupRestore module="inventory" />
         </div>
       </div>
 

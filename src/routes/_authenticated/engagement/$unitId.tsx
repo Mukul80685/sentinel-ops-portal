@@ -5,10 +5,12 @@ import { AppShell } from "@/components/AppShell";
 import { Empty } from "@/components/Empty";
 import { getUnitById, listEquipmentForUnit, listEngagementsForUnit, listIntelRecordsForUnit, listSatellites } from "@/lib/queries";
 import {
+  getOperationalDataset,
   insertOperationalEngagement,
   removeOperationalEngagement,
   updateOperationalEngagement,
 } from "@/lib/operationalStore";
+import { canonicalSatelliteKey, normalizeSatelliteName } from "@/lib/visibilityMatrix";
 import { useCanEdit } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -56,6 +58,21 @@ import { toast } from "sonner";
 
 const DEMOD_TYPES = ["Narrowband", "Wideband", "DVB-S2", "DVB-S2X"] as const;
 
+function satelliteNamesMatch(a: string, b: string): boolean {
+  return (
+    normalizeSatelliteName(a) === normalizeSatelliteName(b) ||
+    canonicalSatelliteKey(a) === canonicalSatelliteKey(b)
+  );
+}
+
+function engagementKeyForSatelliteName(name: string): string {
+  return canonicalSatelliteKey(name) || normalizeSatelliteName(name);
+}
+
+function isSyntheticEngagementId(id: string): boolean {
+  return id.startsWith("intel-");
+}
+
 /** Parse comma-separated equipment ids embedded in engagement remarks (New Engagement only). */
 function parseRemarkIdList(remarks: string | null | undefined, key: string): string[] {
   if (!remarks) return [];
@@ -65,6 +82,42 @@ function parseRemarkIdList(remarks: string | null | undefined, key: string): str
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+function engagementRowRichness(r: any): number {
+  let score = 0;
+  if (r.antenna_id) score += 2;
+  if (r.demodulator_id) score += 2;
+  if (r.processing_server_id) score += 2;
+  if (r.remarks) {
+    score += parseRemarkIdList(r.remarks, "LNA_IDS").length;
+    score += parseRemarkIdList(r.remarks, "LNB_IDS").length;
+    score += parseRemarkIdList(r.remarks, "DEMOD_IDS").length;
+    score += parseRemarkIdList(r.remarks, "PROC_IDS").length;
+  }
+  return score;
+}
+
+function buildEngagementBySatelliteMap(enrichedRows: any[]): Map<string, any> {
+  const map = new Map<string, any>();
+  for (const r of enrichedRows) {
+    const name = r.satellites?.name as string | undefined;
+    if (!name) continue;
+    const key = engagementKeyForSatelliteName(name);
+    const existing = map.get(key);
+    if (!existing || engagementRowRichness(r) > engagementRowRichness(existing)) {
+      map.set(key, r);
+    }
+  }
+  return map;
+}
+
+function resolveSatelliteIdFromRow(row: any): string {
+  if (row.satellite_id) return row.satellite_id as string;
+  const displayName = row.satellites?.name as string | undefined;
+  if (!displayName) return "";
+  const match = getOperationalDataset().satellites.find((s) => satelliteNamesMatch(s.name, displayName));
+  return match?.id ?? "";
 }
 
 function equipmentIdsFromRow(
@@ -240,7 +293,7 @@ function parseEngagementFormFromRow(row: any): EngagementChainForm {
   const demodTypeMatch = row.remarks?.match(/DEMOD_TYPE:([\w-]+)/);
 
   return {
-    satellite_id: row.satellite_id ?? "",
+    satellite_id: resolveSatelliteIdFromRow(row),
     antenna_id: row.antenna_id ?? "",
     lna_ids: lnaIds.length ? lnaIds : legacyLna ? [legacyLna] : [],
     lnb_ids: lnbIds.length ? lnbIds : legacyLnb ? [legacyLnb] : [],
@@ -571,15 +624,12 @@ function EngagementUnit() {
   );
 
   const intelActiveRows = useMemo(() => {
-    const engBySatName = new Map<string, any>();
-    for (const r of enrichedRows) {
-      const name = r.satellites?.name as string | undefined;
-      if (name) engBySatName.set(name, r);
-    }
+    const engBySatellite = buildEngagementBySatelliteMap(enrichedRows);
 
     return attachEquipmentToEngagements(
       intelMonitoringRows.map((satRow) => {
-        const existing = engBySatName.get(satRow.satelliteName);
+        const satKey = engagementKeyForSatelliteName(satRow.satelliteName);
+        const existing = engBySatellite.get(satKey);
         if (existing) {
           return {
             ...existing,
@@ -588,7 +638,9 @@ function EngagementUnit() {
           };
         }
 
-        const assignment = capability.assignments.find((a) => a.name === satRow.satelliteName);
+        const assignment = capability.assignments.find((a) =>
+          satelliteNamesMatch(a.name, satRow.satelliteName),
+        );
         if (assignment?.engagement) {
           return {
             ...assignment.engagement,
@@ -653,20 +705,72 @@ function EngagementUnit() {
     return map;
   }, [capability.assignments]);
 
-  async function update(id: string, patch: any) {
-    if (!updateOperationalEngagement(id, patch)) {
-      return toast.error("Engagement not found.");
-    }
+  function invalidateEngagementQueries() {
     qc.invalidateQueries({ queryKey: ["eng", unitId] });
     qc.invalidateQueries({ queryKey: ENGAGEMENTS_ALL_KEY });
   }
+
+  async function saveEngagementRecord(row: any, patch: any): Promise<boolean> {
+    if (!isSyntheticEngagementId(row.id) && updateOperationalEngagement(row.id, patch)) {
+      invalidateEngagementQueries();
+      return true;
+    }
+
+    const sat = patch.satellite_id
+      ? getOperationalDataset().satellites.find((s) => s.id === patch.satellite_id)
+      : undefined;
+    const existingBySatellite = sat
+      ? rows.find((r) => {
+          const name = r.satellites?.name as string | undefined;
+          return name && satelliteNamesMatch(name, sat.name);
+        })
+      : undefined;
+
+    if (existingBySatellite && updateOperationalEngagement(existingBySatellite.id, patch)) {
+      invalidateEngagementQueries();
+      return true;
+    }
+
+    if (!isSyntheticEngagementId(row.id)) {
+      toast.error("Engagement not found.");
+      return false;
+    }
+
+    if (!patch.satellite_id) {
+      toast.error("Select a satellite before saving.");
+      return false;
+    }
+
+    const created = insertOperationalEngagement({
+      unit_id: unitId,
+      satellite_id: patch.satellite_id,
+      antenna_id: patch.antenna_id ?? null,
+      demodulator_id: patch.demodulator_id ?? null,
+      processing_server_id: patch.processing_server_id ?? null,
+      observation_start: patch.observation_start ?? null,
+      status:
+        row.status && ACTIVE_SCAN_STATUSES.has(row.status as string)
+          ? (row.status as string)
+          : "In Progress",
+      remarks: patch.remarks ?? null,
+    });
+    if (!created) {
+      toast.error("Could not save engagement for this satellite.");
+      return false;
+    }
+    invalidateEngagementQueries();
+    return true;
+  }
+
   async function remove(id: string) {
+    if (isSyntheticEngagementId(id)) {
+      return toast.error("No saved engagement to remove for this row.");
+    }
     if (!confirm("Remove engagement?")) return;
     if (!removeOperationalEngagement(id)) {
       return toast.error("Engagement not found.");
     }
-    qc.invalidateQueries({ queryKey: ["eng", unitId] });
-    qc.invalidateQueries({ queryKey: ENGAGEMENTS_ALL_KEY });
+    invalidateEngagementQueries();
   }
 
   const unitLabel = unit ? unitDisplayLabel(unit) : "Unit";
@@ -802,7 +906,7 @@ function EngagementUnit() {
                             row={r}
                             activeRows={rawInProgressRows}
                             equipment={equipmentRaw}
-                            onUpdate={update}
+                            onSave={saveEngagementRecord}
                             onRemove={remove}
                           />
                         )}
@@ -1022,7 +1126,7 @@ interface EditEngagementProps {
   row: any;
   activeRows: any[];
   equipment: any[];
-  onUpdate: (id: string, patch: any) => Promise<unknown>;
+  onSave: (row: any, patch: any) => Promise<boolean>;
   onRemove: (id: string) => Promise<unknown>;
 }
 
@@ -1030,7 +1134,7 @@ function EditEngagement({
   row,
   activeRows,
   equipment,
-  onUpdate,
+  onSave,
   onRemove,
 }: EditEngagementProps) {
   const [open, setOpen] = useState(false);
@@ -1106,7 +1210,7 @@ function EditEngagement({
       processorIds: form.processing_server_ids,
     });
 
-    await onUpdate(row.id, {
+    const saved = await onSave(row, {
       satellite_id: form.satellite_id,
       antenna_id: form.antenna_id || null,
       demodulator_id: form.demodulator_ids[0] ?? null,
@@ -1115,11 +1219,16 @@ function EditEngagement({
       status: row.status,
       remarks: remarks || null,
     });
+    if (!saved) return;
     toast.success("Engagement updated");
     setOpen(false);
   }
 
   async function handleDelete() {
+    if (isSyntheticEngagementId(row.id)) {
+      toast.error("No saved engagement to remove for this row.");
+      return;
+    }
     await onRemove(row.id);
     setOpen(false);
   }

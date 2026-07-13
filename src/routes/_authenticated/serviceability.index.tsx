@@ -8,6 +8,7 @@ import { listCategories, listAllEquipmentDetailed } from "@/lib/queries";
 import type { OpServiceability } from "@/lib/operationalDataset";
 import { unitDisplayLabel } from "@/lib/operationalDataset";
 import { UnitAdvancedFeatures } from "@/components/UnitAdvancedFeatures";
+import { BackupRestore } from "@/components/BackupRestore";
 import { useModuleUnits } from "@/hooks/useModuleUnits";
 import {
   insertFaultDetail,
@@ -333,6 +334,8 @@ function ServiceabilityPage() {
         stat={activeCatStat}
         onClose={() => setActiveCatStat(null)}
       />
+
+      <BackupRestore module="serviceability" />
     </AppShell>
   );
 }

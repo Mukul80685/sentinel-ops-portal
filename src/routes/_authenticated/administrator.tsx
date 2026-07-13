@@ -17,7 +17,10 @@ import { BackupRestore } from "@/components/BackupRestore";
 import type { ModuleSnapshotId } from "@/lib/moduleSnapshots/types";
 
 function isModuleSnapshotId(module: ControlCenterModuleId): module is ModuleSnapshotId {
-  return module === "intel" || module === "priority";
+  return (
+    module === "intel" ||
+    module === "priority"
+  );
 }
 
 export const Route = createFileRoute("/_authenticated/administrator")({

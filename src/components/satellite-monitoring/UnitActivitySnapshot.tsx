@@ -9,6 +9,7 @@ import { useDashboardData } from "@/hooks/useDashboardData";
 import { DASHBOARD_PANEL_LABELS, DASHBOARD_PANEL_PURPOSE } from "@/lib/dashboardLabels";
 
 import type { UnitActivityHistoryRow, UnitActivitySatRow } from "@/lib/operationalState";
+import type { DuplicateMonitoringRow } from "@/lib/dashboardDataService";
 
 import {
 
@@ -632,13 +633,92 @@ function UnitRow({
 
 
 
+function StackedCell({ lines }: { lines: string[] }) {
+  if (lines.length === 0 || (lines.length === 1 && lines[0] === "—")) {
+    return <span className="mono text-[11px] text-foreground">—</span>;
+  }
+  return (
+    <div className="flex flex-col gap-1">
+      {lines.map((line, i) => (
+        <span key={`${line}-${i}`} className="mono text-[11px] text-foreground leading-snug">
+          {line || "—"}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+
+
+function DuplicateMonitoringTable({ rows }: { rows: DuplicateMonitoringRow[] }) {
+  if (rows.length === 0) {
+    return (
+      <div className="px-4 py-8 text-center mono text-[11px] text-foreground uppercase tracking-wider font-medium">
+        No duplicate monitoring efforts detected across units
+      </div>
+    );
+  }
+
+  return (
+    <table className="w-full">
+      <thead>
+        <tr className="border-b border-border bg-secondary/25">
+          <th className="px-3 py-2.5 text-left mono text-[10px] font-bold uppercase tracking-wider text-foreground w-8">
+            #
+          </th>
+          <th className="px-3 py-2.5 text-left mono text-[10px] font-bold uppercase tracking-wider text-foreground">
+            Satellite
+          </th>
+          <th className="px-3 py-2.5 text-left mono text-[10px] font-bold uppercase tracking-wider text-foreground">
+            Units
+          </th>
+          <th className="px-3 py-2.5 text-left mono text-[10px] font-bold uppercase tracking-wider text-foreground">
+            Band &amp; Polarisation
+          </th>
+          <th className="px-3 py-2.5 text-left mono text-[10px] font-bold uppercase tracking-wider text-foreground">
+            Beam
+          </th>
+          <th className="px-3 py-2.5 text-left mono text-[10px] font-bold uppercase tracking-wider text-foreground">
+            Scan Date
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row, idx) => (
+          <tr key={row.satellite} className="border-b border-border/50 hover:bg-secondary/20 transition-colors align-top">
+            <td className="px-3 py-3 mono text-[11px] font-semibold text-foreground w-8">{idx + 1}</td>
+            <td className="px-3 py-3 mono text-[12px] font-semibold text-foreground whitespace-nowrap">
+              {row.satellite}
+            </td>
+            <td className="px-3 py-3">
+              <StackedCell lines={row.units.map((u) => u.unitLabel)} />
+            </td>
+            <td className="px-3 py-3">
+              <StackedCell lines={row.units.map((u) => u.bandPolarisation)} />
+            </td>
+            <td className="px-3 py-3 max-w-xs">
+              <StackedCell lines={row.units.map((u) => u.beams)} />
+            </td>
+            <td className="px-3 py-3 whitespace-nowrap">
+              <StackedCell lines={row.units.map((u) => u.scanDate)} />
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+
+
 /** Live unit activity — derived from INT Repository. */
 
 export function UnitActivitySnapshot() {
 
   const [expanded, setExpanded] = useState(false);
+  const [view, setView] = useState<"active" | "duplicates">("active");
 
-  const { activity, isLoading } = useDashboardData();
+  const { activity, duplicateMonitoring, isLoading } = useDashboardData();
 
 
 
@@ -697,11 +777,35 @@ export function UnitActivitySnapshot() {
         </div>
 
         <span className="mono text-[10px] uppercase tracking-[0.15em] text-foreground font-semibold">
-
-          {unitRows.length} Units
-
+          {view === "active"
+            ? `${unitRows.length} Units`
+            : `${duplicateMonitoring.rows.length} Duplicate${duplicateMonitoring.rows.length !== 1 ? "s" : ""}`}
         </span>
+      </div>
 
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-secondary/10">
+        <button
+          type="button"
+          onClick={() => setView("active")}
+          className={`mono text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 rounded-sm border transition-colors ${
+            view === "active"
+              ? "border-primary bg-primary/10 text-primary"
+              : "border-border text-foreground/70 hover:bg-secondary/40"
+          }`}
+        >
+          Unit Activity
+        </button>
+        <button
+          type="button"
+          onClick={() => setView("duplicates")}
+          className={`mono text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 rounded-sm border transition-colors ${
+            view === "duplicates"
+              ? "border-amber-500 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+              : "border-border text-foreground/70 hover:bg-secondary/40"
+          }`}
+        >
+          Duplicate Efforts
+        </button>
       </div>
 
 
@@ -715,6 +819,10 @@ export function UnitActivitySnapshot() {
             Loading operational state…
 
           </div>
+
+        ) : view === "duplicates" ? (
+
+          <DuplicateMonitoringTable rows={duplicateMonitoring.rows} />
 
         ) : unitRows.length === 0 ? (
 
@@ -826,7 +934,7 @@ export function UnitActivitySnapshot() {
 
 
 
-      {unitRows.length > 4 && (
+      {view === "active" && unitRows.length > 4 && (
 
         <button
 

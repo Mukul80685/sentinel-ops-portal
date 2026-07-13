@@ -83,12 +83,10 @@ export function BackupRestore({ module }: { module: ModuleSnapshotId }) {
       const unitCount = Array.isArray(snapshot.operational.units)
         ? snapshot.operational.units.length
         : 0;
-      const intelCount = Array.isArray(snapshot.operational.intelRows)
-        ? snapshot.operational.intelRows.length
-        : 0;
+      const storageTables = Object.keys(snapshot.storage).length;
 
       toast.success(
-        `${adapter.title} snapshot exported (${unitCount} unit${unitCount !== 1 ? "s" : ""}, ${intelCount} intel record${intelCount !== 1 ? "s" : ""}).`,
+        `${adapter.title} snapshot exported (${unitCount} unit${unitCount !== 1 ? "s" : ""}, ${storageTables} data table${storageTables !== 1 ? "s" : ""}).`,
       );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to export snapshot.");

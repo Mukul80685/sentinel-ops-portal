@@ -106,12 +106,15 @@
     "appId": "com.ssacc.app",
     "productName": "SSACC",
     "files": [
-      "dist/**/*",
-      "node_modules/**/*",
+      "dist/client/**/*",
+      "dist/server/**/*",
       "electron-main.cjs",
       "preload.js",
       "package.json"
     ],
+    "extraMetadata": {
+      "dependencies": {}
+    },
     "win": {
       "target": [
         {

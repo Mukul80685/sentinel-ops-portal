@@ -105,6 +105,7 @@ import { mergeRegionsWithOverlay, useVisibleSatelliteCounts } from "@/lib/satell
 import { unitDisplayFromRecord } from "@/lib/unitDisplay";
 import { resolveIntUnitSlug } from "@/lib/operationalSync";
 import { UnitAdvancedFeatures } from "@/components/UnitAdvancedFeatures";
+import { BackupRestore } from "@/components/BackupRestore";
 import { RegionFlagIcon } from "@/components/visibility/RegionFlagIcon";
 import { useModuleUnits } from "@/hooks/useModuleUnits";
 import {
@@ -631,6 +632,8 @@ function VisibilityPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      <BackupRestore module="visibility" />
     </AppShell>
   );
 }
