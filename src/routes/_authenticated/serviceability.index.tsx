@@ -81,16 +81,23 @@ function pctColor(pct: number): string {
   return "#ef4444";
 }
 
-// ─── Category icon map ─────────────────────────────────────────────────────────
+// ─── Category icon map (aligned with Resource Inventory tiles) ───────────────
+
+const CATEGORY_ICONS: Record<string, typeof SatelliteIcon> = {
+  Antenna: SatelliteIcon,
+  LNA: Zap,
+  LNB: Radio,
+  Demodulators: Cpu,
+  "Processing Servers": Server,
+  "Other Resources": Package,
+};
+
+function categoryIcon(name: string) {
+  return CATEGORY_ICONS[name] ?? Package;
+}
 
 function catIcon(name: string) {
-  const n = name.toLowerCase();
-  if (n.includes("antenna"))    return SatelliteIcon;
-  if (n.includes("lna"))        return Zap;
-  if (n.includes("lnb"))        return Radio;
-  if (n.includes("demod"))      return Cpu;
-  if (n.includes("server"))     return Server;
-  return Package;
+  return categoryIcon(name);
 }
 
 // ─── Readiness donut SVG ───────────────────────────────────────────────────────
@@ -220,6 +227,7 @@ function ServiceabilityPage() {
         <UnitDetail
           unit={selectedUnit}
           equipment={unitEquipment}
+          categories={categories}
           canEdit={canEdit}
           onBack={() => setSelectedUnitId(null)}
           onRefresh={() => qc.invalidateQueries({ queryKey: ["equipment-all"] })}
@@ -345,23 +353,37 @@ function ServiceabilityPage() {
 function UnitDetail({
   unit,
   equipment,
+  categories,
   canEdit,
   onBack,
   onRefresh,
 }: {
   unit: any;
   equipment: any[];
+  categories: { id: string; name: string; sort_order: number }[];
   canEdit: boolean;
   onBack: () => void;
   onRefresh: () => void;
 }) {
   const [statusChangeItem, setStatusChangeItem] = useState<any | null>(null);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
 
-  const byCategory: Record<string, any[]> = {};
-  for (const e of equipment) {
-    const catName = e.category?.name ?? "Uncategorised";
-    (byCategory[catName] ??= []).push(e);
-  }
+  useEffect(() => {
+    setSelectedCategoryId(null);
+  }, [unit?.id]);
+
+  const categoryCounts = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const e of equipment) {
+      map[e.category_id] = (map[e.category_id] ?? 0) + 1;
+    }
+    return map;
+  }, [equipment]);
+
+  const selectedCategory = categories.find((c) => c.id === selectedCategoryId) ?? null;
+  const categoryEquipment = selectedCategoryId
+    ? equipment.filter((e) => e.category_id === selectedCategoryId)
+    : [];
 
   const faultCount = equipment.filter((e) => isFaulty(e.serviceability)).length;
 
@@ -385,6 +407,14 @@ function UnitDetail({
     );
   }
 
+  function handleBack() {
+    if (selectedCategoryId) {
+      setSelectedCategoryId(null);
+      return;
+    }
+    onBack();
+  }
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -393,20 +423,28 @@ function UnitDetail({
           type="button"
           variant="outline"
           size="sm"
-          onClick={onBack}
+          onClick={handleBack}
           className="mono text-[11px] h-8 uppercase tracking-wider"
         >
-          <ArrowLeft className="h-3.5 w-3.5 mr-1" /> All Units
+          <ArrowLeft className="h-3.5 w-3.5 mr-1" />
+          {selectedCategoryId ? "Equipment Categories" : "All Units"}
         </Button>
         <div>
           <div className="mono text-sm font-bold uppercase tracking-widest text-foreground">
-            {unit ? unitDisplayLabel(unit) : "Unit"} — Serviceability Detail
+            {unit ? unitDisplayLabel(unit) : "Unit"}
+            {selectedCategory ? ` — ${selectedCategory.name}` : " — Serviceability Detail"}
           </div>
           <div className="mono text-[10px] text-muted-foreground">
-            {equipment.length} items ·{" "}
-            <span className={faultCount > 0 ? "text-destructive" : "text-emerald-600"}>
-              {faultCount} fault{faultCount !== 1 ? "s" : ""}
-            </span>
+            {selectedCategoryId
+              ? `${categoryEquipment.length} item${categoryEquipment.length !== 1 ? "s" : ""}`
+              : (
+                <>
+                  {equipment.length} items ·{" "}
+                  <span className={faultCount > 0 ? "text-destructive" : "text-emerald-600"}>
+                    {faultCount} fault{faultCount !== 1 ? "s" : ""}
+                  </span>
+                </>
+              )}
           </div>
         </div>
       </div>
@@ -416,52 +454,85 @@ function UnitDetail({
           title="No equipment registered for this unit"
           hint="Add equipment from the Resource Inventory module."
         />
-      ) : (
-        <div className="space-y-3">
-          {Object.entries(byCategory).map(([catName, items]) => (
-            <div key={catName} className="panel overflow-hidden">
-              {/* Category header */}
-              <div className="px-4 py-2 border-b border-border bg-secondary/30 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  {(() => { const Icon = catIcon(catName); return <Icon className="h-3.5 w-3.5 text-muted-foreground" />; })()}
-                  <span className="mono text-xs font-bold uppercase tracking-wide">{catName}</span>
-                </div>
-                <span className="mono text-[10px] text-muted-foreground">{items.length} items</span>
-              </div>
-
-              {/* Equipment rows: Name | Status | Change Status */}
-              <ul className="divide-y divide-border">
-                {items.map((item) => (
-                  <li key={item.id} className="flex items-center gap-3 px-4 py-2">
-                    {/* Status dot */}
-                    <StatusDot s={item.serviceability} size={8} />
-
-                    {/* Equipment name (exact, from Resource Inventory) */}
-                    <div className="min-w-0 flex-1">
-                      <div className="mono text-xs font-semibold truncate text-foreground">
-                        {item.name || "—"}
+      ) : selectedCategoryId && selectedCategory ? (
+        categoryEquipment.length === 0 ? (
+          <Empty title={`No ${selectedCategory.name} registered for this unit`} />
+        ) : (
+          <div className="panel overflow-hidden">
+            <table className="w-full mono text-xs">
+              <thead className="bg-secondary/30 border-b border-border">
+                <tr>
+                  <th className="text-left px-4 py-2 text-[9px] uppercase tracking-wider font-bold text-foreground">
+                    {selectedCategory.name}
+                  </th>
+                  <th className="text-left px-4 py-2 text-[9px] uppercase tracking-wider font-bold text-foreground w-44">
+                    Serviceability
+                  </th>
+                  <th className="text-left px-4 py-2 text-[9px] uppercase tracking-wider font-bold text-foreground w-36">
+                    Change Status
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {categoryEquipment.map((item) => (
+                  <tr key={item.id} className="hover:bg-secondary/10">
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <StatusDot s={item.serviceability} size={8} />
+                        <span className="font-semibold truncate text-foreground">{item.name || "—"}</span>
                       </div>
-                      <div className="mt-0.5">{statusBadge(item.serviceability)}</div>
-                    </div>
-
-                    {/* Change Status — only when editing is permitted */}
-                    {canEdit && (
-                      <button
-                        type="button"
-                        onClick={() => setStatusChangeItem(item)}
-                        className="shrink-0 h-7 px-2 mono text-[10px] uppercase tracking-wider
-                                   border border-border rounded-sm flex items-center gap-1
-                                   hover:bg-secondary hover:text-secondary-foreground transition-colors text-muted-foreground"
-                        title="Change serviceability status"
-                      >
-                        <RefreshCw className="h-3 w-3" /> Change Status
-                      </button>
-                    )}
-                  </li>
+                    </td>
+                    <td className="px-4 py-2.5">{statusBadge(item.serviceability)}</td>
+                    <td className="px-4 py-2.5">
+                      {canEdit ? (
+                        <button
+                          type="button"
+                          onClick={() => setStatusChangeItem(item)}
+                          className="h-7 px-2 mono text-[10px] uppercase tracking-wider
+                                     border border-border rounded-sm inline-flex items-center gap-1
+                                     hover:bg-secondary hover:text-secondary-foreground transition-colors text-muted-foreground"
+                          title="Change serviceability status"
+                        >
+                          <RefreshCw className="h-3 w-3" /> Change Status
+                        </button>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </td>
+                  </tr>
                 ))}
-              </ul>
-            </div>
-          ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      ) : (
+        <div className="grid grid-cols-3 gap-4">
+          {categories.map((cat) => {
+            const Icon = categoryIcon(cat.name);
+            const count = categoryCounts[cat.id] ?? 0;
+            return (
+              <button
+                key={cat.id}
+                type="button"
+                onClick={() => setSelectedCategoryId(cat.id)}
+                className="tile flex flex-col items-center justify-center gap-3 aspect-square
+                           hover:bg-secondary/60 hover:text-secondary-foreground transition-colors
+                           focus:outline-none focus:ring-1 focus:ring-primary"
+              >
+                <div className="h-14 w-14 grid place-items-center rounded-sm border border-border bg-secondary text-secondary-foreground">
+                  <Icon className="h-7 w-7" />
+                </div>
+                <div className="text-center space-y-0.5">
+                  <div className="mono text-xs font-bold uppercase tracking-tight leading-tight">
+                    {cat.name}
+                  </div>
+                  <div className="mono text-[11px] text-muted-foreground">
+                    {count} item{count !== 1 ? "s" : ""}
+                  </div>
+                </div>
+              </button>
+            );
+          })}
         </div>
       )}
 

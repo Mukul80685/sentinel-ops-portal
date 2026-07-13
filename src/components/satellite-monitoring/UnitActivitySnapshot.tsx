@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 
-import { Activity, ChevronDown, ChevronUp, Pencil } from "lucide-react";
+import { Activity, ChevronDown, ChevronUp, Pencil, Trash2 } from "lucide-react";
 
 import { toast } from "sonner";
 
@@ -12,16 +12,14 @@ import type { UnitActivityHistoryRow, UnitActivitySatRow } from "@/lib/operation
 import type { DuplicateMonitoringRow } from "@/lib/dashboardDataService";
 
 import {
-
+  clearUnitScanHistory,
   getUnitScanHistory,
-
   setUnitScanHistory,
-
   type StoredScanHistoryEntry,
-
 } from "@/lib/scanHistoryStore";
 
 import { notifyOperationalDerivedRefresh } from "@/lib/operationalRefresh";
+import { clearUnitActivityMonitoring } from "@/lib/unitActivityActions";
 
 import { Button } from "@/components/ui/button";
 
@@ -180,11 +178,12 @@ function ScanHistoryCell({
       }));
 
     if (entries.length === 0) {
-
-      toast.error("Enter at least one satellite name.");
-
+      clearUnitScanHistory(unitDbId);
+      notifyOperationalDerivedRefresh();
+      toast.success(`Scan history cleared for ${unitLabel}.`);
+      setEditing(false);
+      setDraftRows([]);
       return;
-
     }
 
     setUnitScanHistory(unitDbId, entries);
@@ -399,6 +398,8 @@ function UnitRow({
 
   unitDbId,
 
+  unitCode,
+
   unit,
 
   data,
@@ -408,6 +409,8 @@ function UnitRow({
 }: {
 
   unitDbId: string;
+
+  unitCode: string;
 
   unit: string;
 
@@ -420,6 +423,28 @@ function UnitRow({
   const [selSat, setSelSat] = useState(0);
 
   const [activeDrop, setActiveDrop] = useState(false);
+
+
+
+  function handleDeleteActivity() {
+
+    const satNames = data.activeSats.map((s) => s.satellite);
+
+    const message =
+
+      satNames.length > 0
+
+        ? `Remove activity for ${unit}? Active satellites will be suppressed and scan history cleared. Optimization scores will update.`
+
+        : `Clear scan history for ${unit}? Optimization scores will update.`;
+
+    if (!confirm(message)) return;
+
+    clearUnitActivityMonitoring(unitDbId, unitCode, satNames);
+
+    toast.success(`Activity cleared for ${unit}.`);
+
+  }
 
 
 
@@ -472,6 +497,30 @@ function UnitRow({
         </td>
 
         <ScanHistoryCell unitDbId={unitDbId} unitLabel={unit} history={data.history} />
+
+        <td className="px-2 py-3 align-top">
+
+          <Button
+
+            type="button"
+
+            variant="ghost"
+
+            size="sm"
+
+            className="h-7 px-2 text-destructive hover:text-destructive"
+
+            onClick={handleDeleteActivity}
+
+            title="Clear unit activity"
+
+          >
+
+            <Trash2 className="h-3 w-3" />
+
+          </Button>
+
+        </td>
 
       </tr>
 
@@ -624,6 +673,30 @@ function UnitRow({
       </td>
 
       <ScanHistoryCell unitDbId={unitDbId} unitLabel={unit} history={data.history} />
+
+      <td className="px-2 py-3 align-top">
+
+        <Button
+
+          type="button"
+
+          variant="ghost"
+
+          size="sm"
+
+          className="h-7 px-2 text-destructive hover:text-destructive"
+
+          onClick={handleDeleteActivity}
+
+          title="Clear unit activity"
+
+        >
+
+          <Trash2 className="h-3 w-3" />
+
+        </Button>
+
+      </td>
 
     </tr>
 
@@ -900,6 +973,12 @@ export function UnitActivitySnapshot() {
 
                 </th>
 
+                <th className="px-3 py-2.5 text-left mono text-[10px] font-bold uppercase tracking-wider text-foreground w-16">
+
+                  Actions
+
+                </th>
+
               </tr>
 
             </thead>
@@ -913,6 +992,8 @@ export function UnitActivitySnapshot() {
                   key={entry.unitDbId}
 
                   unitDbId={entry.unitDbId}
+
+                  unitCode={entry.unitCode}
 
                   unit={entry.unitLabel}
 

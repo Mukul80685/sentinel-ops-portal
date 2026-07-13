@@ -42,10 +42,24 @@ function parseEquipmentIdFromRemarks(remarks: string | null | undefined, key: st
   return m?.[1]?.trim() || null;
 }
 
-/** Include LNA/LNB equipment ids stored in engagement remarks. */
+function parseRemarkIdList(remarks: string | null | undefined, key: string): string[] {
+  if (!remarks) return [];
+  const m = remarks.match(new RegExp(`${key}:([^|]+)`));
+  if (!m) return [];
+  return m[1]
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** Include all equipment ids stored in engagement remarks (multi-select lists + legacy singles). */
 export function buildInventoryAllocatedIds(activeEngagements: any[]): Set<string> {
   const ids = buildAllocatedIds(activeEngagements);
   for (const e of activeEngagements) {
+    for (const id of parseRemarkIdList(e.remarks, "LNA_IDS")) ids.add(id);
+    for (const id of parseRemarkIdList(e.remarks, "LNB_IDS")) ids.add(id);
+    for (const id of parseRemarkIdList(e.remarks, "DEMOD_IDS")) ids.add(id);
+    for (const id of parseRemarkIdList(e.remarks, "PROC_IDS")) ids.add(id);
     const lnaId = parseEquipmentIdFromRemarks(e.remarks, "LNA_ID");
     const lnbId = parseEquipmentIdFromRemarks(e.remarks, "LNB_ID");
     if (lnaId) ids.add(lnaId);
