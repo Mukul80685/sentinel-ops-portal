@@ -33,6 +33,7 @@ import {
   restoreModuleSnapshot,
   validateModuleSnapshot,
 } from "@/lib/moduleSnapshots";
+import { finalizeSnapshotRestore, flushElectronStorage } from "@/lib/electronPersist";
 
 type PendingRestore = {
   package: ModuleSnapshotPackage;
@@ -88,6 +89,7 @@ export function BackupRestore({ module }: { module: ModuleSnapshotId }) {
       toast.success(
         `${adapter.title} snapshot exported (${unitCount} unit${unitCount !== 1 ? "s" : ""}, ${storageTables} data table${storageTables !== 1 ? "s" : ""}).`,
       );
+      void flushElectronStorage();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to export snapshot.");
     }
@@ -125,21 +127,25 @@ export function BackupRestore({ module }: { module: ModuleSnapshotId }) {
   }
 
   function confirmRestore() {
-    if (!pendingRestore) return;
+    const pending = pendingRestore;
+    if (!pending) return;
 
-    try {
-      restoreModuleSnapshot(module, pendingRestore.package);
-      const timestampLabel = formatSnapshotTimestamp(pendingRestore.package.exported_at);
-      setPendingRestore(null);
-      setRestoreNotice(
-        `${adapter.title} restored to snapshot captured on:\n\n${timestampLabel}`,
-      );
-      window.setTimeout(() => {
-        window.location.reload();
-      }, 3000);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to restore snapshot.");
-    }
+    void (async () => {
+      try {
+        restoreModuleSnapshot(module, pending.package);
+        const timestampLabel = formatSnapshotTimestamp(pending.package.exported_at);
+        setPendingRestore(null);
+        setRestoreNotice(
+          `${adapter.title} restored to snapshot captured on:\n\n${timestampLabel}`,
+        );
+        await finalizeSnapshotRestore();
+        window.setTimeout(() => {
+          window.location.reload();
+        }, 1500);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Failed to restore snapshot.");
+      }
+    })();
   }
 
   return (

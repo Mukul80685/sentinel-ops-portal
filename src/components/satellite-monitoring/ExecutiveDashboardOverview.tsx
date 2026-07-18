@@ -26,11 +26,18 @@ const TILES: TileConfig[] = [
 ];
 
 export function ExecutiveDashboardOverview() {
-  const metrics = useExecutiveDashboardMetrics();
+  // const metrics = useExecutiveDashboardMetrics();
 
   return (
-    <div className="satellite-monitoring-dashboard flex-1 min-h-0 px-2 sm:px-4 pb-4">
-      <div className="h-full min-h-0 max-w-[1400px] mx-auto grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-5 lg:gap-6 auto-rows-fr">
+    <div className="satellite-monitoring-dashboard flex flex-col flex-1 min-h-0 h-full w-full overflow-hidden">
+      <div className="flex-1 min-h-0 h-full w-full flex items-center justify-center overflow-hidden">
+        <img
+          src="/map.jpeg"
+          alt=""
+          className="w-full h-full object-fill object-center"
+        />
+      </div>
+      {/* <div className="h-full min-h-0 max-w-[1400px] mx-auto grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-5 lg:gap-6 auto-rows-fr">
         {TILES.map((tile) => (
           <ExecutiveTile
             key={tile.panel}
@@ -38,7 +45,7 @@ export function ExecutiveDashboardOverview() {
             metrics={metrics}
           />
         ))}
-      </div>
+      </div> */}
     </div>
   );
 }

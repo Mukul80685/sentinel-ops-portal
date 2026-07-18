@@ -1,4 +1,4 @@
-import { Component, type ReactNode, useMemo, useState, useEffect } from "react";
+import { Component, type ReactNode, useMemo, useState, useEffect, useCallback } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
@@ -6,6 +6,8 @@ import { Empty } from "@/components/Empty";
 import { getUnitById, listEquipmentForUnit, listEngagementsForUnit, listIntelRecordsForUnit } from "@/lib/queries";
 import {
   getOperationalDataset,
+  getOperationalEngagements,
+  ensureOperationalSatelliteByName,
   insertOperationalEngagement,
   removeOperationalEngagement,
   updateOperationalEngagement,
@@ -41,24 +43,28 @@ import { unitDisplayLabel, unitDisplayLocation } from "@/lib/operationalDataset"
 import { DASHBOARD_PANEL_LABELS, dashboardPanelBackLink } from "@/lib/dashboardLabels";
 import { loadRingPalette, useEngagementRingVisuals } from "@/lib/engagementRingVisuals";
 import {
-  averageResourceEngagementPct,
+  buildIntelMonitoringEngagementRows,
   buildResourceRingStats,
+  collectEngagementAllocatedIds,
+  collectFormAllocatedIds,
+  averageResourceEngagementPct,
   resolveLnaLnbFromRow,
   parseEquipmentIdFromRemarks,
 } from "@/lib/resourceEngagementStats";
+import {
+  filterEngagementVisibleIntelRows,
+  hideEngagementTableRow,
+  restoreEngagementTableRow,
+  ENGAGEMENT_TABLE_HIDDEN_EVENT,
+} from "@/lib/engagementTableStore";
+import { notifyOperationalDerivedRefresh } from "@/lib/operationalRefresh";
 import {
   getPlannedSatellites,
   newPlannedSatelliteRow,
   setPlannedSatellites,
   type PlannedSatelliteRow,
 } from "@/lib/plannedSatelliteStore";
-import { notifyOperationalDerivedRefresh } from "@/lib/operationalRefresh";
-import {
-  allocationSlotForUnit,
-  getAllocationsForUnit,
-  PRIORITY_ALLOCATION_EVENT,
-} from "@/lib/priorityAllocation";
-import { AlertTriangle, Pencil, Plus, Trash2 } from "lucide-react";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 const DEMOD_BAND_OPTIONS = ["Narrowband", "Wideband", "DVB"] as const;
@@ -76,28 +82,6 @@ function demodBandFromEquipment(e: { name?: string; specifications?: string }): 
   return null;
 }
 
-type EngagementSatelliteOption = { id: string; name: string };
-
-/** Satellites allotted to this unit in Satellite Priority & Allocation (Administrator). */
-function listPrioritySatellitesForUnit(unit: { id: string; code: string }): EngagementSatelliteOption[] {
-  const slot = allocationSlotForUnit(unit);
-  const allocations = getAllocationsForUnit(slot);
-  const operationalSats = getOperationalDataset().satellites;
-  const options: EngagementSatelliteOption[] = [];
-  const seen = new Set<string>();
-
-  for (const row of allocations) {
-    const opSat = operationalSats.find(
-      (s) => s.id === row.satelliteId || satelliteNamesMatch(s.name, row.satelliteName),
-    );
-    if (!opSat || seen.has(opSat.id)) continue;
-    seen.add(opSat.id);
-    options.push({ id: opSat.id, name: row.satelliteName });
-  }
-
-  return options.sort((a, b) => a.name.localeCompare(b.name));
-}
-
 function satelliteNamesMatch(a: string, b: string): boolean {
   return (
     normalizeSatelliteName(a) === normalizeSatelliteName(b) ||
@@ -105,15 +89,11 @@ function satelliteNamesMatch(a: string, b: string): boolean {
   );
 }
 
-function engagementKeyForSatelliteName(name: string): string {
-  return canonicalSatelliteKey(name) || normalizeSatelliteName(name);
-}
-
 function isSyntheticEngagementId(id: string): boolean {
   return id.startsWith("intel-");
 }
 
-/** Parse comma-separated equipment ids embedded in engagement remarks (New Engagement only). */
+/** Parse comma-separated equipment ids embedded in engagement remarks. */
 function parseRemarkIdList(remarks: string | null | undefined, key: string): string[] {
   if (!remarks) return [];
   const m = remarks.match(new RegExp(`${key}:([^|]+)`));
@@ -122,34 +102,6 @@ function parseRemarkIdList(remarks: string | null | undefined, key: string): str
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-}
-
-function engagementRowRichness(r: any): number {
-  let score = 0;
-  if (r.antenna_id) score += 2;
-  if (r.demodulator_id) score += 2;
-  if (r.processing_server_id) score += 2;
-  if (r.remarks) {
-    score += parseRemarkIdList(r.remarks, "LNA_IDS").length;
-    score += parseRemarkIdList(r.remarks, "LNB_IDS").length;
-    score += parseRemarkIdList(r.remarks, "DEMOD_IDS").length;
-    score += parseRemarkIdList(r.remarks, "PROC_IDS").length;
-  }
-  return score;
-}
-
-function buildEngagementBySatelliteMap(enrichedRows: any[]): Map<string, any> {
-  const map = new Map<string, any>();
-  for (const r of enrichedRows) {
-    const name = r.satellites?.name as string | undefined;
-    if (!name) continue;
-    const key = engagementKeyForSatelliteName(name);
-    const existing = map.get(key);
-    if (!existing || engagementRowRichness(r) > engagementRowRichness(existing)) {
-      map.set(key, r);
-    }
-  }
-  return map;
 }
 
 function resolveSatelliteIdFromRow(row: any): string {
@@ -226,40 +178,34 @@ function ChainEquipmentCell({ value }: { value: string }) {
   );
 }
 
+function isOtherResourcesEquipment(e: { category?: { name?: string } | null }): boolean {
+  return (e.category?.name ?? "").trim().toLowerCase() === "other resources";
+}
+
+function parseOtherResourceIdsFromRemarks(remarks: string | null | undefined): string[] {
+  return parseRemarkIdList(remarks, "OTHER_RESOURCE_IDS");
+}
+
+function otherResourceIdsFromRow(row: any, equipment: any[] = []): string[] {
+  const fromIds = parseOtherResourceIdsFromRemarks(row.remarks);
+  if (fromIds.length) return fromIds;
+  const legacyNames = parseOtherResourcesFromRemarks(row.remarks);
+  if (!legacyNames) return [];
+  const byName = new Map(equipment.map((e) => [e.name.trim().toLowerCase(), e.id as string]));
+  return legacyNames
+    .split(",")
+    .map((part) => byName.get(part.trim().toLowerCase()))
+    .filter(Boolean) as string[];
+}
+
+function otherResourceNamesFromRow(row: any, equipment: any[]): string {
+  return equipmentNamesFromIds(otherResourceIdsFromRow(row, equipment), equipment);
+}
+
 function parseOtherResourcesFromRemarks(remarks: string | null | undefined): string {
   if (!remarks) return "";
   const m = remarks.match(/OTHER_RESOURCES:([^|]+)/);
   return m?.[1]?.trim() ?? "";
-}
-
-function collectEngagementAllocatedIds(activeRows: any[], equipment: any[] = []): Set<string> {
-  const ids = new Set<string>();
-  const byName = new Map(equipment.map((e) => [e.name.trim().toLowerCase(), e.id as string]));
-
-  for (const r of activeRows) {
-    if (r.antenna_id) ids.add(r.antenna_id);
-    if (r.demodulator_id) ids.add(r.demodulator_id);
-    if (r.processing_server_id) ids.add(r.processing_server_id);
-    const lna = parseEquipmentIdFromRemarks(r.remarks, "LNA_ID");
-    const lnb = parseEquipmentIdFromRemarks(r.remarks, "LNB_ID");
-    if (lna) ids.add(lna);
-    if (lnb) ids.add(lnb);
-    for (const id of parseRemarkIdList(r.remarks, "LNA_IDS")) ids.add(id);
-    for (const id of parseRemarkIdList(r.remarks, "LNB_IDS")) ids.add(id);
-    for (const id of parseRemarkIdList(r.remarks, "DEMOD_IDS")) ids.add(id);
-    for (const id of parseRemarkIdList(r.remarks, "PROC_IDS")) ids.add(id);
-
-    const otherText = parseOtherResourcesFromRemarks(r.remarks);
-    if (otherText) {
-      for (const part of otherText.split(",")) {
-        const name = part.trim().toLowerCase();
-        if (!name) continue;
-        const eqId = byName.get(name);
-        if (eqId) ids.add(eqId);
-      }
-    }
-  }
-  return ids;
 }
 
 function buildChainEngagementRemarks(input: {
@@ -270,7 +216,8 @@ function buildChainEngagementRemarks(input: {
   demodBands: DemodBand[];
   demodIds: string[];
   processorIds: string[];
-  otherResources: string;
+  otherResourceIds: string[];
+  equipment: { id: string; name: string }[];
 }): string {
   const lnaIds = input.frontEndType === "LNA" ? input.lnaIds : [];
   const lnbIds = input.frontEndType === "LNB" ? input.lnbIds : [];
@@ -280,6 +227,9 @@ function buildChainEngagementRemarks(input: {
       : input.frontEndType === "LNB" && lnbIds.length > 0
         ? "LNB"
         : "—";
+  const otherNames = input.otherResourceIds
+    .map((id) => input.equipment.find((e) => e.id === id)?.name)
+    .filter(Boolean) as string[];
   const parts = [
     `LNA/LNB:${frontEnd}`,
     lnaIds.length ? `LNA_IDS:${lnaIds.join(",")}` : null,
@@ -290,7 +240,8 @@ function buildChainEngagementRemarks(input: {
     input.demodBands[0] ? `DEMOD_TYPE:${input.demodBands[0]}` : null,
     input.demodIds.length ? `DEMOD_IDS:${input.demodIds.join(",")}` : null,
     input.processorIds.length ? `PROC_IDS:${input.processorIds.join(",")}` : null,
-    input.otherResources.trim() ? `OTHER_RESOURCES:${input.otherResources.trim()}` : null,
+    input.otherResourceIds.length ? `OTHER_RESOURCE_IDS:${input.otherResourceIds.join(",")}` : null,
+    otherNames.length ? `OTHER_RESOURCES:${otherNames.join(", ")}` : null,
     input.remarks.trim(),
   ].filter(Boolean);
   return parts.join(" | ");
@@ -322,6 +273,7 @@ function stripChainMetaFromRemarks(remarks: string | null | undefined): string {
     .replace(/DEMOD_TYPES:[^|]+\s*\|\s*/g, "")
     .replace(/DEMOD_IDS:[^|]+\s*\|\s*/g, "")
     .replace(/PROC_IDS:[^|]+\s*\|\s*/g, "")
+    .replace(/OTHER_RESOURCE_IDS:[^|]+\s*\|\s*/g, "")
     .replace(/OTHER_RESOURCES:[^|]+\s*\|\s*/g, "")
     .trim();
 }
@@ -339,7 +291,7 @@ type EngagementChainForm = {
   processing_server_ids: string[];
   observation_start: string;
   remarks: string;
-  other_resources: string;
+  other_resource_ids: string[];
 };
 
 function inferDemodBandsFromIds(ids: string[], equipment: any[]): DemodBand[] {
@@ -383,22 +335,6 @@ function inferFrontEndTypeFromRow(row: any, lnaIds: string[], lnbIds: string[]):
   return "";
 }
 
-function createEmptyEngagementForm(): EngagementChainForm {
-  return {
-    satellite_id: "",
-    antenna_id: "",
-    front_end_type: "",
-    lna_ids: [],
-    lnb_ids: [],
-    demod_bands: [],
-    demodulator_ids: [],
-    processing_server_ids: [],
-    observation_start: "",
-    remarks: "",
-    other_resources: "",
-  };
-}
-
 function parseEngagementFormFromRow(row: any, equipment: any[] = []): EngagementChainForm {
   const lnaIds = parseRemarkIdList(row.remarks, "LNA_IDS");
   const lnbIds = parseRemarkIdList(row.remarks, "LNB_IDS");
@@ -421,7 +357,7 @@ function parseEngagementFormFromRow(row: any, equipment: any[] = []): Engagement
     processing_server_ids: procIds.length ? procIds : row.processing_server_id ? [row.processing_server_id] : [],
     observation_start: toDatetimeLocalValue(row.observation_start),
     remarks: stripChainMetaFromRemarks(row.remarks),
-    other_resources: parseOtherResourcesFromRemarks(row.remarks),
+    other_resource_ids: otherResourceIdsFromRow(row, equipment),
   };
 }
 
@@ -590,15 +526,11 @@ function EngagementVisualization({
   resourceStats,
   unitLabel,
   location,
-  canEdit,
-  newEngagement,
 }: {
   utilPct: number;
   resourceStats: { label: string; total: number; faulty: number; engaged: number; pct: number }[];
   unitLabel: string;
   location?: string;
-  canEdit: boolean;
-  newEngagement?: ReactNode;
 }) {
   return (
     <div className="panel overflow-hidden mb-2">
@@ -608,9 +540,6 @@ function EngagementVisualization({
         </div>
         {location && (
           <div className="mono text-[10px] text-foreground mt-0.5">{location}</div>
-        )}
-        {canEdit && newEngagement && (
-          <div className="mt-2.5 flex justify-center">{newEngagement}</div>
         )}
       </div>
 
@@ -680,6 +609,13 @@ function EngagementUnit() {
   const { unitId } = Route.useParams();
   const canEdit    = useCanEdit();
   const qc         = useQueryClient();
+  const [hiddenRevision, setHiddenRevision] = useState(0);
+
+  useEffect(() => {
+    const handler = () => setHiddenRevision((n) => n + 1);
+    window.addEventListener(ENGAGEMENT_TABLE_HIDDEN_EVENT, handler);
+    return () => window.removeEventListener(ENGAGEMENT_TABLE_HIDDEN_EVENT, handler);
+  }, []);
 
   const { data: unit } = useQuery({
     queryKey: ["unit", unitId],
@@ -745,54 +681,54 @@ function EngagementUnit() {
     [unitId, unit?.code, allEngagements, rows, equipmentRaw, intelRows],
   );
 
+  const visibleIntelMonitoringRows = useMemo(() => {
+    void hiddenRevision;
+    return filterEngagementVisibleIntelRows(unitId, intelMonitoringRows);
+  }, [unitId, intelMonitoringRows, hiddenRevision]);
+
+  const engagementSource = allEngagements.length > 0 ? allEngagements : rows;
+
+  const enrichedEngagementSource = useMemo(() => {
+    const ds = getOperationalDataset();
+    return engagementSource.map((e: any) => {
+      if (e.satellites?.name) return e;
+      const sat = ds.satellites.find((s) => s.id === e.satellite_id);
+      return sat ? { ...e, satellites: { name: sat.name } } : e;
+    });
+  }, [engagementSource]);
+
   const intelActiveRows = useMemo(() => {
-    const engBySatellite = buildEngagementBySatelliteMap(enrichedRows);
-
     return attachEquipmentToEngagements(
-      intelMonitoringRows.map((satRow) => {
-        const satKey = engagementKeyForSatelliteName(satRow.satelliteName);
-        const existing = engBySatellite.get(satKey);
-        if (existing) {
-          return {
-            ...existing,
-            satellites: { name: satRow.satelliteName },
-            _intelRow: satRow,
-          };
-        }
-
-        return {
-          id: `intel-${unitId}-${satRow.satelliteName.replace(/\s+/g, "-")}`,
-          satellites: { name: satRow.satelliteName },
-          remarks: null,
-          antenna_id: null,
-          demodulator_id: null,
-          processing_server_id: null,
-          status: satRow.engagementStatus ?? "In Progress",
-          _intelRow: satRow,
-        };
-      }),
+      buildIntelMonitoringEngagementRows(unitId, visibleIntelMonitoringRows, enrichedEngagementSource),
       equipmentRaw,
     );
-  }, [intelMonitoringRows, enrichedRows, unitId, equipmentRaw]);
+  }, [unitId, visibleIntelMonitoringRows, enrichedEngagementSource, equipmentRaw]);
 
-  const hasIntMonitoring = intelMonitoringRows.length > 0;
-
-  const allocatedIds = useMemo(
-    () =>
-      hasIntMonitoring
-        ? collectEngagementAllocatedIds(intelActiveRows, equipmentRaw)
-        : new Set<string>(),
-    [hasIntMonitoring, intelActiveRows, equipmentRaw],
+  const getAllocatedIdsForRow = useCallback(
+    (row: any) => {
+      const ids = new Set<string>();
+      const unitEngagements = enrichedEngagementSource.filter((e: any) => e.unit_id === unitId);
+      for (const eng of unitEngagements) {
+        if (eng.id === row.id) continue;
+        collectEngagementAllocatedIds([eng], equipmentRaw).forEach((id) => ids.add(id));
+      }
+      for (const tableRow of intelActiveRows) {
+        if (tableRow.id === row.id) continue;
+        collectEngagementAllocatedIds([tableRow], equipmentRaw).forEach((id) => ids.add(id));
+      }
+      return ids;
+    },
+    [enrichedEngagementSource, unitId, intelActiveRows, equipmentRaw],
   );
 
   const resourceStats = useMemo(
-    () => buildResourceRingStats(equipmentRaw, allocatedIds),
-    [equipmentRaw, allocatedIds],
+    () => buildResourceRingStats(equipmentRaw, intelActiveRows),
+    [equipmentRaw, intelActiveRows],
   );
 
   const utilPct = useMemo(
-    () => (hasIntMonitoring ? averageResourceEngagementPct(resourceStats) : 0),
-    [hasIntMonitoring, resourceStats],
+    () => (intelActiveRows.length > 0 ? averageResourceEngagementPct(resourceStats) : 0),
+    [intelActiveRows.length, resourceStats],
   );
 
   const analysisByEngId = useMemo(() => {
@@ -803,30 +739,45 @@ function EngagementUnit() {
     return map;
   }, [capability.assignments]);
 
-  function invalidateEngagementQueries() {
-    qc.invalidateQueries({ queryKey: ["eng", unitId] });
-    qc.invalidateQueries({ queryKey: ENGAGEMENTS_ALL_KEY });
+  async function invalidateEngagementQueries() {
+    await Promise.all([
+      qc.refetchQueries({ queryKey: ["eng", unitId] }),
+      qc.refetchQueries({ queryKey: ENGAGEMENTS_ALL_KEY }),
+    ]);
+    notifyOperationalDerivedRefresh();
   }
 
   async function saveEngagementRecord(row: any, patch: any): Promise<boolean> {
+    const freshRows = getOperationalEngagements().filter((e) => e.unit_id === unitId);
+    const satDisplayName =
+      (row.satellites?.name as string | undefined) ??
+      (patch.satellite_id
+        ? getOperationalDataset().satellites.find((s) => s.id === patch.satellite_id)?.name
+        : undefined);
+
     let satelliteId = patch.satellite_id as string | undefined;
     if (!satelliteId) {
       satelliteId = resolveSatelliteIdFromRow(row);
     }
-    if (!satelliteId) {
-      const displayName = row.satellites?.name as string | undefined;
-      if (displayName) {
-        const match = getOperationalDataset().satellites.find((s) =>
-          satelliteNamesMatch(s.name, displayName),
-        );
-        satelliteId = match?.id;
+    if (satDisplayName) {
+      satelliteId = ensureOperationalSatelliteByName(satDisplayName).id;
+    } else if (satelliteId) {
+      const match = getOperationalDataset().satellites.find((s) => s.id === satelliteId);
+      if (!match) {
+        toast.error("Could not resolve satellite for this row.");
+        return false;
       }
     }
 
-    const patchWithSat = { ...patch, satellite_id: satelliteId };
+    const patchWithSat = {
+      ...patch,
+      satellite_id: satelliteId,
+      satellite_name: satDisplayName,
+    };
 
     if (!isSyntheticEngagementId(row.id) && updateOperationalEngagement(row.id, patchWithSat)) {
-      invalidateEngagementQueries();
+      if (satDisplayName) restoreEngagementTableRow(unitId, satDisplayName);
+      await invalidateEngagementQueries();
       return true;
     }
 
@@ -834,14 +785,15 @@ function EngagementUnit() {
       ? getOperationalDataset().satellites.find((s) => s.id === satelliteId)
       : undefined;
     const existingBySatellite = sat
-      ? rows.find((r) => {
+      ? freshRows.find((r) => {
           const name = r.satellites?.name as string | undefined;
           return name && satelliteNamesMatch(name, sat.name);
         })
       : undefined;
 
     if (existingBySatellite && updateOperationalEngagement(existingBySatellite.id, patchWithSat)) {
-      invalidateEngagementQueries();
+      if (satDisplayName) restoreEngagementTableRow(unitId, satDisplayName);
+      await invalidateEngagementQueries();
       return true;
     }
 
@@ -858,6 +810,7 @@ function EngagementUnit() {
     const created = insertOperationalEngagement({
       unit_id: unitId,
       satellite_id: satelliteId,
+      satellite_name: satDisplayName ?? undefined,
       antenna_id: patchWithSat.antenna_id ?? null,
       demodulator_id: patchWithSat.demodulator_id ?? null,
       processing_server_id: patchWithSat.processing_server_id ?? null,
@@ -872,36 +825,30 @@ function EngagementUnit() {
       toast.error("Could not save engagement for this satellite.");
       return false;
     }
-    invalidateEngagementQueries();
+    if (satDisplayName) restoreEngagementTableRow(unitId, satDisplayName);
+    await invalidateEngagementQueries();
     return true;
   }
 
   async function removeEngagementForRow(row: any) {
     const satName = row.satellites?.name as string | undefined;
     const label = satName ?? "this satellite";
-    if (!confirm(`Remove resource engagement for ${label}?`)) return;
+    if (!confirm(`Remove this engagement row for ${label}?`)) return;
 
     if (!isSyntheticEngagementId(row.id)) {
-      if (!removeOperationalEngagement(row.id)) {
-        toast.error("Engagement not found.");
-        return;
-      }
-      invalidateEngagementQueries();
-      toast.success("Engagement removed.");
-      return;
+      removeOperationalEngagement(row.id);
+    } else {
+      const existing = getOperationalEngagements().find((r) => {
+        if (r.unit_id !== unitId) return false;
+        const name = r.satellites?.name as string | undefined;
+        return name && satName && satelliteNamesMatch(name, satName);
+      });
+      if (existing) removeOperationalEngagement(existing.id);
     }
 
-    const existing = rows.find((r) => {
-      const name = r.satellites?.name as string | undefined;
-      return name && satName && satelliteNamesMatch(name, satName);
-    });
-    if (existing && removeOperationalEngagement(existing.id)) {
-      invalidateEngagementQueries();
-      toast.success("Engagement removed.");
-      return;
-    }
-
-    toast.info("No saved engagement resources for this satellite.");
+    if (satName) hideEngagementTableRow(unitId, satName);
+    await invalidateEngagementQueries();
+    toast.success("Engagement row removed.");
   }
 
   const unitLabel = unit ? unitDisplayLabel(unit) : "Unit";
@@ -935,10 +882,6 @@ function EngagementUnit() {
         resourceStats={resourceStats}
         unitLabel={unitLabel}
         location={unitLocation}
-        canEdit={canEdit}
-        newEngagement={
-          <AddEngagement unitId={unitId} unit={unit} activeRows={intelActiveRows} equipment={equipmentRaw} primary />
-        }
       />
 
       {/* Engaged resources — active monitoring sessions (no scan statistics) */}
@@ -1033,7 +976,7 @@ function EngagementUnit() {
                       </td>
 
                       <td className="px-3 py-2.5 text-foreground whitespace-nowrap">
-                        {parseOtherResourcesFromRemarks(r.remarks) || "—"}
+                        <ChainEquipmentCell value={otherResourceNamesFromRow(r, equipmentRaw)} />
                       </td>
 
                       <td className="px-2 py-2.5">
@@ -1041,8 +984,8 @@ function EngagementUnit() {
                           <div className="flex items-center gap-1">
                             <EditEngagement
                               row={r}
-                              activeRows={intelActiveRows}
                               equipment={equipmentRaw}
+                              getAllocatedIdsForRow={getAllocatedIdsForRow}
                               onSave={saveEngagementRecord}
                               onRemove={removeEngagementForRow}
                             />
@@ -1280,9 +1223,8 @@ interface EngagementResourceFieldsProps {
   availableLNB: { id: string; name: string }[];
   availableDemod: { id: string; name: string; band: DemodBand | null }[];
   availableServers: { id: string; name: string }[];
+  availableOther: { id: string; name: string }[];
   noAntenna?: boolean;
-  showSatelliteSelect?: boolean;
-  satellites?: { id: string; name: string }[];
 }
 
 function EngagementResourceFields({
@@ -1295,30 +1237,12 @@ function EngagementResourceFields({
   availableLNB,
   availableDemod,
   availableServers,
+  availableOther,
   noAntenna = false,
-  showSatelliteSelect = false,
-  satellites = [],
 }: EngagementResourceFieldsProps) {
   return (
     <>
-      {showSatelliteSelect && (
-        <F label="Satellite *">
-          <Select value={form.satellite_id} onValueChange={(v) => setField("satellite_id", v)}>
-            <SelectTrigger><SelectValue placeholder="Select satellite" /></SelectTrigger>
-            <SelectContent>
-              {satellites.length === 0 ? (
-                <SelectItem value="_none" disabled>No satellites allotted in Priority & Allocation</SelectItem>
-              ) : (
-                satellites.map((s) => (
-                  <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                ))
-              )}
-            </SelectContent>
-          </Select>
-        </F>
-      )}
-
-      <F label={`Antenna${showSatelliteSelect ? " *" : ""} — ${availableAntennas.length} available`}>
+      <F label={`Antenna — ${availableAntennas.length} available`}>
         <Select
           value={form.antenna_id}
           onValueChange={(v) => setField("antenna_id", v)}
@@ -1423,11 +1347,12 @@ function EngagementResourceFields({
         />
       </F>
 
-      <F label="Other resources">
-        <Input
-          value={form.other_resources}
-          onChange={(e) => setField("other_resources", e.target.value)}
-          placeholder="e.g. Spectrum Analyzer, RF Switch"
+      <F label={`Other Resources — select from inventory (${availableOther.length} available)`}>
+        <EquipmentMultiPick
+          items={availableOther}
+          selected={form.other_resource_ids}
+          onChange={(ids) => setField("other_resource_ids", ids)}
+          emptyLabel="No Other Resources in Resource Inventory for this unit"
         />
       </F>
 
@@ -1446,7 +1371,7 @@ function EngagementResourceFields({
   );
 }
 
-function buildRemarksFromForm(form: EngagementChainForm): string {
+function buildRemarksFromForm(form: EngagementChainForm, equipment: { id: string; name: string }[]): string {
   const hasResources =
     Boolean(form.antenna_id) ||
     form.lna_ids.length > 0 ||
@@ -1454,7 +1379,7 @@ function buildRemarksFromForm(form: EngagementChainForm): string {
     form.demodulator_ids.length > 0 ||
     form.processing_server_ids.length > 0 ||
     form.demod_bands.length > 0 ||
-    form.other_resources.trim().length > 0 ||
+    form.other_resource_ids.length > 0 ||
     form.remarks.trim().length > 0;
   if (!hasResources) return "";
   return buildChainEngagementRemarks({
@@ -1465,7 +1390,8 @@ function buildRemarksFromForm(form: EngagementChainForm): string {
     demodBands: form.demod_bands,
     demodIds: form.demodulator_ids,
     processorIds: form.processing_server_ids,
-    otherResources: form.other_resources,
+    otherResourceIds: form.other_resource_ids,
+    equipment,
   });
 }
 
@@ -1505,24 +1431,23 @@ function toggleDemodBandOnForm(
 
 interface EditEngagementProps {
   row: any;
-  activeRows: any[];
   equipment: any[];
+  getAllocatedIdsForRow: (row: any) => Set<string>;
   onSave: (row: any, patch: any) => Promise<boolean>;
   onRemove: (row: any) => Promise<unknown>;
 }
 
 function EditEngagement({
   row,
-  activeRows,
   equipment,
+  getAllocatedIdsForRow,
   onSave,
   onRemove,
 }: EditEngagementProps) {
   const [open, setOpen] = useState(false);
-  const otherActive = activeRows.filter((r: any) => r.id !== row.id);
   const allocatedOthers = useMemo(
-    () => collectEngagementAllocatedIds(otherActive, equipment),
-    [otherActive, equipment],
+    () => getAllocatedIdsForRow(row),
+    [getAllocatedIdsForRow, row],
   );
 
   const serviceable = (matchStr: string, excludeLnbInLna = false) =>
@@ -1557,6 +1482,9 @@ function EditEngagement({
   const lnbPool = serviceable("lnb");
   const demodPool = serviceable("demodulat");
   const serverPool = serviceable("processing");
+  const otherPool = equipment.filter(
+    (e: any) => e.serviceability === "Operational" && isOtherResourcesEquipment(e),
+  );
 
   const availableAntennas = equipmentAvailableForEdit(antennaPool, allocatedOthers, form.antenna_id ? [form.antenna_id] : []);
   const availableLNA = equipmentAvailableForEdit(lnaPool, allocatedOthers, form.lna_ids);
@@ -1566,6 +1494,7 @@ function EditEngagement({
     equipment,
   );
   const availableServers = equipmentAvailableForEdit(serverPool, allocatedOthers, form.processing_server_ids);
+  const availableOther = equipmentAvailableForEdit(otherPool, allocatedOthers, form.other_resource_ids);
 
   function toggleDemodBand(band: DemodBand, enabled: boolean) {
     setForm((f) => toggleDemodBandOnForm(f, equipment, band, enabled));
@@ -1574,8 +1503,17 @@ function EditEngagement({
   async function submit(e: React.FormEvent) {
     e.preventDefault();
 
+    const selectedIds = collectFormAllocatedIds(form);
+    const conflicts = [...selectedIds].filter((id) => allocatedOthers.has(id));
+    if (conflicts.length > 0) {
+      const byId = new Map(equipment.map((item: any) => [item.id as string, item.name as string]));
+      const names = conflicts.map((id) => byId.get(id) ?? id).join(", ");
+      toast.error(`Resource(s) already committed elsewhere: ${names}`);
+      return;
+    }
+
     const satelliteId = resolveSatelliteIdFromRow(row) || form.satellite_id;
-    const remarks = buildRemarksFromForm(form);
+    const remarks = buildRemarksFromForm(form, equipment);
 
     const saved = await onSave(row, {
       satellite_id: satelliteId || undefined,
@@ -1626,6 +1564,7 @@ function EditEngagement({
             availableLNB={availableLNB}
             availableDemod={availableDemod}
             availableServers={availableServers}
+            availableOther={availableOther}
           />
 
           <Button type="submit" className="w-full mono uppercase tracking-wider text-[10px]">
@@ -1639,182 +1578,6 @@ function EditEngagement({
             onClick={handleDelete}
           >
             <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete Engagement
-          </Button>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-interface AddEngagementProps {
-  unitId: string;
-  unit?: { id: string; code: string };
-  activeRows: any[];
-  equipment: any[];
-  primary?: boolean;
-}
-
-function AddEngagement({ unitId, unit, activeRows, equipment, primary }: AddEngagementProps) {
-  const [open, setOpen] = useState(false);
-  const [priorityVersion, setPriorityVersion] = useState(0);
-  const qc = useQueryClient();
-
-  useEffect(() => {
-    const handler = () => setPriorityVersion((v) => v + 1);
-    window.addEventListener(PRIORITY_ALLOCATION_EVENT, handler);
-    return () => window.removeEventListener(PRIORITY_ALLOCATION_EVENT, handler);
-  }, []);
-
-  const prioritySatellites = useMemo(() => {
-    if (!unit) return [];
-    void priorityVersion;
-    return listPrioritySatellitesForUnit(unit);
-  }, [unit, priorityVersion]);
-
-  const allocatedIds = useMemo(
-    () => collectEngagementAllocatedIds(activeRows, equipment),
-    [activeRows, equipment],
-  );
-
-  const serviceable = (matchStr: string, excludeLnbInLna = false) =>
-    equipment.filter((e: any) => {
-      const cat = (e.category?.name ?? "").toLowerCase();
-      if (e.serviceability !== "Operational") return false;
-      if (excludeLnbInLna && cat.includes("lnb")) return false;
-      return cat.includes(matchStr);
-    });
-
-  const antennaPool = serviceable("antenna");
-  const lnaPool = serviceable("lna", true);
-  const lnbPool = serviceable("lnb");
-  const demodPool = serviceable("demodulat");
-  const serverPool = serviceable("processing");
-
-  const availableAntennas = antennaPool.filter((e: any) => !allocatedIds.has(e.id));
-  const availableLNA = lnaPool.filter((e: any) => !allocatedIds.has(e.id));
-  const availableLNB = lnbPool.filter((e: any) => !allocatedIds.has(e.id));
-  const availableDemod = mapAvailableDemods(
-    demodPool.filter((e: any) => !allocatedIds.has(e.id)),
-    equipment,
-  );
-  const availableServers = serverPool.filter((e: any) => !allocatedIds.has(e.id));
-
-  const noAntenna = availableAntennas.length === 0;
-
-  const [form, setForm] = useState<EngagementChainForm>(createEmptyEngagementForm);
-
-  useEffect(() => {
-    if (open) setForm(createEmptyEngagementForm());
-  }, [open]);
-
-  function setField<K extends keyof EngagementChainForm>(k: K, v: EngagementChainForm[K]) {
-    setForm((f) => ({ ...f, [k]: v }));
-  }
-
-  function setFrontEndType(type: FrontEndType) {
-    setForm((f) => ({
-      ...f,
-      front_end_type: type,
-      lna_ids: type === "LNA" ? f.lna_ids : [],
-      lnb_ids: type === "LNB" ? f.lnb_ids : [],
-    }));
-  }
-
-  function toggleDemodBand(band: DemodBand, enabled: boolean) {
-    setForm((f) => toggleDemodBandOnForm(f, equipment, band, enabled));
-  }
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!form.satellite_id) {
-      toast.error("Select a satellite.");
-      return;
-    }
-
-    const remarks = buildRemarksFromForm(form);
-
-    const created = insertOperationalEngagement({
-      unit_id: unitId,
-      satellite_id: form.satellite_id,
-      antenna_id: form.antenna_id || null,
-      demodulator_id: form.demodulator_ids[0] ?? null,
-      processing_server_id: form.processing_server_ids[0] ?? null,
-      observation_start: toObservationStartIso(form.observation_start),
-      status: "Planned",
-      remarks: remarks || null,
-    });
-    if (!created) return toast.error("Unknown satellite.");
-    toast.success("Engagement created");
-    setOpen(false);
-    qc.invalidateQueries({ queryKey: ["eng", unitId] });
-    qc.invalidateQueries({ queryKey: ENGAGEMENTS_ALL_KEY });
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button
-          size={primary ? "default" : "sm"}
-          className={`mono uppercase tracking-wider ${
-            primary
-              ? "text-[11px] h-9 px-6 font-bold"
-              : "text-[11px] h-7 px-3"
-          }`}
-        >
-          <Plus className={`${primary ? "h-4 w-4" : "h-3.5 w-3.5"} mr-1.5`} /> New Engagement
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="max-h-[90vh] overflow-y-auto max-w-lg">
-        <DialogHeader>
-          <DialogTitle className="mono uppercase tracking-wider text-[12px]">New Engagement</DialogTitle>
-        </DialogHeader>
-
-        {noAntenna && (
-          <div className="flex items-start gap-2 rounded-sm border border-destructive/30 bg-destructive/5 px-3 py-2">
-            <AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
-            <div>
-              <p className="mono text-[10px] font-bold text-destructive uppercase tracking-wide">
-                No Antennas Available
-              </p>
-              <p className="mono text-[9px] text-foreground/75 mt-0.5">
-                All serviceable antennas are currently allocated.
-              </p>
-            </div>
-          </div>
-        )}
-
-        {!noAntenna && (
-          <div className="mono text-[8.5px] text-foreground/75 border border-border/50 rounded-sm px-2 py-1.5 bg-secondary/10">
-            Assign resources for a new satellite engagement. Each resource field is optional except satellite selection.
-          </div>
-        )}
-
-        <form onSubmit={submit} className="space-y-3 mt-1">
-          <EngagementResourceFields
-            form={form}
-            setField={setField}
-            setFrontEndType={setFrontEndType}
-            toggleDemodBand={toggleDemodBand}
-            availableAntennas={availableAntennas}
-            availableLNA={availableLNA}
-            availableLNB={availableLNB}
-            availableDemod={availableDemod}
-            availableServers={availableServers}
-            noAntenna={noAntenna}
-            showSatelliteSelect
-            satellites={prioritySatellites}
-          />
-
-          <Button
-            type="submit"
-            disabled={noAntenna || !form.satellite_id}
-            className="w-full mono uppercase tracking-wider text-[10px]"
-          >
-            {noAntenna
-              ? "Blocked — No Antenna Available"
-              : !form.satellite_id
-                ? "Select Satellite"
-                : "Create Engagement"}
           </Button>
         </form>
       </DialogContent>

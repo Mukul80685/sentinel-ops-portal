@@ -1,8 +1,11 @@
 /**
  * Resource inventory ring stats for Resource Engagement unit detail view.
+ * Engaged Resources table rows are the SSOT for allocation + ring percentages.
  */
 
-import { buildAllocatedIds, NON_OPERATIONAL, ACTIVE_SCAN_STATUSES } from "@/lib/engagementEngine";
+import { NON_OPERATIONAL } from "@/lib/engagementEngine";
+import { filterEngagementVisibleIntelRows } from "@/lib/engagementTableStore";
+import { canonicalSatelliteKey, normalizeSatelliteName } from "@/lib/visibilityMatrix";
 
 export type ResourceRingStat = {
   label: string;
@@ -52,26 +55,245 @@ function parseRemarkIdList(remarks: string | null | undefined, key: string): str
     .filter(Boolean);
 }
 
-/** Include all equipment ids stored in engagement remarks (multi-select lists + legacy singles). */
-export function buildInventoryAllocatedIds(activeEngagements: any[]): Set<string> {
-  const ids = buildAllocatedIds(activeEngagements);
-  for (const e of activeEngagements) {
-    for (const id of parseRemarkIdList(e.remarks, "LNA_IDS")) ids.add(id);
-    for (const id of parseRemarkIdList(e.remarks, "LNB_IDS")) ids.add(id);
-    for (const id of parseRemarkIdList(e.remarks, "DEMOD_IDS")) ids.add(id);
-    for (const id of parseRemarkIdList(e.remarks, "PROC_IDS")) ids.add(id);
-    const lnaId = parseEquipmentIdFromRemarks(e.remarks, "LNA_ID");
-    const lnbId = parseEquipmentIdFromRemarks(e.remarks, "LNB_ID");
-    if (lnaId) ids.add(lnaId);
-    if (lnbId) ids.add(lnbId);
+function parseOtherResourcesFromRemarks(remarks: string | null | undefined): string {
+  if (!remarks) return "";
+  const m = remarks.match(/OTHER_RESOURCES:([^|]+)/);
+  return m?.[1]?.trim() ?? "";
+}
+
+function engagementKeyForSatelliteName(name: string): string {
+  return canonicalSatelliteKey(name) || normalizeSatelliteName(name);
+}
+
+function engagementRowRichness(r: any): number {
+  let score = 0;
+  if (r.antenna_id) score += 2;
+  if (r.demodulator_id) score += 2;
+  if (r.processing_server_id) score += 2;
+  if (r.remarks) {
+    score += parseRemarkIdList(r.remarks, "LNA_IDS").length;
+    score += parseRemarkIdList(r.remarks, "LNB_IDS").length;
+    score += parseRemarkIdList(r.remarks, "DEMOD_IDS").length;
+    score += parseRemarkIdList(r.remarks, "PROC_IDS").length;
+    score += parseRemarkIdList(r.remarks, "OTHER_RESOURCE_IDS").length;
+  }
+  return score;
+}
+
+/** @deprecated Do not use for resource utilisation — collapses multiple detachments per satellite. */
+export function buildEngagementBySatelliteMap(enrichedRows: any[]): Map<string, any> {
+  const map = new Map<string, any>();
+  for (const r of enrichedRows) {
+    const name = r.satellites?.name as string | undefined;
+    if (!name) continue;
+    const key = engagementKeyForSatelliteName(name);
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, r);
+      continue;
+    }
+    const rScore = engagementRowRichness(r);
+    const eScore = engagementRowRichness(existing);
+    if (rScore > eScore) {
+      map.set(key, r);
+      continue;
+    }
+    if (rScore === eScore) {
+      const rTs = (r.updated_at as string) ?? "";
+      const eTs = (existing.updated_at as string) ?? "";
+      if (rTs >= eTs) map.set(key, r);
+    }
+  }
+  return map;
+}
+
+function equipmentIdsFromRow(
+  row: any,
+  listKey: string,
+  legacyKey: string,
+  columnId?: string | null,
+): string[] {
+  const fromList = parseRemarkIdList(row.remarks, listKey);
+  if (fromList.length) return fromList;
+  const legacy = parseEquipmentIdFromRemarks(row.remarks, legacyKey);
+  if (legacy) return [legacy];
+  if (columnId) return [columnId];
+  return [];
+}
+
+function legacyFrontEndIdsFromRow(row: any, equipment: any[]): { lnaIds: string[]; lnbIds: string[] } {
+  const typeMatch = row.remarks?.match(/LNA\/LNB:(LNA|LNB)/);
+  if (typeMatch?.[1] === "LNA") {
+    const lnaEq = equipment.find(
+      (e: any) => {
+        const cat = (e.category?.name ?? "").toLowerCase();
+        return (
+          e.serviceability === "Operational" &&
+          (cat === "lna" || (cat.includes("lna") && !cat.includes("lnb")))
+        );
+      },
+    );
+    return { lnaIds: lnaEq ? [lnaEq.id as string] : [], lnbIds: [] };
+  }
+  if (typeMatch?.[1] === "LNB") {
+    const lnbEq = equipment.find(
+      (e: any) =>
+        e.serviceability === "Operational" &&
+        (e.category?.name ?? "").toLowerCase().includes("lnb"),
+    );
+    return { lnaIds: [], lnbIds: lnbEq ? [lnbEq.id as string] : [] };
+  }
+  return { lnaIds: [], lnbIds: [] };
+}
+
+function otherResourceIdsFromRow(row: any, equipment: any[]): string[] {
+  const fromRemarks = parseRemarkIdList(row.remarks, "OTHER_RESOURCE_IDS");
+  if (fromRemarks.length) return fromRemarks;
+
+  const otherText = parseOtherResourcesFromRemarks(row.remarks);
+  if (!otherText) return [];
+
+  const byName = new Map(equipment.map((e) => [e.name.trim().toLowerCase(), e.id as string]));
+  return otherText
+    .split(",")
+    .map((part) => byName.get(part.trim().toLowerCase()))
+    .filter(Boolean) as string[];
+}
+
+/** Per-category allocated ids — mirrors Engaged Resources table columns. */
+export function collectCategoryAllocatedIds(
+  activeRows: any[],
+  equipment: any[] = [],
+): Map<string, Set<string>> {
+  const byLabel = new Map<string, Set<string>>();
+  for (const { label } of RESOURCE_RING_CATEGORIES) {
+    byLabel.set(label, new Set());
+  }
+  byLabel.set("Other Resources", new Set());
+
+  for (const row of activeRows) {
+    const antennaIds = row.antenna_id ? [row.antenna_id as string] : [];
+    const lnaIds = equipmentIdsFromRow(row, "LNA_IDS", "LNA_ID");
+    const lnbIds = equipmentIdsFromRow(row, "LNB_IDS", "LNB_ID");
+    const legacyFrontEnd = legacyFrontEndIdsFromRow(row, equipment);
+    const resolvedLnaIds = lnaIds.length ? lnaIds : legacyFrontEnd.lnaIds;
+    const resolvedLnbIds = lnbIds.length ? lnbIds : legacyFrontEnd.lnbIds;
+    const demodIds = equipmentIdsFromRow(row, "DEMOD_IDS", "DEMOD_ID", row.demodulator_id);
+    const procIds = equipmentIdsFromRow(row, "PROC_IDS", "PROC_ID", row.processing_server_id);
+    const otherIds = otherResourceIdsFromRow(row, equipment);
+
+    for (const id of antennaIds) byLabel.get("Antennas")!.add(id);
+    for (const id of resolvedLnaIds) byLabel.get("LNA")!.add(id);
+    for (const id of resolvedLnbIds) byLabel.get("LNB")!.add(id);
+    for (const id of demodIds) byLabel.get("Demodulators")!.add(id);
+    for (const id of procIds) byLabel.get("Processors")!.add(id);
+    for (const id of otherIds) byLabel.get("Other Resources")!.add(id);
+  }
+
+  return byLabel;
+}
+
+/** Collect allocated equipment ids from Engaged Resources table rows (columns + remark lists). */
+export function collectEngagementAllocatedIds(activeRows: any[], equipment: any[] = []): Set<string> {
+  const ids = new Set<string>();
+  for (const set of collectCategoryAllocatedIds(activeRows, equipment).values()) {
+    for (const id of set) ids.add(id);
   }
   return ids;
 }
 
+/** Equipment ids selected in an engagement edit form (all resource columns). */
+export function collectFormAllocatedIds(form: {
+  antenna_id?: string;
+  lna_ids?: string[];
+  lnb_ids?: string[];
+  demodulator_ids?: string[];
+  processing_server_ids?: string[];
+  other_resource_ids?: string[];
+}): Set<string> {
+  const ids = new Set<string>();
+  if (form.antenna_id) ids.add(form.antenna_id);
+  for (const id of form.lna_ids ?? []) ids.add(id);
+  for (const id of form.lnb_ids ?? []) ids.add(id);
+  for (const id of form.demodulator_ids ?? []) ids.add(id);
+  for (const id of form.processing_server_ids ?? []) ids.add(id);
+  for (const id of form.other_resource_ids ?? []) ids.add(id);
+  return ids;
+}
+
+/** @deprecated Use collectEngagementAllocatedIds — kept for callers passing raw engagement arrays. */
+export function buildInventoryAllocatedIds(activeEngagements: any[], equipment: any[] = []): Set<string> {
+  return collectEngagementAllocatedIds(activeEngagements, equipment);
+}
+
+/** Engaged Resources table rows — one row per engagement for each INT-monitored satellite. */
+export function buildIntelMonitoringEngagementRows(
+  unitDbId: string,
+  intelMonitoringRows: { satelliteName: string; engagementStatus?: string | null }[],
+  engagements: any[],
+): any[] {
+  const unitEngagements = engagements.filter((e) => e.unit_id === unitDbId);
+
+  const engagementsBySatellite = new Map<string, any[]>();
+  for (const eng of unitEngagements) {
+    const name = eng.satellites?.name as string | undefined;
+    if (!name) continue;
+    const key = engagementKeyForSatelliteName(name);
+    const bucket = engagementsBySatellite.get(key) ?? [];
+    bucket.push(eng);
+    engagementsBySatellite.set(key, bucket);
+  }
+
+  const result: any[] = [];
+
+  for (const satRow of intelMonitoringRows) {
+    const satKey = engagementKeyForSatelliteName(satRow.satelliteName);
+    const matchedEngagements = engagementsBySatellite.get(satKey) ?? [];
+
+    if (matchedEngagements.length > 0) {
+      for (const eng of matchedEngagements) {
+        result.push({
+          ...eng,
+          satellites: { name: satRow.satelliteName },
+          _intelRow: satRow,
+        });
+      }
+      continue;
+    }
+
+    result.push({
+      id: `intel-${unitDbId}-${satRow.satelliteName.replace(/\s+/g, "-")}`,
+      satellites: { name: satRow.satelliteName },
+      remarks: null,
+      antenna_id: null,
+      demodulator_id: null,
+      processing_server_id: null,
+      status: satRow.engagementStatus ?? "In Progress",
+      _intelRow: satRow,
+    });
+  }
+
+  return result;
+}
+
+/** Single engagement % formula — table rows → category rings → average. */
+export function computeTableDrivenResourceEngagementPct(
+  unitDbId: string,
+  equipment: any[],
+  intelMonitoringRows: { satelliteName: string; engagementStatus?: string | null }[],
+  engagements: any[],
+): number {
+  const visibleRows = filterEngagementVisibleIntelRows(unitDbId, intelMonitoringRows);
+  const unitEquipment = equipment.filter((e: any) => e.unit_id === unitDbId);
+  const tableRows = buildIntelMonitoringEngagementRows(unitDbId, visibleRows, engagements);
+  return averageResourceEngagementPct(buildResourceRingStats(unitEquipment, tableRows));
+}
+
 export function buildResourceRingStats(
   equipment: any[],
-  allocatedIds: Set<string>,
+  activeRows: any[],
 ): ResourceRingStat[] {
+  const categoryAllocated = collectCategoryAllocatedIds(activeRows, equipment);
   const claimed = new Set<string>();
   const named: ResourceRingStat[] = RESOURCE_RING_CATEGORIES.map(({ label, matches }) => {
     const catEq = equipment.filter((e: any) => {
@@ -83,19 +305,26 @@ export function buildResourceRingStats(
 
     const total = catEq.length;
     const faulty = catEq.filter((e: any) => NON_OPERATIONAL.has(e.serviceability)).length;
-    const engaged = catEq.filter(
-      (e: any) => e.serviceability === "Operational" && allocatedIds.has(e.id),
+    const allocatedInCategory = categoryAllocated.get(label) ?? new Set<string>();
+    const activeAllocated = catEq.filter(
+      (e: any) => e.serviceability === "Operational" && allocatedInCategory.has(e.id),
     ).length;
+    // Unserviceable inventory is always engaged; table rows supply operational allocations.
+    const engaged = faulty + activeAllocated;
     const pct = total === 0 ? 0 : Math.min(100, Math.round((engaged / total) * 100));
     return { label, total, faulty, engaged, pct };
   });
 
-  const otherEq = equipment.filter((e: any) => !claimed.has(e.id));
+  const otherEq = equipment.filter(
+    (e: any) => (e.category?.name ?? "").trim().toLowerCase() === "other resources",
+  );
   const otherTotal = otherEq.length;
   const otherFaulty = otherEq.filter((e: any) => NON_OPERATIONAL.has(e.serviceability)).length;
-  const otherEngaged = otherEq.filter(
-    (e: any) => e.serviceability === "Operational" && allocatedIds.has(e.id),
+  const otherAllocated = categoryAllocated.get("Other Resources") ?? new Set<string>();
+  const otherActiveAllocated = otherEq.filter(
+    (e: any) => e.serviceability === "Operational" && otherAllocated.has(e.id),
   ).length;
+  const otherEngaged = otherFaulty + otherActiveAllocated;
   const otherPct =
     otherTotal === 0 ? 0 : Math.min(100, Math.round((otherEngaged / otherTotal) * 100));
 
@@ -110,27 +339,25 @@ export function buildResourceRingStats(
   return named;
 }
 
-/** Large engagement ring = average of the six category rings (inventory with stock only). */
+/** Large engagement ring = average of all six category rings (always ÷6). */
 export function averageResourceEngagementPct(stats: ResourceRingStat[]): number {
-  const withInventory = stats.filter((s) => s.total > 0);
-  if (withInventory.length === 0) return 0;
-  return Math.round(
-    withInventory.reduce((sum, s) => sum + s.pct, 0) / withInventory.length,
-  );
+  if (stats.length === 0) return 0;
+  return Math.round(stats.reduce((sum, s) => sum + s.pct, 0) / stats.length);
 }
 
-/** Same formula as Resource Engagement unit detail — inventory ring average per unit. */
+/** Same formula as Resource Engagement unit detail — table-driven ring average per unit. */
 export function computeUnitResourceEngagementPct(
   unitId: string,
   equipment: any[],
   engagements: any[],
+  intelMonitoringRows: { satelliteName: string; engagementStatus?: string | null }[] = [],
 ): number {
-  const unitEquipment = equipment.filter((e: any) => e.unit_id === unitId);
-  const activeEngagements = engagements.filter(
-    (e: any) => e.unit_id === unitId && ACTIVE_SCAN_STATUSES.has(e.status),
+  return computeTableDrivenResourceEngagementPct(
+    unitId,
+    equipment,
+    intelMonitoringRows,
+    engagements,
   );
-  const allocatedIds = buildInventoryAllocatedIds(activeEngagements);
-  return averageResourceEngagementPct(buildResourceRingStats(unitEquipment, allocatedIds));
 }
 
 export function equipmentNameById(equipment: any[], id: string | null | undefined): string {

@@ -426,15 +426,16 @@ function loadUserRows(slot: UnitSlot): PriorityAllocationRow[] {
   }
 }
 
-function saveUserRows(slot: UnitSlot, rows: PriorityAllocationRow[]): void {
+function saveUserRows(slot: UnitSlot, rows: PriorityAllocationRow[]): boolean {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     const parsed: UserStore = raw ? JSON.parse(raw) : {};
     parsed[slot] = rows;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
     notifyAllocationChange();
+    return true;
   } catch {
-    /* ignore */
+    return false;
   }
 }
 
@@ -528,8 +529,25 @@ export function addAllocationForUnit(
   catalogRow: FlatSatelliteRow,
   priority?: SatPriority,
 ): PriorityAllocationRow | null {
+  // Re-adding a previously removed seed satellite must clear suppression first.
+  const suppressed = loadSuppressed(slot);
+  if (suppressed.has(catalogRow.id)) {
+    suppressed.delete(catalogRow.id);
+    saveSuppressed(slot, suppressed);
+    if (priority !== undefined) savePOverride(slot, catalogRow.id, priority);
+    const restored = getAllocationsForUnit(slot).find((r) => r.satelliteId === catalogRow.id);
+    if (restored) return restored;
+  }
+
   const existing = getAllocationsForUnit(slot);
   if (existing.some((r) => r.satelliteId === catalogRow.id)) return null;
+
+  const userRows = loadUserRows(slot);
+  const existingUser = userRows.find((r) => r.satelliteId === catalogRow.id);
+  if (existingUser) {
+    if (priority !== undefined) savePOverride(slot, catalogRow.id, priority);
+    return existingUser;
+  }
 
   const maxPriority = existing.reduce((m, r) => Math.max(m, r.priority), 0);
   const sat = catalogRow.satellite;
@@ -559,10 +577,8 @@ export function addAllocationForUnit(
     isUserAdded: true,
   };
 
-  const userRows = loadUserRows(slot);
   userRows.push(row);
-  saveUserRows(slot, userRows);
-  // Store the explicit priority override so it persists even for seed-slot merges
+  if (!saveUserRows(slot, userRows)) return null;
   if (priority !== undefined) savePOverride(slot, catalogRow.id, priority);
   return row;
 }

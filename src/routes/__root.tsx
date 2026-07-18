@@ -15,6 +15,11 @@ import { AuthProvider } from "../lib/auth";
 import { Toaster } from "../components/ui/sonner";
 import { SidebarModulesProvider } from "../components/sidebar/SidebarModulesProvider";
 import { SidebarModulesHost } from "../components/sidebar/SidebarModulesHost";
+import {
+  bootstrapElectronStorage,
+  isElectronPersistAvailable,
+  whenElectronStorageReady,
+} from "../lib/electronPersist";
 
 /**
  * IMPORTANT:
@@ -156,6 +161,21 @@ function RootShell({ children }: { children: ReactNode }) {
  */
 function RootComponent() {
   const [queryClient] = useState(() => createStableQueryClient());
+  const [storageReady, setStorageReady] = useState(false);
+
+  useEffect(() => {
+    if (!isElectronPersistAvailable()) {
+      setStorageReady(true);
+      return;
+    }
+
+    const disposeHooks = bootstrapElectronStorage();
+    void whenElectronStorageReady().then(() => setStorageReady(true));
+
+    return () => disposeHooks();
+  }, []);
+
+  if (!storageReady) return null;
 
   return (
     <QueryClientProvider client={queryClient}>

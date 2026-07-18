@@ -145,3 +145,26 @@ export function removeReportCellEdits(reportId: string) {
   saveAll(all);
   notifyChange(reportId);
 }
+
+/** Move drill-down edits when a satellite row is renamed in the INT unit table. */
+export function renameReportCellEdits(
+  oldReportId: string,
+  newReportId: string,
+  newSatelliteName?: string,
+): void {
+  if (oldReportId === newReportId && !newSatelliteName) return;
+  const all = loadAll();
+  const edits = all[oldReportId];
+  if (!edits) return;
+  delete all[oldReportId];
+  if (newSatelliteName) {
+    edits.satellite = { ...edits.satellite, name: newSatelliteName };
+  }
+  all[newReportId] = normalizeReportEdits({
+    ...all[newReportId],
+    ...edits,
+    satellite: { ...all[newReportId]?.satellite, ...edits.satellite },
+  });
+  saveAll(all);
+  notifyChange(newReportId);
+}

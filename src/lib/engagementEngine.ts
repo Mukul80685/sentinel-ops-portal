@@ -8,7 +8,7 @@ import { getOperationalEngagements } from "@/lib/operationalStore";
 export const ENGAGEMENTS_ALL_KEY = ["engagements", "all"] as const;
 
 export async function fetchAllEngagements() {
-  return getOperationalEngagements();
+  return getOperationalEngagements().map((e) => ({ ...e }));
 }
 
 export const NON_OPERATIONAL = new Set([

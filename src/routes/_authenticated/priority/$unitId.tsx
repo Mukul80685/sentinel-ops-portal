@@ -40,9 +40,9 @@ import {
   sortAllocationRows,
   updateAllocationPriority,
   allocationSlotForUnit,
-  unitCodeToSlot,
   SAT_PRIORITIES,
   SAT_PRIORITY_LABEL,
+  PRIORITY_ALLOCATION_EVENT,
   type AllocationSortKey,
   type SatPriority,
   type SortDir,
@@ -171,6 +171,12 @@ function PriorityUnit() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleteConfirm, setDeleteConfirm] = useState<"single" | "bulk" | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const refresh = () => setRefreshKey((k) => k + 1);
+    window.addEventListener(PRIORITY_ALLOCATION_EVENT, refresh);
+    return () => window.removeEventListener(PRIORITY_ALLOCATION_EVENT, refresh);
+  }, []);
 
   const { data: unit } = useQuery({
     queryKey: ["unit", unitId],
@@ -581,15 +587,19 @@ function AddAllocation({
   function submit() {
     if (selected.size === 0) return;
     let added = 0;
+    let failed = 0;
     for (const id of selected) {
       const row = catalog.find((s) => s.id === id);
-      if (row && addAllocationForUnit(slot, row, priorities[id] ?? 1)) added++;
+      if (!row) continue;
+      const result = addAllocationForUnit(slot, row, priorities[id] ?? 1);
+      if (result) added++;
+      else failed++;
     }
     if (added > 0) {
       toast.success(`${added} satellite${added !== 1 ? "s" : ""} allocated.`);
       onAdded();
-    } else {
-      toast.error("No new satellites were added (already allocated).");
+    } else if (failed > 0) {
+      toast.error("No new satellites were added (already allocated or save failed).");
     }
     handleOpen(false);
   }

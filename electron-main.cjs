@@ -3,8 +3,17 @@ const path = require('path');
 const http = require('http');
 const fs = require('fs');
 const { ipcMain } = require('electron');
-const ATTACH_DIR = path.join(app.getPath('userData'), 'ssacc-attachments');
-if (!fs.existsSync(ATTACH_DIR)) fs.mkdirSync(ATTACH_DIR, { recursive: true });
+const OPERATIONAL_STORE_KEY = 'ssacc_operational_store_v2';
+/** Legacy app ports only — never probe 3737 (reserved for the live server). */
+const LEGACY_PORTS = [3738, 3739, 3740, 3741, 3742, 3743, 3744, 3745, 3746];
+let attachDir;
+let persistFile;
+
+function initUserDataPaths() {
+  attachDir = path.join(app.getPath('userData'), 'ssacc-attachments');
+  persistFile = path.join(app.getPath('userData'), 'ssacc-local-storage.json');
+  if (!fs.existsSync(attachDir)) fs.mkdirSync(attachDir, { recursive: true });
+}
 let mainWindow;
 let server;
 
@@ -25,6 +34,36 @@ const MIME_TYPES = {
 const CLIENT_DIST = path.join(__dirname, 'dist/client');
 const PREFERRED_PORT = 3737;
 const PORT_ATTEMPTS = 10;
+
+async function listenStrictPortWithRetry(server, port, attempts = 5) {
+  let lastError;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await listenStrictPort(server, port);
+    } catch (err) {
+      lastError = err;
+      if (err?.code !== 'EADDRINUSE' || i === attempts - 1) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+  }
+  throw lastError;
+}
+
+function listenStrictPort(server, port) {
+  return new Promise((resolve, reject) => {
+    const onError = (err) => {
+      server.off('listening', onListening);
+      reject(err);
+    };
+    const onListening = () => {
+      server.off('error', onError);
+      resolve(port);
+    };
+    server.once('error', onError);
+    server.once('listening', onListening);
+    server.listen(port, '127.0.0.1');
+  });
+}
 
 function listenOnAvailablePort(server, startPort) {
   return new Promise((resolve, reject) => {
@@ -53,6 +92,150 @@ function listenOnAvailablePort(server, startPort) {
 
     tryListen();
   });
+}
+
+function readPersistEnvelope() {
+  try {
+    if (!fs.existsSync(persistFile)) return null;
+    const raw = fs.readFileSync(persistFile, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || !parsed.data) return null;
+    return parsed;
+  } catch (err) {
+    console.error('[persist-read-file]', err);
+    return null;
+  }
+}
+
+function writePersistEnvelope(data) {
+  const savedAt = new Date().toISOString();
+  const payload = { savedAt, data };
+  const tmp = `${persistFile}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(payload), 'utf8');
+  fs.renameSync(tmp, persistFile);
+  return payload;
+}
+
+function persistHasUserManagedStore(envelope) {
+  if (!envelope?.data?.[OPERATIONAL_STORE_KEY]) return false;
+  try {
+    const ds = JSON.parse(envelope.data[OPERATIONAL_STORE_KEY]);
+    return !!ds.userManaged;
+  } catch {
+    return false;
+  }
+}
+
+function scoreLocalStorageSnapshot(data) {
+  if (!data || typeof data !== 'object') return 0;
+  let score = Object.keys(data).length;
+  const raw = data[OPERATIONAL_STORE_KEY];
+  if (!raw) return score;
+  try {
+    const ds = JSON.parse(raw);
+    if (ds.userManaged) score += 10_000;
+    if (Array.isArray(ds.units) && ds.units.length > 0) score += ds.units.length * 10;
+    if (Array.isArray(ds.equipment)) score += ds.equipment.length;
+  } catch {
+    /* ignore */
+  }
+  return score;
+}
+
+function listenOnce(server, port) {
+  return new Promise((resolve, reject) => {
+    const onError = (err) => {
+      server.off('listening', onListening);
+      reject(err);
+    };
+    const onListening = () => {
+      server.off('error', onError);
+      resolve(port);
+    };
+    server.once('error', onError);
+    server.once('listening', onListening);
+    server.listen(port, '127.0.0.1');
+  });
+}
+
+async function readLegacyLocalStorageFromPort(port) {
+  const probeServer = http.createServer((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end('<!doctype html><html><head><title>SSACC migrate</title></head><body></body></html>');
+  });
+
+  let probeWindow;
+  try {
+    await listenOnce(probeServer, port);
+    probeWindow = new BrowserWindow({
+      show: false,
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+      },
+    });
+
+    await Promise.race([
+      probeWindow.loadURL(`http://127.0.0.1:${port}/`),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('legacy probe timeout')), 4000)),
+    ]);
+    const snapshot = await probeWindow.webContents.executeJavaScript(`(() => {
+      const data = {};
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key) continue;
+        const value = localStorage.getItem(key);
+        if (value !== null) data[key] = value;
+      }
+      return data;
+    })()`);
+
+    return snapshot && typeof snapshot === 'object' ? snapshot : null;
+  } catch (err) {
+    console.warn(`[legacy-migrate] port ${port}:`, err?.message ?? err);
+    return null;
+  } finally {
+    if (probeWindow && !probeWindow.isDestroyed()) probeWindow.destroy();
+    await new Promise((resolve) => probeServer.close(resolve));
+  }
+}
+
+async function migrateLegacyLocalStorageIfNeeded() {
+  if (!app.isPackaged) return;
+
+  const existing = readPersistEnvelope();
+  if (persistHasUserManagedStore(existing)) return;
+
+  let bestSnapshot = existing?.data ?? null;
+  let bestScore = scoreLocalStorageSnapshot(bestSnapshot);
+
+  for (const port of LEGACY_PORTS) {
+    const snapshot = await readLegacyLocalStorageFromPort(port);
+    const score = scoreLocalStorageSnapshot(snapshot);
+    if (score > bestScore) {
+      bestSnapshot = snapshot;
+      bestScore = score;
+    }
+  }
+
+  if (!bestSnapshot || bestScore === 0) return;
+
+  try {
+    writePersistEnvelope(bestSnapshot);
+    console.log(`[legacy-migrate] Copied ${Object.keys(bestSnapshot).length} localStorage keys to ${persistFile}`);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.reload();
+    }
+  } catch (err) {
+    console.error('[legacy-migrate]', err);
+  }
+}
+
+function scheduleLegacyMigration() {
+  if (!app.isPackaged) return;
+  setTimeout(() => {
+    void migrateLegacyLocalStorageIfNeeded();
+  }, 2500);
 }
 
 function showStartupError(title, message) {
@@ -143,7 +326,9 @@ async function startServer() {
     });
   });
 
-  const port = await listenOnAvailablePort(server, PREFERRED_PORT);
+  const port = app.isPackaged
+    ? await listenStrictPortWithRetry(server, PREFERRED_PORT)
+    : await listenOnAvailablePort(server, PREFERRED_PORT);
   activePort = port;
   console.log(`Server listening on port ${port}`);
   return port;
@@ -163,6 +348,7 @@ function createWindow(port) {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
+    scheduleLegacyMigration();
   });
 
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
@@ -183,22 +369,43 @@ function createWindow(port) {
   mainWindow.on('closed', () => (mainWindow = null));
 }
 ipcMain.handle('attachment-save', async (_, filePath, base64Data) => {
-  const dest = path.join(ATTACH_DIR, filePath.replace(/[/\\]/g, '_'));
+  const dest = path.join(attachDir, filePath.replace(/[/\\]/g, '_'));
   fs.writeFileSync(dest, Buffer.from(base64Data, 'base64'));
   return dest;
 });
 ipcMain.handle('attachment-load', async (_, filePath) => {
-  const dest = path.join(ATTACH_DIR, filePath.replace(/[/\\]/g, '_'));
+  const dest = path.join(attachDir, filePath.replace(/[/\\]/g, '_'));
   if (!fs.existsSync(dest)) return null;
   return fs.readFileSync(dest).toString('base64');
 });
 ipcMain.handle('attachment-delete', async (_, filePath) => {
-  const dest = path.join(ATTACH_DIR, filePath.replace(/[/\\]/g, '_'));
+  const dest = path.join(attachDir, filePath.replace(/[/\\]/g, '_'));
   if (fs.existsSync(dest)) fs.unlinkSync(dest);
+});
+
+ipcMain.handle('persist-read', async () => {
+  return readPersistEnvelope();
+});
+
+ipcMain.handle('persist-write', async (_, payload) => {
+  try {
+    if (!payload || typeof payload !== 'object' || !payload.data) return false;
+    const tmp = `${persistFile}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(payload), 'utf8');
+    fs.renameSync(tmp, persistFile);
+    return true;
+  } catch (err) {
+    console.error('[persist-write]', err);
+    return false;
+  }
 });
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
+  dialog.showErrorBox(
+    'SSACC already running',
+    'Another SSACC window is already open. Close it and try again.',
+  );
   app.quit();
 } else {
   app.on('second-instance', () => {
@@ -209,14 +416,16 @@ if (!gotSingleInstanceLock) {
   });
 
   app.on('ready', async () => {
+    initUserDataPaths();
     try {
       const port = await startServer();
       createWindow(port);
     } catch (err) {
-      showStartupError(
-        'SSACC failed to start',
-        `${err?.message ?? err}\n\nIf another copy of SSACC is already running, close it and try again.`,
-      );
+      const message =
+        err?.code === 'EADDRINUSE'
+          ? `Port ${PREFERRED_PORT} is already in use.\n\nClose any other SSACC window and try again. Running multiple copies can cause data to appear missing.`
+          : `${err?.message ?? err}\n\nIf another copy of SSACC is already running, close it and try again.`;
+      showStartupError('SSACC failed to start', message);
     }
   });
 }

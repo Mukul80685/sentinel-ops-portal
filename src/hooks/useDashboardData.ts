@@ -14,6 +14,8 @@ export type DashboardData = DashboardMetrics & {
   isLoading: boolean;
   isFetching: boolean;
   hasData: boolean;
+  /** Increments when Priority & Allocation / visibility overlays change. */
+  derivedRevision: number;
   /** Executive tile summaries */
   avgEngagement: number;
   totalActiveSatellites: number;
@@ -46,6 +48,7 @@ export function useDashboardData(): DashboardData {
       isLoading,
       isFetching,
       hasData,
+      derivedRevision,
       avgEngagement: metrics.engagement.avgOccupancy,
       totalActiveSatellites: metrics.activity.totalMonitoredSatellites,
       avgOptimizationScore: metrics.optimization.avgCompositeScore,

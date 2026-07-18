@@ -130,9 +130,9 @@ export async function getEquipmentById(
 export async function listEngagementsForUnit(
   unitId: string
 ): Promise<OpEngagement[]> {
-  return ensureOperationalDataset().engagements.filter(
-    (e) => e.unit_id === unitId
-  );
+  return ensureOperationalDataset()
+    .engagements.filter((e) => e.unit_id === unitId)
+    .map((e) => ({ ...e }));
 }
 
 /**

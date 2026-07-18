@@ -28,7 +28,7 @@ import {
 } from "@/lib/intelScanStorage";
 import { intelStorageSlug } from "@/lib/intelStorageKeys";
 import { resolveIntUnitSlug } from "@/lib/operationalSync";
-import { computeUnitResourceEngagementPct } from "@/lib/resourceEngagementStats";
+import { computeTableDrivenResourceEngagementPct } from "@/lib/resourceEngagementStats";
 
 function engagementHasOperationalChain(
   eng: any,
@@ -479,5 +479,17 @@ export function computeGatedResourceEngagementPct(
   if (!unitHasIntMonitoringActivity(unitDbId, unitCode, engagements, equipment, intelRows)) {
     return 0;
   }
-  return computeUnitResourceEngagementPct(unitDbId, equipment, engagements);
+  const intMonitoring = listIntelMonitoringSatellites(
+    unitDbId,
+    unitCode,
+    engagements,
+    equipment,
+    intelRows,
+  );
+  return computeTableDrivenResourceEngagementPct(
+    unitDbId,
+    equipment,
+    intMonitoring,
+    engagements,
+  );
 }

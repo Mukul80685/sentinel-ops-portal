@@ -6,7 +6,8 @@ import { HomeNavIconBadge } from "@/components/home/HomeNavIcons";
 import { Empty } from "@/components/Empty";
 import { IntelSatelliteDrillDown } from "@/components/intel/IntelSatelliteDrillDown";
 import { listUnits, listIntelRecordsForUnit, listEquipmentForUnit } from "@/lib/queries";
-import { Archive, ArrowLeft, Satellite, Trash2, FileInput, FileSpreadsheet, Check, SkipForward, ExternalLink } from "lucide-react";
+import { Archive, ArrowLeft, Satellite, Trash2, FileInput, FileSpreadsheet, Check, SkipForward, ExternalLink, Pencil, X } from "lucide-react";
+import { Input } from "@/components/ui/input";
 import { ccModuleBackLink } from "@/lib/controlCenter";
 import {
   buildIntelDrillDownReport,
@@ -73,6 +74,11 @@ import {
 import { unhideUnitInModule } from "@/lib/moduleUnitRegistry";
 import { rebindAndPersistUnitEngagements } from "@/lib/operationalStore";
 import { notifyOperationalDerivedRefresh } from "@/lib/operationalRefresh";
+import {
+  applyIntelScanRowEdit,
+  buildIntelReportId,
+  type IntelScanRowDraft,
+} from "@/lib/intelScanRowEdit";
 
 // ── Scan report override storage ────────────────────────────────────────────
 // Uses shared intelScanStorage helpers (canonical slot-based keys).
@@ -715,6 +721,8 @@ function IntelUnitView() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [editingReportId, setEditingReportId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<IntelScanRowDraft | null>(null);
   const importFileRef = useRef<HTMLInputElement>(null);
   const [scanOverrides, setScanOverrides] = useState<ScanReportOverride[]>([]);
   const [suppressedSatNames, setSuppressedSatNames] = useState<Set<string>>(new Set());
@@ -1002,6 +1010,67 @@ function IntelUnitView() {
     setSelectedIds(selectAll ? new Set() : new Set(visibleIds));
   }
 
+  function startRowEdit(row: (typeof mergedTableRows)[number]) {
+    setEditingReportId(row.reportId);
+    setEditDraft({
+      satelliteName: row.satelliteName,
+      polarization: row.polarization,
+      totalScanned: String(row.totalScanned),
+      analyzed: String(row.analyzed),
+      pending: String(row.pending),
+      productivity: row.productivityScore === null ? "" : String(row.productivityScore),
+      updatedOn: row.reportTimestamp ?? "",
+    });
+  }
+
+  function cancelRowEdit() {
+    setEditingReportId(null);
+    setEditDraft(null);
+  }
+
+  function confirmRowEdit() {
+    if (!editingReportId || !editDraft) return;
+    const row = mergedTableRows.find((r) => r.reportId === editingReportId);
+    if (!row) return;
+
+    const result = applyIntelScanRowEdit({
+      intUnitSlug,
+      unitCode: unit?.code,
+      dbUnitId,
+      previousSatelliteName: row.satelliteName,
+      draft: editDraft,
+      existingOverrides: scanOverrides,
+      otherSatelliteNames: mergedTableRows
+        .filter((r) => r.reportId !== editingReportId)
+        .map((r) => r.satelliteName),
+    });
+
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+
+    const newName = editDraft.satelliteName.trim();
+    const reportIdChanged = row.reportId !== buildIntelReportId(intUnitSlug, newName);
+
+    setScanOverrides(result.overrides);
+    if (selectedReportId === editingReportId && reportIdChanged) {
+      setSelectedReportId(buildIntelReportId(intUnitSlug, newName));
+    }
+    setEditingReportId(null);
+    setEditDraft(null);
+    unhideUnitInModule(dbUnitId, "intel");
+    rebindAndPersistUnitEngagements(dbUnitId);
+    notifyOperationalDerivedRefresh();
+    void qc.invalidateQueries({ queryKey: ENGAGEMENTS_ALL_KEY });
+    void qc.invalidateQueries({ queryKey: ["intel-eng", dbUnitId] });
+    toast.success("Scan report row updated.");
+  }
+
+  function patchEditDraft(patch: Partial<IntelScanRowDraft>) {
+    setEditDraft((d) => (d ? { ...d, ...patch } : d));
+  }
+
   if (!unit) {
     return (
       <AppShell
@@ -1164,7 +1233,7 @@ function IntelUnitView() {
               {/* Column template: checkbox | # | satellite | 3 numeric | productivity | date | actions */}
               <div
                 className="grid items-center gap-x-2 sticky top-0 z-10 bg-secondary/30 backdrop-blur-sm border-b border-border
-                           [grid-template-columns:1.5rem_2rem_minmax(0,1.3fr)_repeat(3,minmax(0,0.75fr))_minmax(0,1fr)_minmax(0,1.1fr)_2rem]"
+                           [grid-template-columns:1.5rem_2rem_minmax(0,1.3fr)_repeat(3,minmax(0,0.75fr))_minmax(0,1fr)_minmax(0,1.1fr)_3.5rem]"
               >
                 {canEdit && (
                   <div className="px-1 py-2 flex items-center justify-center">
@@ -1190,13 +1259,16 @@ function IntelUnitView() {
               <div className="divide-y divide-border/50">
                 {mergedTableRows.map((row, idx) => {
                   const checked = selectedIds.has(row.reportId);
+                  const isEditing = editingReportId === row.reportId && editDraft !== null;
+                  const compactInputCls =
+                    "h-7 mono text-[11px] px-1.5 py-0.5 min-w-0 border-border bg-background";
                   return (
                     <div
                       key={row.reportId}
                       role="row"
                       className={`grid items-center gap-x-2 transition-colors
-                                 [grid-template-columns:1.5rem_2rem_minmax(0,1.3fr)_repeat(3,minmax(0,0.75fr))_minmax(0,1fr)_minmax(0,1.1fr)_2rem]
-                                 ${checked ? "bg-primary/5" : "hover:bg-primary/8"}`}
+                                 [grid-template-columns:1.5rem_2rem_minmax(0,1.3fr)_repeat(3,minmax(0,0.75fr))_minmax(0,1fr)_minmax(0,1.1fr)_3.5rem]
+                                 ${checked ? "bg-primary/5" : isEditing ? "bg-primary/8" : "hover:bg-primary/8"}`}
                     >
                       {/* Checkbox */}
                       {canEdit ? (
@@ -1224,10 +1296,27 @@ function IntelUnitView() {
                         {idx + 1}
                       </div>
 
-                      {/* Satellite name — always clickable; opens drill-down for all rows */}
+                      {/* Satellite */}
+                      {isEditing ? (
+                        <div className="px-1 py-1.5 min-w-0 text-left space-y-1">
+                          <Input
+                            value={editDraft.satelliteName}
+                            onChange={(e) => patchEditDraft({ satelliteName: e.target.value })}
+                            className={compactInputCls}
+                            placeholder="Satellite name"
+                          />
+                          <Input
+                            value={editDraft.polarization}
+                            onChange={(e) => patchEditDraft({ polarization: e.target.value })}
+                            className={compactInputCls}
+                            placeholder="Polarization"
+                          />
+                        </div>
+                      ) : (
                       <div
                         className="px-1 py-2 min-w-0 text-left cursor-pointer"
                         onClick={() => {
+                          if (editingReportId) return;
                           // For imported (non-roster) rows that haven't completed setup yet,
                           // open the setup wizard first — but only if they have scan data.
                           // Zero-count and seeded-roster rows go directly to the analysis page.
@@ -1247,7 +1336,7 @@ function IntelUnitView() {
                           setSelectedReportId(row.reportId);
                         }}
                         tabIndex={0}
-                        onKeyDown={(e) => e.key === "Enter" && setSelectedReportId(row.reportId)}
+                        onKeyDown={(e) => e.key === "Enter" && !editingReportId && setSelectedReportId(row.reportId)}
                       >
                         <div className="mono text-[12px] font-bold text-foreground uppercase leading-tight">
                           {row.satelliteName}
@@ -1278,7 +1367,49 @@ function IntelUnitView() {
                           </>
                         )}
                       </div>
+                      )}
 
+                      {isEditing ? (
+                        <>
+                          <div className="px-1 py-1.5">
+                            <Input
+                              value={editDraft.totalScanned}
+                              onChange={(e) => patchEditDraft({ totalScanned: e.target.value })}
+                              className={`${compactInputCls} text-center`}
+                            />
+                          </div>
+                          <div className="px-1 py-1.5">
+                            <Input
+                              value={editDraft.analyzed}
+                              onChange={(e) => patchEditDraft({ analyzed: e.target.value })}
+                              className={`${compactInputCls} text-center`}
+                            />
+                          </div>
+                          <div className="px-1 py-1.5">
+                            <Input
+                              value={editDraft.pending}
+                              onChange={(e) => patchEditDraft({ pending: e.target.value })}
+                              className={`${compactInputCls} text-center`}
+                            />
+                          </div>
+                          <div className="px-1 py-1.5">
+                            <Input
+                              value={editDraft.productivity}
+                              onChange={(e) => patchEditDraft({ productivity: e.target.value })}
+                              className={`${compactInputCls} text-center`}
+                              placeholder="N/A"
+                            />
+                          </div>
+                          <div className="px-1 py-1.5">
+                            <Input
+                              value={editDraft.updatedOn}
+                              onChange={(e) => patchEditDraft({ updatedOn: e.target.value })}
+                              className={`${compactInputCls} text-center`}
+                            />
+                          </div>
+                        </>
+                      ) : (
+                        <>
                       <div className={`px-1 py-2 mono text-[12px] text-center font-semibold tabular-nums ${row.isZeroImported || !row.scanEligible ? "text-muted-foreground/50" : "text-foreground"}`}>
                         {row.isZeroImported ? "—" : row.totalScanned.toLocaleString()}
                       </div>
@@ -1310,18 +1441,53 @@ function IntelUnitView() {
                       <div className={`px-1 py-2 mono text-[11px] tabular-nums text-center ${row.isZeroImported ? "text-muted-foreground/50" : "text-muted-foreground"}`}>
                         {row.reportTimestamp && !row.isZeroImported ? formatIntelCompactDate(row.reportTimestamp) : "—"}
                       </div>
+                        </>
+                      )}
 
-                      {/* Delete action */}
+                      {/* Row actions */}
                       {canEdit ? (
-                        <div className="px-1 py-2 flex items-center justify-center">
-                          <button
-                            type="button"
-                            title="Clear intel records for this satellite"
-                            onClick={() => setDeleteTargetId(row.reportId)}
-                            className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </button>
+                        <div className="px-0.5 py-2 flex items-center justify-center gap-0.5">
+                          {isEditing ? (
+                            <>
+                              <button
+                                type="button"
+                                title="Confirm row edit"
+                                onClick={confirmRowEdit}
+                                className="p-1 rounded hover:bg-emerald-500/15 text-emerald-700 transition-colors"
+                              >
+                                <Check className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                title="Cancel edit"
+                                onClick={cancelRowEdit}
+                                className="p-1 rounded hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                title="Edit scan report row"
+                                disabled={!!editingReportId}
+                                onClick={() => startRowEdit(row)}
+                                className="p-1 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors disabled:opacity-40 disabled:pointer-events-none"
+                              >
+                                <Pencil className="h-3 w-3" />
+                              </button>
+                              <button
+                                type="button"
+                                title="Clear intel records for this satellite"
+                                disabled={!!editingReportId}
+                                onClick={() => setDeleteTargetId(row.reportId)}
+                                className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors disabled:opacity-40 disabled:pointer-events-none"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </button>
+                            </>
+                          )}
                         </div>
                       ) : (
                         <div />

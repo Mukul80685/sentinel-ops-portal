@@ -724,4 +724,121 @@ export async function getEligibleAllocationUnits(
   return eligible;
 }
 
+function rekeyFrequencyActionStates(
+  oldReportId: string,
+  newReportId: string,
+  newSatelliteName: string,
+): boolean {
+  const all = loadJson<Record<string, FrequencyActionState>>(STORAGE_ACTIONS, {});
+  const next: Record<string, FrequencyActionState> = {};
+  let changed = false;
+
+  for (const [key, state] of Object.entries(all)) {
+    if (key === `__report__${oldReportId}`) {
+      next[`__report__${newReportId}`] = { ...state, satelliteName: newSatelliteName };
+      changed = true;
+      continue;
+    }
+    const parsed = parseFrequencyKey(key);
+    if (parsed?.reportId === oldReportId) {
+      const newKey = frequencyKey(newReportId, parsed.frequencyId, parsed.section);
+      next[newKey] = { ...state, satelliteName: newSatelliteName };
+      changed = true;
+      continue;
+    }
+    next[key] = state;
+  }
+
+  if (changed) saveJson(STORAGE_ACTIONS, next);
+  return changed;
+}
+
+function patchRefSatelliteName<T extends { refKey: string; satelliteName: string; sourceReportId?: string }>(
+  rows: T[],
+  oldReportId: string,
+  newReportId: string,
+  newSatelliteName: string,
+): T[] {
+  return rows.map((row) => {
+    const refMatches = row.refKey.includes(oldReportId);
+    const sourceMatches = row.sourceReportId === oldReportId;
+    if (!refMatches && !sourceMatches) return row;
+    return {
+      ...row,
+      refKey: refMatches ? row.refKey.replaceAll(oldReportId, newReportId) : row.refKey,
+      sourceReportId: sourceMatches ? newReportId : row.sourceReportId,
+      satelliteName: sourceMatches || refMatches ? newSatelliteName : row.satelliteName,
+    };
+  });
+}
+
+/** Re-key frequency action stores when an INT unit table row is renamed. */
+export function migrateIntelFrequencyReportId(
+  oldReportId: string,
+  newReportId: string,
+  newSatelliteName: string,
+): void {
+  if (typeof window === "undefined" || oldReportId === newReportId) return;
+
+  let changed = rekeyFrequencyActionStates(oldReportId, newReportId, newSatelliteName);
+
+  const important = patchRefSatelliteName(
+    loadJson<ImportantFreqRef[]>(STORAGE_IMPORTANT, []),
+    oldReportId,
+    newReportId,
+    newSatelliteName,
+  );
+  const importantBefore = loadJson<ImportantFreqRef[]>(STORAGE_IMPORTANT, []);
+  if (JSON.stringify(important) !== JSON.stringify(importantBefore)) {
+    saveJson(STORAGE_IMPORTANT, important);
+    changed = true;
+  }
+
+  const discarded = patchRefSatelliteName(
+    loadJson<DiscardedFreqRef[]>(STORAGE_DISCARDED, []),
+    oldReportId,
+    newReportId,
+    newSatelliteName,
+  );
+  const discardedBefore = loadJson<DiscardedFreqRef[]>(STORAGE_DISCARDED, []);
+  if (JSON.stringify(discarded) !== JSON.stringify(discardedBefore)) {
+    saveJson(STORAGE_DISCARDED, discarded);
+    changed = true;
+  }
+
+  const queue = patchRefSatelliteName(
+    loadJson<AnalysisQueueEntry[]>(STORAGE_ANALYSIS_QUEUE, []),
+    oldReportId,
+    newReportId,
+    newSatelliteName,
+  );
+  const queueBefore = loadJson<AnalysisQueueEntry[]>(STORAGE_ANALYSIS_QUEUE, []);
+  if (JSON.stringify(queue) !== JSON.stringify(queueBefore)) {
+    saveJson(STORAGE_ANALYSIS_QUEUE, queue);
+    changed = true;
+  }
+
+  const allocations = patchRefSatelliteName(
+    loadJson<AllocationRecord[]>(STORAGE_ALLOCATIONS, []),
+    oldReportId,
+    newReportId,
+    newSatelliteName,
+  );
+  const allocationsBefore = loadJson<AllocationRecord[]>(STORAGE_ALLOCATIONS, []);
+  if (JSON.stringify(allocations) !== JSON.stringify(allocationsBefore)) {
+    saveJson(STORAGE_ALLOCATIONS, allocations);
+    changed = true;
+  }
+
+  const overrides = loadJson<Record<string, boolean>>(STORAGE_OVERRIDES, {});
+  if (overrides[oldReportId]) {
+    overrides[newReportId] = true;
+    delete overrides[oldReportId];
+    saveJson(STORAGE_OVERRIDES, overrides);
+    changed = true;
+  }
+
+  if (changed) emitUpdate();
+}
+
 export { fetchAllEngagements };

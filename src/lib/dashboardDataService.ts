@@ -22,6 +22,7 @@ import {
   intelRowProductiveCounts,
   listIntelMonitoringSatellites,
 } from "@/lib/intelLiveBridge";
+import { computeUnitResourceEngagementPct } from "@/lib/resourceEngagementStats";
 import type { IntelSatelliteReportRow } from "@/lib/intelAnalysisData";
 import { canonicalSatelliteKey, normalizeSatelliteName, resolveMatrixVisibility } from "@/lib/visibilityMatrix";
 import { beamNameToBand, polarizationToBand } from "@/lib/intelIntegrity";
@@ -300,16 +301,16 @@ export function buildEngagementStatus(
     };
   });
 
-  const monitoringUnits = units.filter((u) => u.monitoringSatelliteCount > 0);
-  const occupancyValues = monitoringUnits.map((u) => u.occupancyPct);
   const avgOccupancy =
-    occupancyValues.length > 0
-      ? Math.round(occupancyValues.reduce((s, v) => s + v, 0) / occupancyValues.length)
+    units.length > 0
+      ? Math.round(units.reduce((s, u) => s + u.occupancyPct, 0) / units.length)
       : 0;
 
   return {
     units,
-    totalActiveScans: monitoringUnits.reduce((s, u) => s + u.monitoringSatelliteCount, 0),
+    totalActiveScans: units
+      .filter((u) => u.monitoringSatelliteCount > 0)
+      .reduce((s, u) => s + u.monitoringSatelliteCount, 0),
     avgOccupancy,
   };
 }
@@ -582,12 +583,11 @@ export function buildOptimizationScores(
       ...new Set([...monitoredSatelliteNames, ...historyNames]),
     ];
     const resourceEngagementPct = isMonitoring
-      ? computeGatedResourceEngagementPct(
+      ? computeUnitResourceEngagementPct(
           state.unitDbId,
-          state.unitCode,
           equipment,
           engagements,
-          intelRows,
+          intMonitoring,
         )
       : 0;
 

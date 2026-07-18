@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { ChevronDown, ChevronUp, Zap } from "lucide-react";
 import { DASHBOARD_PANEL_LABELS, DASHBOARD_PANEL_PURPOSE } from "@/lib/dashboardLabels";
 import { useDashboardData } from "@/hooks/useDashboardData";
+import { notifyOperationalDerivedRefresh } from "@/lib/operationalRefresh";
 import type { UnitOptimizationData } from "@/lib/operationalState";
 import { scoreColor, scorebar } from "@/components/satellite-monitoring/dashboardUtils";
 
@@ -103,11 +104,15 @@ function OverallScoreCell({ score, active }: { score: number; active: boolean })
 
 /** Optimization Engine — single-table view, INT-gated cross-module scores. */
 export function OptimizationEngine() {
-  const { fleetState, optimization, isLoading } = useDashboardData();
+  const { fleetState, optimization, isLoading, derivedRevision } = useDashboardData();
   const [sortKey, setSortKey] = useState<SortKey>("score");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [filterStatus, setFilterStatus] = useState<OptStatus | "ALL" | "IDLE">("ALL");
   const [tableExpanded, setTableExpanded] = useState(false);
+
+  useEffect(() => {
+    notifyOperationalDerivedRefresh();
+  }, []);
 
   const handleSort = (col: SortKey) => {
     if (sortKey === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -141,7 +146,7 @@ export function OptimizationEngine() {
         if (sortKey === "priority") diff = da.priority.score - db.priority.score;
         return sortDir === "asc" ? diff : -diff;
       });
-  }, [fleetState, optimization.byUnitId, filterStatus, sortKey, sortDir]);
+  }, [fleetState, optimization, optimization.byUnitId, filterStatus, sortKey, sortDir, derivedRevision]);
 
   const visible = tableExpanded ? rows : rows.slice(0, 4);
 

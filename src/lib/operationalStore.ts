@@ -9,8 +9,11 @@ import {
   type OpEngagement,
   type OpEquipment,
   type OpIntelRow,
+  type OpSatellite,
   type OpUnit,
 } from "@/lib/operationalDataset";
+import { flattenGlobalSatelliteCatalog } from "@/lib/satelliteCatalog";
+import { canonicalSatelliteKey, normalizeSatelliteName } from "@/lib/visibilityMatrix";
 import { OPERATIONAL_DATASET_VERSION, OPERATIONAL_STORE_EVENT, OPERATIONAL_STORE_KEY, UNIT_IDENTITY_OVERRIDES_KEY } from "@/lib/operationalConstants";
 import { UNIT_SLOTS, type UnitSlot } from "@/lib/priorityAllocation";
 import { rebindUnitEngagementHardware } from "@/lib/engagementEngine";
@@ -24,6 +27,11 @@ import {
 const MIN_FLEET_EQUIPMENT = 300;
 
 let _cache: OperationalDataset | null = null;
+
+/** Drop in-memory SSOT so the next read reloads from localStorage (after restore/migrate). */
+export function invalidateOperationalStoreCache(): void {
+  _cache = null;
+}
 
 type UnitIdentityOverride = { name: string; description: string | null };
 
@@ -576,6 +584,8 @@ export type OperationalEngagementPatch = Partial<
 export type NewOperationalEngagement = {
   unit_id: string;
   satellite_id: string;
+  /** Display name — used when satellite_id is a Priority & Allocation catalog id. */
+  satellite_name?: string;
   status: OpEngagement["status"];
   observation_start?: string | null;
   antenna_id?: string | null;
@@ -583,6 +593,49 @@ export type NewOperationalEngagement = {
   processing_server_id?: string | null;
   remarks?: string | null;
 };
+
+function operationalSatelliteNamesMatch(a: string, b: string): boolean {
+  return (
+    normalizeSatelliteName(a) === normalizeSatelliteName(b) ||
+    canonicalSatelliteKey(a) === canonicalSatelliteKey(b)
+  );
+}
+
+/** Resolve Priority & Allocation / catalog ids to an operational-store satellite (create if missing). */
+export function ensureOperationalSatelliteByName(name: string): OpSatellite {
+  const trimmed = name.trim();
+  const ds = getOperationalDataset();
+  const existing = ds.satellites.find((s) => operationalSatelliteNamesMatch(s.name, trimmed));
+  if (existing) return existing;
+
+  const catalogRow = flattenGlobalSatelliteCatalog().find((r) =>
+    operationalSatelliteNamesMatch(r.name, trimmed),
+  );
+  const posStr = catalogRow?.satellite?.position ?? "0";
+  const orbital_position = parseFloat(posStr.replace(/[^\d.-]/g, "")) || 0;
+  const slug = trimmed.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+  const sat: OpSatellite = {
+    id: `op-sat-${slug}`,
+    name: trimmed,
+    orbital_position,
+  };
+  ds.satellites.push(sat);
+  persistUserMutation(ds);
+  return sat;
+}
+
+function resolveOperationalSatellite(
+  ds: OperationalDataset,
+  satelliteId: string,
+  satelliteName?: string,
+): OpSatellite | null {
+  const byId = ds.satellites.find((s) => s.id === satelliteId);
+  if (byId) return byId;
+  if (satelliteName?.trim()) {
+    return ensureOperationalSatelliteByName(satelliteName.trim());
+  }
+  return null;
+}
 
 export function updateOperationalEngagement(
   engagementId: string,
@@ -593,9 +646,13 @@ export function updateOperationalEngagement(
   if (!eng) return false;
 
   if (patch.satellite_id !== undefined) {
-    const sat = ds.satellites.find((s) => s.id === patch.satellite_id);
+    const sat = resolveOperationalSatellite(
+      ds,
+      patch.satellite_id,
+      (patch as { satellite_name?: string }).satellite_name,
+    );
     if (!sat) return false;
-    eng.satellite_id = patch.satellite_id;
+    eng.satellite_id = sat.id;
     eng.satellites = { name: sat.name };
   }
   if (patch.status !== undefined) eng.status = patch.status;
@@ -625,13 +682,13 @@ export function removeOperationalEngagement(engagementId: string): boolean {
 
 export function insertOperationalEngagement(input: NewOperationalEngagement): OpEngagement | null {
   const ds = getOperationalDataset();
-  const sat = ds.satellites.find((s) => s.id === input.satellite_id);
+  const sat = resolveOperationalSatellite(ds, input.satellite_id, input.satellite_name);
   if (!sat) return null;
 
   const eng: OpEngagement = {
     id: `op-eng-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     unit_id: input.unit_id,
-    satellite_id: input.satellite_id,
+    satellite_id: sat.id,
     status: input.status,
     observation_start: input.observation_start ?? new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -660,6 +717,37 @@ export function rebindAndPersistUnitEngagements(unitDbId: string): number {
   );
   if (rebound > 0) persistUserMutation(ds);
   return rebound;
+}
+
+/** Update engagement + intel row satellite linkage when an INT table row is renamed. */
+export function renameUnitEngagementSatelliteName(
+  unitDbId: string,
+  oldName: string,
+  newName: string,
+): number {
+  const ds = getOperationalDataset();
+  const newSat = ensureOperationalSatelliteByName(newName);
+  let changed = 0;
+
+  for (const eng of ds.engagements) {
+    if (eng.unit_id !== unitDbId) continue;
+    const satName = eng.satellites?.name ?? "";
+    if (!operationalSatelliteNamesMatch(satName, oldName)) continue;
+    eng.satellite_id = newSat.id;
+    eng.satellites = { name: newSat.name };
+    changed++;
+  }
+
+  for (const row of ds.intelRows ?? []) {
+    if (row.unit_id !== unitDbId) continue;
+    const sat = ds.satellites.find((s) => s.id === row.satellite_id);
+    if (!sat || !operationalSatelliteNamesMatch(sat.name, oldName)) continue;
+    row.satellite_id = newSat.id;
+    changed++;
+  }
+
+  if (changed > 0) persistUserMutation(ds);
+  return changed;
 }
 
 export function removeOperationalIntelRows(ids: string[]): number {

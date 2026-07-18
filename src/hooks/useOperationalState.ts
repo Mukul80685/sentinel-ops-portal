@@ -15,10 +15,8 @@ import {
   ENGAGEMENTS_ALL_KEY,
 } from "@/lib/engagementEngine";
 import { ensureOperationalDataset } from "@/lib/operationalStore";
-import {
-  invalidateOperationalQueries,
-  subscribeOperationalSync,
-} from "@/lib/operationalRefresh";
+import { invalidateOperationalQueries } from "@/lib/operationalRefresh";
+import { useOperationalDerivedRevision } from "@/hooks/OperationalDerivedRevisionContext";
 
 /** Offline SSOT — refetch only when operational sync events invalidate queries. */
 const OPERATIONAL_QUERY_STALE_MS = Number.POSITIVE_INFINITY;
@@ -26,7 +24,7 @@ const OPERATIONAL_QUERY_STALE_MS = Number.POSITIVE_INFINITY;
 export function useOperationalState() {
   const [ready, setReady] = useState(false);
   /** Bumps when priority/visibility/module overlays change (localStorage SSOT). */
-  const [derivedRevision, setDerivedRevision] = useState(0);
+  const derivedRevision = useOperationalDerivedRevision();
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -35,12 +33,8 @@ export function useOperationalState() {
   }, []);
 
   useEffect(() => {
-    const refresh = () => {
-      setDerivedRevision((n) => n + 1);
-      invalidateOperationalQueries(queryClient);
-    };
-    return subscribeOperationalSync(refresh);
-  }, [queryClient]);
+    invalidateOperationalQueries(queryClient);
+  }, [derivedRevision, queryClient]);
 
   const unitsQuery = useQuery({
     queryKey: ["units"],

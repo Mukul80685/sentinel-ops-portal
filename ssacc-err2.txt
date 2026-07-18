@@ -1,0 +1,2 @@
+(node:12144) [DEP0180] DeprecationWarning: fs.Stats constructor is deprecated.
+(Use `SSACC --trace-deprecation ...` to show where the warning was created)
