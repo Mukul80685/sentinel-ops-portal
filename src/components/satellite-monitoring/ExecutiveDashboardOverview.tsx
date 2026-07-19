@@ -9,28 +9,44 @@ import {
   RotateCcw,
   Trash2,
   Undo2,
+  X,
 } from "lucide-react";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type MutableRefObject,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import { HomeNavIconBadge } from "@/components/home/HomeNavIcons";
 import {
   ExecutiveProgressRing,
   OptimizationScoreLegend,
 } from "@/components/satellite-monitoring/ExecutiveProgressRing";
 import { useExecutiveDashboardMetrics } from "@/components/satellite-monitoring/useExecutiveDashboardMetrics";
+import { useOperationalState } from "@/hooks/useOperationalState";
 import { DASHBOARD_PANEL_LABELS, DASHBOARD_PANEL_PURPOSE, type DashboardPanel } from "@/lib/dashboardLabels";
+import { listIntelMonitoringSatellites } from "@/lib/intelLiveBridge";
+import { buildOperationalFleetState, buildUnitOptimizationData } from "@/lib/operationalState";
+import { computeUnitResourceEngagementPct } from "@/lib/resourceEngagementStats";
+import {
+  getUnitScanHistory,
+  previewScanHistoryFromActiveSatellites,
+} from "@/lib/scanHistoryStore";
 
 export type { DashboardPanel };
 
 const TILE_CLASS =
   "home-module-tile relative flex flex-col items-center justify-center gap-4 sm:gap-5 lg:gap-6 " +
   "h-full min-h-[16rem] sm:min-h-[18rem] py-6 sm:py-8 px-4 sm:px-6 text-center no-underline group";
+
+const PANEL_TILE_CLASS =
+  "home-module-tile relative flex flex-col items-center justify-center gap-3 sm:gap-4 py-5 px-3 text-center min-h-[14rem]";
+
+const UNIT_LOCATION_FIELD_KEYS = ["location", "base", "station", "place", "description"] as const;
 
 type TileConfig = {
   panel: DashboardPanel;
@@ -45,11 +61,12 @@ const TILES: TileConfig[] = [
 
 const ZOOM_LEVELS = [1, 1.6, 2.5] as const;
 const DRAG_THRESHOLD_PX = 5;
-const MAP_MARKERS_LEGACY_KEY = "ssacc_map_markers_v1";
-const MAP_MARKERS_STORAGE_KEY = "ssacc_map_markers_v2";
+const MAP_MARKERS_LEGACY_KEY_V1 = "ssacc_map_markers_v1";
+const MAP_MARKERS_LEGACY_KEY_V2 = "ssacc_map_markers_v2";
+const MAP_MARKERS_STORAGE_KEY = "ssacc_map_markers_v3";
 const MARKER_PERCENT_MIN = 2;
 const MARKER_PERCENT_MAX = 98;
-const LABEL_BLOCK_OFFSET_Y = 10;
+const LABEL_BLOCK_OFFSET_Y = 8;
 
 const LABEL_TEXT_SHADOW = "0 0 4px rgba(255,255,255,0.9), 0 0 8px rgba(255,255,255,0.7)";
 
@@ -62,13 +79,49 @@ type MapMarker = {
   id: string;
   pin: MapMarkerPosition;
   label: MapMarkerPosition & { line1: string; line2: string };
+  unitId: string | null;
   locked: boolean;
 };
 
 type MarkerSnapshot = {
   pin: MapMarkerPosition;
   label: MapMarkerPosition & { line1: string; line2: string };
+  unitId: string | null;
 };
+
+type MapUnitSummary = {
+  engagementPct: number;
+  monitoredSatelliteCount: number;
+  optimizationScore: number;
+};
+
+type OperationalUnit = {
+  id: string;
+  code: string;
+  name?: string;
+  description?: string | null;
+  location?: string | null;
+  base?: string | null;
+  station?: string | null;
+  place?: string | null;
+};
+
+function resolveUnitLocationLine(unit: OperationalUnit): string {
+  for (const key of UNIT_LOCATION_FIELD_KEYS) {
+    const value = unit[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return "";
+}
+
+function resolveUnitLabelFields(unit: OperationalUnit): { line1: string; line2: string } {
+  return {
+    line1: unit.name?.trim() || unit.code,
+    line2: resolveUnitLocationLine(unit),
+  };
+}
 
 type MapInteractionState = {
   startX: number;
@@ -102,6 +155,10 @@ function isValidLabelBlock(value: unknown): value is MapMarkerPosition & { line1
   return typeof label.line1 === "string" && typeof label.line2 === "string";
 }
 
+function isValidUnitId(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
 function isValidMapMarker(value: unknown): value is MapMarker {
   if (!value || typeof value !== "object") return false;
   const marker = value as Record<string, unknown>;
@@ -109,12 +166,17 @@ function isValidMapMarker(value: unknown): value is MapMarker {
     typeof marker.id === "string" &&
     isValidMapMarkerPosition(marker.pin) &&
     isValidLabelBlock(marker.label) &&
+    isValidUnitId(marker.unitId) &&
     (marker.locked === undefined || typeof marker.locked === "boolean")
   );
 }
 
 function normalizeMapMarker(value: MapMarker): MapMarker {
-  return { ...value, locked: value.locked === true };
+  return {
+    ...value,
+    unitId: value.unitId ?? null,
+    locked: value.locked === true,
+  };
 }
 
 function loadMapMarkers(): MapMarker[] {
@@ -134,6 +196,79 @@ function loadMapMarkers(): MapMarker[] {
 function saveMapMarkers(markers: MapMarker[]) {
   if (typeof window === "undefined") return;
   localStorage.setItem(MAP_MARKERS_STORAGE_KEY, JSON.stringify(markers));
+}
+
+function buildMapUnitSummary(
+  unitId: string,
+  input: {
+    units: OperationalUnit[];
+    equipment: any[];
+    engagements: any[];
+    intelRows: any[];
+  },
+): MapUnitSummary | null {
+  const unit = input.units.find((entry) => entry.id === unitId);
+  if (!unit) return null;
+
+  const fleetState = buildOperationalFleetState({
+    dbUnits: [
+      {
+        id: unit.id,
+        code: unit.code,
+        name: unit.name ?? unit.code,
+        description: null,
+      },
+    ],
+    equipment: input.equipment,
+    engagements: input.engagements,
+    intelRows: input.intelRows,
+  });
+
+  const state = fleetState.byUnitId.get(unitId);
+  if (!state) return null;
+
+  const cap = state.capability;
+  const engagementPct =
+    cap.totalChains > 0
+      ? Math.min(100, Math.round((cap.activeChains / cap.totalChains) * 100))
+      : 0;
+
+  const intMonitoring = listIntelMonitoringSatellites(
+    unitId,
+    unit.code,
+    input.engagements,
+    input.equipment,
+    input.intelRows,
+  );
+  const monitoredSatelliteCount = intMonitoring.length;
+  const isMonitoring = monitoredSatelliteCount > 0;
+  const monitoredSatelliteNames = intMonitoring.map((row) => row.satelliteName);
+  const historyNames = isMonitoring
+    ? previewScanHistoryFromActiveSatellites(unitId, monitoredSatelliteNames).map((row) => row.satellite)
+    : getUnitScanHistory(unitId).map((row) => row.satellite);
+  const recentScanSatelliteNames = [...new Set([...monitoredSatelliteNames, ...historyNames])];
+  const resourceEngagementPct = isMonitoring
+    ? computeUnitResourceEngagementPct(
+        unitId,
+        input.equipment,
+        input.engagements,
+        intMonitoring,
+      )
+    : 0;
+
+  const unitEq = input.equipment.filter((entry) => entry.unit_id === unitId);
+  const optimization = buildUnitOptimizationData(state, unitEq, {
+    isMonitoring,
+    monitoredSatelliteNames,
+    recentScanSatelliteNames,
+    resourceEngagementPct,
+  });
+
+  return {
+    engagementPct,
+    monitoredSatelliteCount,
+    optimizationScore: optimization.compositeScore,
+  };
 }
 
 function clampPan(panX: number, panY: number, scale: number, viewportW: number, viewportH: number) {
@@ -276,6 +411,127 @@ function MapPinIcon() {
   );
 }
 
+function MapUnitSummaryCard({
+  panel,
+  accent,
+  className = "",
+  children,
+}: {
+  panel: DashboardPanel;
+  accent: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={`${PANEL_TILE_CLASS} ${className}`}>
+      <span className="mono text-[10px] font-bold uppercase tracking-[0.12em] text-foreground leading-snug">
+        {DASHBOARD_PANEL_LABELS[panel]}
+      </span>
+      {children}
+      <span className={`home-card-accent ${accent}`} aria-hidden="true" />
+    </div>
+  );
+}
+
+function MapUnitPanel({
+  marker,
+  summary,
+  isLoading,
+  onClose,
+}: {
+  marker: MapMarker;
+  summary: MapUnitSummary | null;
+  isLoading: boolean;
+  onClose: () => void;
+}) {
+  const unitTitle = marker.label.line1.trim() || "Unnamed unit";
+  const showLinkedContent = !isLoading && marker.unitId != null && summary != null;
+
+  return (
+    <div
+      data-unit-panel
+      className="pointer-events-auto absolute right-[30px] top-1/2 z-20 w-[680px] max-h-[calc(100%-5rem)] -translate-y-1/2 overflow-hidden rounded-lg border border-white/15 bg-[#0a1628]/92 shadow-2xl backdrop-blur-sm animate-in fade-in slide-in-from-right-4 duration-200"
+      onPointerDown={(event) => event.stopPropagation()}
+      onDoubleClick={(event) => event.stopPropagation()}
+    >
+      <div className="relative border-b border-white/10 px-4 py-3 pr-10">
+        <h2 className="text-sm font-bold leading-snug text-white">{unitTitle}</h2>
+        {marker.label.line2.trim() ? (
+          <p className="mt-0.5 text-xs leading-snug text-white/55">{marker.label.line2.trim()}</p>
+        ) : null}
+        <button
+          type="button"
+          aria-label="Close panel"
+          className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-sm text-white/70 transition-colors hover:bg-white/10 hover:text-white"
+          onClick={(event) => {
+            event.stopPropagation();
+            onClose();
+          }}
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="px-3 py-3">
+        {isLoading ? (
+          <p className="mono py-6 text-center text-[11px] font-semibold uppercase tracking-wider text-white/55">
+            Loading…
+          </p>
+        ) : !showLinkedContent ? (
+          <p className="py-6 text-center text-sm leading-snug text-white/60">
+            No unit linked — select a unit in edit mode
+          </p>
+        ) : (
+          <div className="flex flex-row gap-3">
+            <Link
+              to="/engagement/$unitId"
+              params={{ unitId: marker.unitId! }}
+              className="flex-1 min-w-0 cursor-pointer rounded-md no-underline transition-[filter,box-shadow] hover:brightness-110 hover:ring-1 hover:ring-white/20"
+            >
+              <MapUnitSummaryCard panel="engagement" accent={TILES[0].accent} className="h-full w-full">
+                <div className="flex flex-col items-center gap-3">
+                  <ExecutiveProgressRing value={summary.engagementPct} mode="engagement" />
+                  <p className="mono text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground text-center max-w-[12rem] leading-snug">
+                    Resource Engagement Across Serviceable Capacity
+                  </p>
+                </div>
+              </MapUnitSummaryCard>
+            </Link>
+
+            <MapUnitSummaryCard panel="activity" accent={TILES[1].accent} className="flex-1 min-w-0">
+              <div className="flex flex-col items-center gap-4">
+                <HomeNavIconBadge icon={Activity} theme="engagement" size="xl" solid />
+                <div className="text-center">
+                  <div className="mono text-4xl sm:text-5xl font-bold tabular-nums text-foreground leading-none">
+                    {summary.monitoredSatelliteCount}
+                  </div>
+                  <p className="mono mt-2 text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                    Active Satellites
+                  </p>
+                </div>
+              </div>
+            </MapUnitSummaryCard>
+
+            <MapUnitSummaryCard panel="optimization" accent={TILES[2].accent} className="flex-1 min-w-0">
+              <div className="flex flex-col items-center gap-3">
+                <ExecutiveProgressRing
+                  value={summary.optimizationScore}
+                  mode="optimization"
+                  suffix=""
+                />
+                <p className="mono text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground text-center max-w-[12rem] leading-snug">
+                  Overall Optimization Score
+                </p>
+                <OptimizationScoreLegend />
+              </div>
+            </MapUnitSummaryCard>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function MapMarkerEditToolbar({
   pinScreen,
   marker,
@@ -362,9 +618,10 @@ function MapMarker({
   pinScreen,
   labelScreen,
   isEditMode,
-  autoFocusLine1,
-  onUpdateLine1,
-  onUpdateLine2,
+  isPanelOpen,
+  units,
+  onPanelToggle,
+  onUpdateUnitId,
   onUpdatePinPosition,
   onUpdateLabelPosition,
   onDelete,
@@ -378,9 +635,10 @@ function MapMarker({
   pinScreen: ScreenCoords;
   labelScreen: ScreenCoords;
   isEditMode: boolean;
-  autoFocusLine1: boolean;
-  onUpdateLine1: (id: string, line1: string) => void;
-  onUpdateLine2: (id: string, line2: string) => void;
+  isPanelOpen: boolean;
+  units: OperationalUnit[];
+  onPanelToggle: (id: string) => void;
+  onUpdateUnitId: (id: string, unitId: string | null) => void;
   onUpdatePinPosition: (id: string, position: MapMarkerPosition) => void;
   onUpdateLabelPosition: (id: string, position: MapMarkerPosition) => void;
   onDelete: (id: string) => void;
@@ -390,16 +648,8 @@ function MapMarker({
   onDragActiveChange: (active: boolean) => void;
   clientToMarkerPercents: (clientX: number, clientY: number) => MapMarkerPosition;
 }) {
-  const line1InputRef = useRef<HTMLInputElement>(null);
-  const line2InputRef = useRef<HTMLInputElement>(null);
   const pinDragRef = useRef(false);
   const labelDragRef = useRef(false);
-
-  useEffect(() => {
-    if (autoFocusLine1 && isEditMode && !marker.locked) {
-      line1InputRef.current?.focus();
-    }
-  }, [autoFocusLine1, isEditMode, marker.locked]);
 
   const pinDragHandlers = createMarkerPartDragHandlers({
     dragRef: pinDragRef,
@@ -421,6 +671,7 @@ function MapMarker({
     <>
       <div
         data-map-marker
+        data-map-marker-pin
         className={`absolute z-[6] pointer-events-auto -translate-x-1/2 -translate-y-full touch-none ${
           isEditMode
             ? "cursor-move rounded-full ring-2 ring-white/70 animate-pulse"
@@ -432,11 +683,6 @@ function MapMarker({
         onPointerMove={pinDragHandlers.onPointerMove}
         onPointerUp={pinDragHandlers.onPointerUp}
         onPointerCancel={pinDragHandlers.onPointerCancel}
-        onClick={(event) => {
-          if (isEditMode) return;
-          event.stopPropagation();
-          console.log(marker.id);
-        }}
       >
         <MapPinIcon />
       </div>
@@ -451,7 +697,7 @@ function MapMarker({
       >
         {isEditMode ? (
           <div
-            className="flex items-stretch border border-black/50 bg-transparent"
+            className="flex min-w-[160px] items-stretch border border-black/50 bg-transparent"
             onPointerDown={stopMarkerPointerEvent}
           >
             <button
@@ -463,45 +709,56 @@ function MapMarker({
             >
               ⠿
             </button>
-            <div className="flex min-w-0 flex-col px-1 py-0.5">
-              <input
-                ref={line1InputRef}
-                type="text"
-                value={marker.label.line1}
-                readOnly={marker.locked}
-                onChange={(event) => onUpdateLine1(marker.id, event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    line2InputRef.current?.focus();
-                  }
-                }}
-                onPointerDown={stopMarkerPointerEvent}
-                placeholder="Unit name"
-                className="w-36 border-0 bg-transparent px-0 py-0.5 text-[13px] font-bold text-black placeholder:text-black/40 outline-none read-only:opacity-80"
-              />
-              <input
-                ref={line2InputRef}
-                type="text"
-                value={marker.label.line2}
-                readOnly={marker.locked}
-                onChange={(event) => onUpdateLine2(marker.id, event.target.value)}
-                onPointerDown={stopMarkerPointerEvent}
-                placeholder="Location"
-                className="w-36 border-0 bg-transparent px-0 py-0.5 text-[11px] font-bold text-black placeholder:text-black/40 outline-none read-only:opacity-80"
-              />
-            </div>
+            <select
+              aria-label="Link operational unit"
+              value={marker.unitId ?? ""}
+              disabled={marker.locked}
+              onChange={(event) =>
+                onUpdateUnitId(marker.id, event.target.value ? event.target.value : null)
+              }
+              className="min-w-0 flex-1 border-0 bg-transparent px-1 py-1 text-[11px] font-bold text-black outline-none disabled:opacity-80"
+            >
+              <option value="">— Select unit —</option>
+              {units.map((unit) => (
+                <option key={unit.id} value={unit.id}>
+                  {unit.name ?? unit.code}
+                </option>
+              ))}
+            </select>
           </div>
         ) : (
           <div className="min-w-max pl-5">
             {marker.label.line1 ? (
-              <p
-                className="text-[13px] font-bold leading-tight whitespace-nowrap text-black"
+              <button
+                type="button"
+                data-map-marker-panel-trigger
+                className={`block text-left text-[13px] font-bold leading-tight whitespace-nowrap text-black cursor-pointer hover:underline ${
+                  isPanelOpen ? "underline" : ""
+                }`}
                 style={{ textShadow: LABEL_TEXT_SHADOW }}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onPanelToggle(marker.id);
+                }}
               >
                 {marker.label.line1}
-              </p>
-            ) : null}
+              </button>
+            ) : (
+              <button
+                type="button"
+                data-map-marker-panel-trigger
+                className={`block text-left text-[13px] font-bold leading-tight whitespace-nowrap text-black/70 cursor-pointer hover:underline ${
+                  isPanelOpen ? "underline" : ""
+                }`}
+                style={{ textShadow: LABEL_TEXT_SHADOW }}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onPanelToggle(marker.id);
+                }}
+              >
+                Unnamed unit
+              </button>
+            )}
             {marker.label.line2 ? (
               <p
                 className="text-[11px] font-bold leading-tight whitespace-nowrap text-black"
@@ -535,6 +792,10 @@ function MapZoomPanViewport() {
   const editSnapshotRef = useRef<Record<string, MarkerSnapshot> | null>(null);
   const newMarkerIdsRef = useRef<Set<string>>(new Set());
 
+  const { units, equipment, engagements, intelRows, isLoading: isOperationalLoading } =
+    useOperationalState();
+
+  const [viewportNode, setViewportNode] = useState<HTMLDivElement | null>(null);
   const [zoomIndex, setZoomIndex] = useState(0);
   const [pan, setPan] = useState({ panX: 0, panY: 0 });
   const [isDragging, setIsDragging] = useState(false);
@@ -542,18 +803,39 @@ function MapZoomPanViewport() {
   const [isEditMode, setIsEditMode] = useState(false);
   const [markers, setMarkers] = useState<MapMarker[]>(() => loadMapMarkers());
   const [newMarkerFocusId, setNewMarkerFocusId] = useState<string | null>(null);
+  const [openMarkerId, setOpenMarkerId] = useState<string | null>(null);
 
   const scale = ZOOM_LEVELS[zoomIndex];
 
+  const assignViewportRef = useCallback((node: HTMLDivElement | null) => {
+    viewportRef.current = node;
+    setViewportNode(node);
+  }, []);
+
   useEffect(() => {
     if (typeof window !== "undefined") {
-      localStorage.removeItem(MAP_MARKERS_LEGACY_KEY);
+      localStorage.removeItem(MAP_MARKERS_LEGACY_KEY_V1);
+      localStorage.removeItem(MAP_MARKERS_LEGACY_KEY_V2);
     }
   }, []);
 
   useEffect(() => {
     saveMapMarkers(markers);
   }, [markers]);
+
+  useEffect(() => {
+    if (!openMarkerId || !viewportNode) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement;
+      if (target.closest("[data-unit-panel]")) return;
+      if (target.closest("[data-map-marker-panel-trigger]")) return;
+      setOpenMarkerId(null);
+    };
+
+    viewportNode.addEventListener("pointerdown", handlePointerDown);
+    return () => viewportNode.removeEventListener("pointerdown", handlePointerDown);
+  }, [openMarkerId, viewportNode]);
 
   const readViewportSize = useCallback(() => {
     const el = viewportRef.current;
@@ -609,21 +891,44 @@ function MapZoomPanViewport() {
     [getFocalPoint, pan.panX, pan.panY, readViewportSize, scale],
   );
 
-  const updateLine1 = useCallback((id: string, line1: string) => {
-    setMarkers((prev) =>
-      prev.map((marker) =>
-        marker.id === id ? { ...marker, label: { ...marker.label, line1 } } : marker,
-      ),
-    );
+  const closeUnitPanel = useCallback(() => {
+    setOpenMarkerId(null);
   }, []);
 
-  const updateLine2 = useCallback((id: string, line2: string) => {
-    setMarkers((prev) =>
-      prev.map((marker) =>
-        marker.id === id ? { ...marker, label: { ...marker.label, line2 } } : marker,
-      ),
-    );
+  const toggleUnitPanel = useCallback((id: string) => {
+    setOpenMarkerId((prev) => (prev === id ? null : id));
   }, []);
+
+  const updateUnitId = useCallback(
+    (id: string, unitId: string | null) => {
+      setMarkers((prev) =>
+        prev.map((marker) => {
+          if (marker.id !== id) return marker;
+
+          if (!unitId) {
+            return {
+              ...marker,
+              unitId: null,
+              label: { ...marker.label, line1: "", line2: "" },
+            };
+          }
+
+          const unit = units.find((entry) => entry.id === unitId);
+          if (!unit) {
+            return { ...marker, unitId };
+          }
+
+          const { line1, line2 } = resolveUnitLabelFields(unit);
+          return {
+            ...marker,
+            unitId,
+            label: { ...marker.label, line1, line2 },
+          };
+        }),
+      );
+    },
+    [units],
+  );
 
   const updatePinPosition = useCallback((id: string, position: MapMarkerPosition) => {
     setMarkers((prev) =>
@@ -643,6 +948,7 @@ function MapZoomPanViewport() {
     setMarkers((prev) => prev.filter((marker) => marker.id !== id));
     newMarkerIdsRef.current.delete(id);
     setNewMarkerFocusId((prev) => (prev === id ? null : prev));
+    setOpenMarkerId((prev) => (prev === id ? null : prev));
   }, []);
 
   const confirmMarker = useCallback((id: string) => {
@@ -670,6 +976,7 @@ function MapZoomPanViewport() {
                 ...marker,
                 pin: snapshot.pin,
                 label: snapshot.label,
+                unitId: snapshot.unitId,
                 locked: true,
               }
             : marker,
@@ -689,7 +996,16 @@ function MapZoomPanViewport() {
 
   const addMarkerAtViewportPoint = useCallback(
     (viewportX: number, viewportY: number) => {
-      const { xPercent, yPercent } = clientToMarkerPercents(viewportX, viewportY);
+      const { w, h } = readViewportSize();
+      const { xPercent, yPercent } = viewportToMarkerPercents(
+        viewportX,
+        viewportY,
+        pan.panX,
+        pan.panY,
+        scale,
+        w,
+        h,
+      );
       const id = crypto.randomUUID();
       newMarkerIdsRef.current.add(id);
       setMarkers((prev) => [
@@ -703,12 +1019,13 @@ function MapZoomPanViewport() {
             line1: "",
             line2: "",
           },
+          unitId: null,
           locked: false,
         },
       ]);
       setNewMarkerFocusId(id);
     },
-    [clientToMarkerPercents],
+    [pan.panX, pan.panY, readViewportSize, scale],
   );
 
   const handleMarkerDragActiveChange = useCallback((active: boolean) => {
@@ -769,6 +1086,7 @@ function MapZoomPanViewport() {
       const entering = !prev;
 
       if (entering) {
+        setOpenMarkerId(null);
         setMarkers((currentMarkers) => {
           editSnapshotRef.current = Object.fromEntries(
             currentMarkers.map((marker) => [
@@ -776,6 +1094,7 @@ function MapZoomPanViewport() {
               {
                 pin: { ...marker.pin },
                 label: { ...marker.label },
+                unitId: marker.unitId,
               },
             ]),
           );
@@ -799,6 +1118,7 @@ function MapZoomPanViewport() {
 
       const target = event.target as HTMLElement;
       if (target.closest("[data-map-marker]")) return;
+      if (target.closest("[data-unit-panel]")) return;
 
       const { x, y } = getFocalPoint(event.clientX, event.clientY);
 
@@ -877,9 +1197,34 @@ function MapZoomPanViewport() {
         : "cursor-grab"
       : "cursor-default";
 
+  const openMarker = openMarkerId ? markers.find((marker) => marker.id === openMarkerId) : null;
+
+  const panelSummary = useMemo(() => {
+    if (!openMarker?.unitId) return null;
+    return buildMapUnitSummary(openMarker.unitId, {
+      units,
+      equipment,
+      engagements,
+      intelRows,
+    });
+  }, [openMarker, units, equipment, engagements, intelRows]);
+
+  const operationalUnits = useMemo(
+    () =>
+      [...units]
+        .map((unit) => ({
+          id: unit.id,
+          code: unit.code,
+          name: unit.name,
+          description: unit.description,
+        }))
+        .sort((a, b) => (a.name ?? a.code).localeCompare(b.name ?? b.code)),
+    [units],
+  );
+
   return (
     <div
-      ref={viewportRef}
+      ref={assignViewportRef}
       className={`relative flex-1 min-h-0 h-full w-full overflow-hidden select-none touch-none ${cursorClass}`}
       onDoubleClick={handleDoubleClick}
       onPointerDown={handlePointerDown}
@@ -930,9 +1275,10 @@ function MapZoomPanViewport() {
               pinScreen={pinScreen}
               labelScreen={labelScreen}
               isEditMode={isEditMode}
-              autoFocusLine1={newMarkerFocusId === marker.id}
-              onUpdateLine1={updateLine1}
-              onUpdateLine2={updateLine2}
+              isPanelOpen={openMarkerId === marker.id}
+              units={operationalUnits}
+              onPanelToggle={toggleUnitPanel}
+              onUpdateUnitId={updateUnitId}
               onUpdatePinPosition={updatePinPosition}
               onUpdateLabelPosition={updateLabelPosition}
               onDelete={deleteMarker}
@@ -945,6 +1291,18 @@ function MapZoomPanViewport() {
           );
         })}
       </div>
+
+      {viewportNode && openMarker
+        ? createPortal(
+            <MapUnitPanel
+              marker={openMarker}
+              summary={panelSummary}
+              isLoading={isOperationalLoading}
+              onClose={closeUnitPanel}
+            />,
+            viewportNode,
+          )
+        : null}
 
       <div
         className="absolute bottom-3 right-3 z-10 flex items-center gap-1.5"

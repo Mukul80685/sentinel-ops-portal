@@ -576,7 +576,7 @@ class EngagementErrorBoundary extends Component<
           title={DASHBOARD_PANEL_LABELS.engagement}
           subtitle="Unit detail"
           showBack
-          backLink={dashboardPanelBackLink("engagement")}
+          backLink={{ to: "/" as const, search: {} }}
           horizontalNav={null}
         >
           <div className="panel p-6 text-center space-y-3">
@@ -873,7 +873,7 @@ function EngagementUnit() {
     <AppShell
       title={DASHBOARD_PANEL_LABELS.engagement}
       showBack
-      backLink={dashboardPanelBackLink("engagement")}
+      backLink={{ to: "/" as const, search: {} }}
       horizontalNav={null}
     >
 
