@@ -816,6 +816,7 @@ export function AppShell({
   isHome = false,
   homeTitle,
   homeLink: homeLinkProp,
+  hideHome = false,
   hideSidebar = false,
   sidebarVariant = "primary",
   horizontalNav,
@@ -839,6 +840,8 @@ export function AppShell({
   homeTitle?: string;
   /** Overrides contextual Home navigation (defaults from current route). */
   homeLink?: { to: string; search?: Record<string, unknown> };
+  /** When true, suppresses the header Home link. */
+  hideHome?: boolean;
   hideSidebar?: boolean;
   /** "primary" = support nav (default). "secondary" = inventory admin layout. */
   sidebarVariant?: "primary" | "secondary";
@@ -990,6 +993,7 @@ export function AppShell({
 
               <div className="flex items-center justify-end gap-2">
                 {actions}
+                {!hideHome && (
                 <Link
                   to={homeLink.to}
                   search={homeLink.search}
@@ -997,6 +1001,7 @@ export function AppShell({
                 >
                   <Home className="h-3.5 w-3.5 mr-1" /> Home
                 </Link>
+                )}
               </div>
             </div>
           </header>

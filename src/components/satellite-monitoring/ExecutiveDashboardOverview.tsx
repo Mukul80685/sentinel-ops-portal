@@ -446,6 +446,7 @@ function MapUnitPanel({
 }) {
   const unitTitle = marker.label.line1.trim() || "Unnamed unit";
   const showLinkedContent = !isLoading && marker.unitId != null && summary != null;
+  const unitSlug = marker.unitId?.replace("op-unit-", "") ?? "";
 
   return (
     <div
@@ -498,19 +499,26 @@ function MapUnitPanel({
               </MapUnitSummaryCard>
             </Link>
 
-            <MapUnitSummaryCard panel="activity" accent={TILES[1].accent} className="flex-1 min-w-0">
-              <div className="flex flex-col items-center gap-4">
-                <HomeNavIconBadge icon={Activity} theme="engagement" size="xl" solid />
-                <div className="text-center">
-                  <div className="mono text-4xl sm:text-5xl font-bold tabular-nums text-foreground leading-none">
-                    {summary.monitoredSatelliteCount}
+            <Link
+              to="/intel/$unitId"
+              params={{ unitId: unitSlug }}
+              search={{ from: "map" }}
+              className="flex-1 min-w-0 cursor-pointer rounded-md no-underline transition-[filter,box-shadow] hover:brightness-110 hover:ring-1 hover:ring-white/20"
+            >
+              <MapUnitSummaryCard panel="activity" accent={TILES[1].accent} className="h-full w-full">
+                <div className="flex flex-col items-center gap-4">
+                  <HomeNavIconBadge icon={Activity} theme="engagement" size="xl" solid />
+                  <div className="text-center">
+                    <div className="mono text-4xl sm:text-5xl font-bold tabular-nums text-foreground leading-none">
+                      {summary.monitoredSatelliteCount}
+                    </div>
+                    <p className="mono mt-2 text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                      Active Satellites
+                    </p>
                   </div>
-                  <p className="mono mt-2 text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                    Active Satellites
-                  </p>
                 </div>
-              </div>
-            </MapUnitSummaryCard>
+              </MapUnitSummaryCard>
+            </Link>
 
             <MapUnitSummaryCard panel="optimization" accent={TILES[2].accent} className="flex-1 min-w-0">
               <div className="flex flex-col items-center gap-3">

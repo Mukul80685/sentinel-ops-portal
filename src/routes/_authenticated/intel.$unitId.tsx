@@ -1,12 +1,24 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useRef, useState, useEffect, useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Bar,
+  BarChart,
+  Cell,
+  Cell as PieCell,
+  LabelList,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { AppShell } from "@/components/AppShell";
 import { HomeNavIconBadge } from "@/components/home/HomeNavIcons";
 import { Empty } from "@/components/Empty";
 import { IntelSatelliteDrillDown } from "@/components/intel/IntelSatelliteDrillDown";
 import { listUnits, listIntelRecordsForUnit, listEquipmentForUnit } from "@/lib/queries";
-import { Archive, ArrowLeft, Satellite, Trash2, FileInput, FileSpreadsheet, Check, SkipForward, ExternalLink, Pencil, X } from "lucide-react";
+import { Archive, Radio, Satellite, Trash2, FileInput, FileSpreadsheet, Check, SkipForward, ExternalLink, Pencil, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { ccModuleBackLink } from "@/lib/controlCenter";
 import {
@@ -686,9 +698,97 @@ function SatelliteSetupDialog({
 export const Route = createFileRoute("/_authenticated/intel/$unitId")({
   validateSearch: (search: Record<string, unknown>) => ({
     satellite: typeof search.satellite === "string" ? search.satellite : undefined,
+    from: typeof search.from === "string" ? search.from : undefined,
   }),
   component: IntelUnitView,
 });
+
+const MAP_BAR_COLORS = ["#3b82f6", "#22c55e", "#f59e0b"] as const;
+
+type IntelMapViewRow = {
+  reportId: string;
+  satelliteName: string;
+  totalScanned: number;
+  analyzed: number;
+  pending: number;
+  productivityScore: number | null;
+  reportTimestamp: string | null;
+};
+
+function IntelUnitMapCard({ row }: { row: IntelMapViewRow }) {
+  const barData = [
+    { name: "Scanned", value: row.totalScanned },
+    { name: "Analysed", value: row.analyzed },
+    { name: "Pending", value: row.pending },
+  ];
+
+  const productivity = row.productivityScore ?? 0;
+  const productivityColor =
+    productivity > 60 ? "#22c55e" : productivity >= 40 ? "#eab308" : "#ef4444";
+  const donutData = [{ value: productivity }, { value: 100 - productivity }];
+  const dateLabel = row.reportTimestamp ? formatIntelCompactDate(row.reportTimestamp) : "—";
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white transition hover:brightness-110">
+      <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-3 py-2.5">
+        <h3 className="font-bold text-[15px] leading-tight text-[#1B2A3A]">{row.satelliteName}</h3>
+        <p className="shrink-0 text-[12px] text-[#1B2A3A]/60">{dateLabel}</p>
+      </div>
+
+      <div className="flex flex-row gap-2 px-2 py-3">
+        <div className="min-h-[160px] min-w-0 flex-1">
+          <ResponsiveContainer width="100%" height={160}>
+            <BarChart data={barData} margin={{ top: 20, right: 10, left: 10, bottom: 5 }}>
+              <XAxis dataKey="name" tick={{ fill: "#1B2A3A", fontSize: 10 }} />
+              <YAxis tick={{ fill: "#1B2A3A", fontSize: 10 }} />
+              <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                <LabelList dataKey="value" position="top" style={{ fill: "#1B2A3A", fontSize: 11 }} />
+                {MAP_BAR_COLORS.map((fill) => (
+                  <Cell key={fill} fill={fill} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="relative w-[130px] shrink-0">
+          <PieChart width={120} height={120}>
+            <Pie
+              data={donutData}
+              cx={55}
+              cy={55}
+              innerRadius={35}
+              outerRadius={50}
+              startAngle={90}
+              endAngle={-270}
+              dataKey="value"
+              strokeWidth={0}
+            >
+              <PieCell fill={productivityColor} />
+              <PieCell fill="rgba(255,255,255,0.1)" />
+            </Pie>
+          </PieChart>
+          <div className="pointer-events-none absolute left-0 right-0 top-[118px] flex flex-col items-center">
+            <span className="mono text-[13px] font-bold tabular-nums text-[#1B2A3A]">
+              {row.productivityScore !== null ? `${row.productivityScore}%` : "N/A"}
+            </span>
+            <span className="mono text-[10px] text-[#1B2A3A]/60">Productivity</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function IntelUnitMapView({ rows }: { rows: IntelMapViewRow[] }) {
+  return (
+    <div className="grid min-h-0 flex-1 grid-cols-3 gap-4 overflow-y-auto p-4">
+      {rows.map((row) => (
+        <IntelUnitMapCard key={row.reportId} row={row} />
+      ))}
+    </div>
+  );
+}
 
 function TableSkeleton() {
   return (
@@ -713,10 +813,15 @@ function TableSkeleton() {
 
 function IntelUnitView() {
   const { unitId } = Route.useParams();
-  const { satellite: searchSatellite } = Route.useSearch();
-  const navigate = useNavigate();
+  const { satellite: searchSatellite, from } = Route.useSearch();
   const qc = useQueryClient();
   const canEdit = useCanEdit();
+  const intelBackLink =
+    from === "map" ? { to: "/" as const, search: {} } : ccModuleBackLink("intel");
+  const fromMap = from === "map";
+  const moduleTitle = fromMap ? "Active Satellite Monitoring" : "Intelligence Repository";
+  const allowEdit = canEdit && !fromMap;
+  const moduleIcon = fromMap ? Radio : Archive;
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
@@ -818,6 +923,14 @@ function IntelUnitView() {
         row.pending === 0,
     }));
   }, [tableRows, scanOverrides, intUnitSlug, unit?.code]);
+
+  const mapViewRows = useMemo(
+    () =>
+      mergedTableRows.filter(
+        (row) => !(row.totalScanned === 0 && row.analyzed === 0 && row.pending === 0),
+      ),
+    [mergedTableRows],
+  );
 
   const drillDown = useMemo(() => {
     if (!selectedReportId || !unit) return null;
@@ -1074,10 +1187,11 @@ function IntelUnitView() {
   if (!unit) {
     return (
       <AppShell
-        title="Intelligence Repository"
+        title={moduleTitle}
         showBack
-        backLink={ccModuleBackLink("intel")}
-        headerIcon={<HomeNavIconBadge icon={Archive} theme="intel" size="md" />}
+        backLink={intelBackLink}
+        hideHome={fromMap}
+        headerIcon={<HomeNavIconBadge icon={moduleIcon} theme="intel" size="md" />}
         horizontalNav={null}
       >
         <Empty title="Unit not found" hint="Return to the repository home and select a valid unit." />
@@ -1093,32 +1207,24 @@ function IntelUnitView() {
 
   return (
     <AppShell
-      title="Intelligence Repository"
+      title={moduleTitle}
       pageTitle={`Satellite Scan Reports — ${unitLabel}`}
       showBack
-      backLink={ccModuleBackLink("intel")}
-      headerIcon={<HomeNavIconBadge icon={Archive} theme="intel" size="md" />}
+      backLink={intelBackLink}
+      hideHome={fromMap}
+      headerIcon={<HomeNavIconBadge icon={moduleIcon} theme="intel" size="md" />}
       horizontalNav={null}
     >
-      <div className="flex flex-col h-[calc(100vh-6.5rem)] min-h-0 gap-1">
-        <div className="shrink-0 flex items-center justify-between">
-          <button
-            type="button"
-            onClick={() => navigate({ to: "/administrator", search: { module: "intel" } })}
-            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm border border-border bg-card
-                       hover:bg-secondary/60 hover:text-secondary-foreground hover:border-primary/40 mono text-[10px] uppercase tracking-wider text-foreground
-                       transition-all cursor-pointer"
-          >
-            <ArrowLeft className="h-3 w-3" /> All Units
-          </button>
-          {(dataAvailable || scanOverrides.length > 0) && (
+      <div className={`flex flex-col min-h-0 gap-1 ${fromMap ? "h-full overflow-hidden" : "h-[calc(100vh-6.5rem)]"}`}>
+        {(dataAvailable || scanOverrides.length > 0) && (
+          <div className="shrink-0 flex items-center justify-end">
             <span className="mono text-[10px] text-foreground/80">
               {mergedTableRows.length} satellite report{mergedTableRows.length !== 1 ? "s" : ""}
             </span>
-          )}
-        </div>
+          </div>
+        )}
 
-        {selectedIds.size > 0 && canEdit && (
+        {selectedIds.size > 0 && allowEdit && (
           <div className="px-3 py-2 rounded-md border border-border bg-primary/5 flex items-center gap-3 mono text-[11px] shrink-0">
             <span className="text-primary font-bold">
               {selectedIds.size} report{selectedIds.size !== 1 ? "s" : ""} selected
@@ -1152,7 +1258,16 @@ function IntelUnitView() {
           }}
         />
 
-        {showScanUploadOnboarding ? (
+        {showScanUploadOnboarding && fromMap ? (
+          <Empty
+            title="No satellite reports"
+            hint={
+              !linkageCtx.resourcesServiceable
+                ? "Resources are unserviceable — scans cannot produce INT output."
+                : "No intelligence data for this unit."
+            }
+          />
+        ) : showScanUploadOnboarding ? (
           /* ── Onboarding — first Scan Report upload for a new or cleared unit ── */
           <div className="panel p-8 flex flex-col items-center justify-center text-center gap-4 flex-1">
             <div className="h-14 w-14 grid place-items-center rounded-md border border-primary/30 bg-primary/10">
@@ -1190,6 +1305,19 @@ function IntelUnitView() {
           </div>
         ) : isLoading ? (
           <TableSkeleton />
+        ) : fromMap ? (
+          mapViewRows.length === 0 ? (
+            <Empty
+              title="No satellite reports"
+              hint={
+                !linkageCtx.resourcesServiceable
+                  ? "Resources are unserviceable — scans cannot produce INT output."
+                  : "No intelligence data for this unit."
+              }
+            />
+          ) : (
+            <IntelUnitMapView rows={mapViewRows} />
+          )
         ) : mergedTableRows.length === 0 ? (
           <Empty
             title="No satellite reports"
@@ -1207,6 +1335,7 @@ function IntelUnitView() {
                   Resources unserviceable
                 </span>
               )}
+              {!fromMap && (
               <div className="ml-auto flex items-center gap-1.5">
                 <button
                   type="button"
@@ -1227,6 +1356,7 @@ function IntelUnitView() {
                   <FileInput className="h-2.5 w-2.5" /> Import
                 </button>
               </div>
+              )}
             </div>
 
             <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-1">
@@ -1235,7 +1365,7 @@ function IntelUnitView() {
                 className="grid items-center gap-x-2 sticky top-0 z-10 bg-secondary/30 backdrop-blur-sm border-b border-border
                            [grid-template-columns:1.5rem_2rem_minmax(0,1.3fr)_repeat(3,minmax(0,0.75fr))_minmax(0,1fr)_minmax(0,1.1fr)_3.5rem]"
               >
-                {canEdit && (
+                {allowEdit && (
                   <div className="px-1 py-2 flex items-center justify-center">
                     <input
                       type="checkbox"
@@ -1246,7 +1376,7 @@ function IntelUnitView() {
                     />
                   </div>
                 )}
-                {!canEdit && <div />}
+                {!allowEdit && <div />}
                 <Th align="center">#</Th>
                 <Th align="left">Satellite</Th>
                 <Th align="center">Scanned</Th>
@@ -1271,7 +1401,7 @@ function IntelUnitView() {
                                  ${checked ? "bg-primary/5" : isEditing ? "bg-primary/8" : "hover:bg-primary/8"}`}
                     >
                       {/* Checkbox */}
-                      {canEdit ? (
+                      {allowEdit ? (
                         <div className="px-1 py-2 flex items-center justify-center">
                           <input
                             type="checkbox"
@@ -1317,6 +1447,7 @@ function IntelUnitView() {
                         className="px-1 py-2 min-w-0 text-left cursor-pointer"
                         onClick={() => {
                           if (editingReportId) return;
+                          if (!fromMap) {
                           // For imported (non-roster) rows that haven't completed setup yet,
                           // open the setup wizard first — but only if they have scan data.
                           // Zero-count and seeded-roster rows go directly to the analysis page.
@@ -1332,6 +1463,7 @@ function IntelUnitView() {
                               setSetupSatellite({ name: row.satelliteName, reportId: row.reportId });
                               return;
                             }
+                          }
                           }
                           setSelectedReportId(row.reportId);
                         }}
@@ -1445,7 +1577,7 @@ function IntelUnitView() {
                       )}
 
                       {/* Row actions */}
-                      {canEdit ? (
+                      {allowEdit ? (
                         <div className="px-0.5 py-2 flex items-center justify-center gap-0.5">
                           {isEditing ? (
                             <>
@@ -1508,7 +1640,7 @@ function IntelUnitView() {
       </div>
 
       {/* Satellite setup wizard for newly imported satellites */}
-      {setupSatellite && (
+      {setupSatellite && !fromMap && (
         <SatelliteSetupDialog
           open={!!setupSatellite}
           satelliteName={setupSatellite.name}
