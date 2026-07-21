@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import {
   Activity,
   Check,
+  ChevronLeft,
   Eye,
   Minus,
   Pencil,
@@ -30,7 +31,8 @@ import { useExecutiveDashboardMetrics } from "@/components/satellite-monitoring/
 import { useOperationalState } from "@/hooks/useOperationalState";
 import { DASHBOARD_PANEL_LABELS, DASHBOARD_PANEL_PURPOSE, type DashboardPanel } from "@/lib/dashboardLabels";
 import { listIntelMonitoringSatellites } from "@/lib/intelLiveBridge";
-import { buildOperationalFleetState, buildUnitOptimizationData } from "@/lib/operationalState";
+import { buildOperationalFleetState, buildUnitOptimizationData, type UnitOptimizationData } from "@/lib/operationalState";
+import { scorebar } from "@/components/satellite-monitoring/dashboardUtils";
 import { computeUnitResourceEngagementPct } from "@/lib/resourceEngagementStats";
 import {
   getUnitScanHistory,
@@ -93,6 +95,7 @@ type MapUnitSummary = {
   engagementPct: number;
   monitoredSatelliteCount: number;
   optimizationScore: number;
+  optimization: UnitOptimizationData;
 };
 
 type OperationalUnit = {
@@ -268,6 +271,7 @@ function buildMapUnitSummary(
     engagementPct,
     monitoredSatelliteCount,
     optimizationScore: optimization.compositeScore,
+    optimization,
   };
 }
 
@@ -433,16 +437,287 @@ function MapUnitSummaryCard({
   );
 }
 
+const MAP_OPTIMIZATION_FACTORS = [
+  { key: "resource" as const, label: "Resource Utilization Score" },
+  { key: "priority" as const, label: "Satellite Prioritization Score" },
+  { key: "serviceability" as const, label: "Serviceability Score" },
+] as const;
+
+const EMBOOSSED_RING_OUTER =
+  "rounded-full bg-gradient-to-br from-white via-[#f6f8f4] to-[#dce6d4] p-[0.7rem] shadow-[inset_0_3px_8px_rgba(255,255,255,0.95),inset_0_-4px_10px_rgba(55,75,48,0.14),0_5px_0_rgba(55,75,48,0.07),0_16px_32px_rgba(45,65,40,0.14)]";
+const EMBOOSSED_RING_INNER =
+  "rounded-full bg-gradient-to-br from-[#fcfdfb] to-[#e9efe6] p-1 shadow-[inset_0_2px_6px_rgba(255,255,255,0.85),inset_0_-2px_5px_rgba(0,0,0,0.07)]";
+
+function optimizationScoreHalo(score: number, muted: boolean): string {
+  if (muted) return "0 0 0 rgba(100,116,139,0.08)";
+  if (score >= 70) return "0 0 28px rgba(16,185,129,0.18), 0 0 56px rgba(16,185,129,0.08)";
+  if (score >= 45) return "0 0 28px rgba(245,158,11,0.16), 0 0 56px rgba(245,158,11,0.07)";
+  return "0 0 28px rgba(239,68,68,0.14), 0 0 56px rgba(239,68,68,0.06)";
+}
+
+function optimizationStatusMeta(data: UnitOptimizationData): { label: string; className: string } {
+  if (!data.monitoringActive) {
+    return {
+      label: "Not Monitoring",
+      className: "border-[#c5cec0] bg-[#eef1eb] text-[#5a6654]",
+    };
+  }
+  if (data.status === "OPTIMIZED") {
+    return {
+      label: "Optimized",
+      className: "border-[#9ec4a8] bg-[#e8f3ea] text-[#2d5a3a]",
+    };
+  }
+  if (data.status === "SUBOPTIMAL") {
+    return {
+      label: "Sub-optimal",
+      className: "border-[#d4c48a] bg-[#f5f0e3] text-[#6b5a28]",
+    };
+  }
+  return {
+    label: "Misallocated",
+    className: "border-[#d4a8a8] bg-[#f5ecec] text-[#7a3a3a]",
+  };
+}
+
+function EmbossedOptimizationRing({
+  value,
+  label,
+  size,
+  stroke,
+  muted = false,
+  animate = false,
+  animateDelay = 0,
+}: {
+  value: number;
+  label: string;
+  size: number;
+  stroke: number;
+  muted?: boolean;
+  animate?: boolean;
+  animateDelay?: number;
+}) {
+  const displayValue = muted ? 0 : value;
+
+  return (
+    <div className="flex flex-col items-center gap-3">
+      <div
+        className={EMBOOSSED_RING_OUTER}
+        style={{ boxShadow: `${optimizationScoreHalo(displayValue, muted)}, inset 0 3px 8px rgba(255,255,255,0.95), inset 0 -4px 10px rgba(55,75,48,0.14), 0 5px 0 rgba(55,75,48,0.07), 0 16px 32px rgba(45,65,40,0.14)` }}
+      >
+        <div className={EMBOOSSED_RING_INNER}>
+          <ExecutiveProgressRing
+            value={displayValue}
+            mode="optimization"
+            size={size}
+            stroke={stroke}
+            suffix=""
+            animate={animate}
+            animateDelay={animateDelay}
+          />
+        </div>
+      </div>
+      <p className="mono max-w-[13rem] text-center text-[10px] font-semibold uppercase leading-snug tracking-[0.11em] text-[#3d5244] sm:text-[11px]">
+        {label}
+      </p>
+    </div>
+  );
+}
+
+function OptimizationFactorCard({
+  value,
+  label,
+  muted,
+  animateDelay,
+}: {
+  value: number;
+  label: string;
+  muted: boolean;
+  animateDelay: number;
+}) {
+  return (
+    <div
+      className="home-module-tile flex flex-col items-center justify-center px-3 py-4 animate-in fade-in duration-700 fill-mode-both"
+      style={{ animationDelay: `${animateDelay}ms` }}
+    >
+      <EmbossedOptimizationRing
+        value={value}
+        label={label}
+        size={118}
+        stroke={10}
+        muted={muted}
+        animate
+        animateDelay={animateDelay + 80}
+      />
+    </div>
+  );
+}
+
+function OptimizationHubLines() {
+  return (
+    <svg
+      className="pointer-events-none mx-auto h-12 w-full max-w-[720px] text-[#b8c9b0]"
+      viewBox="0 0 720 48"
+      preserveAspectRatio="xMidYMid meet"
+      aria-hidden="true"
+    >
+      <path
+        d="M360 0 V20 M360 20 L120 48 M360 20 L360 48 M360 20 L600 48"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1"
+        strokeOpacity="0.45"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function OptimizationContributionBar({
+  scores,
+  muted,
+}: {
+  scores: [number, number, number];
+  muted: boolean;
+}) {
+  return (
+    <div
+      className="flex h-1 w-56 max-w-full gap-1 rounded-full bg-[#dde5d8]/80 p-px animate-in fade-in duration-700 delay-300 fill-mode-both"
+      aria-hidden="true"
+    >
+      {scores.map((score, index) => {
+        const display = muted && index < 2 ? 0 : score;
+        return (
+          <div key={index} className="h-full flex-1 overflow-hidden rounded-full bg-[#e8efe6]">
+            <div
+              className={`h-full rounded-full transition-all duration-700 ${muted && index < 2 ? "bg-[#c5cec0]/60" : scorebar(display)}`}
+              style={{ width: `${display}%` }}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function MapUnitOptimizationFullscreen({
+  unitTitle,
+  unitLocation,
+  data,
+  onBack,
+}: {
+  unitTitle: string;
+  unitLocation: string;
+  data: UnitOptimizationData;
+  onBack: () => void;
+}) {
+  const mutedFactors = !data.monitoringActive;
+  const overallScore = data.monitoringActive ? data.compositeScore : 0;
+  const statusMeta = optimizationStatusMeta(data);
+  const factors = MAP_OPTIMIZATION_FACTORS.map((def) => ({
+    ...def,
+    score: mutedFactors && def.key !== "serviceability" ? 0 : data[def.key].score,
+    muted: mutedFactors && def.key !== "serviceability",
+  }));
+  const contributionScores: [number, number, number] = [
+    factors[0].score,
+    factors[1].score,
+    factors[2].score,
+  ];
+
+  return (
+    <div
+      data-optimization-overlay
+      className="absolute inset-0 z-[60] flex min-h-0 flex-col bg-gradient-to-br from-[#f8faf6] via-[#f0f4ed] to-[#e4ebe0] animate-in fade-in duration-300"
+      onPointerDown={(event) => event.stopPropagation()}
+      onDoubleClick={(event) => event.stopPropagation()}
+    >
+      <div
+        className="pointer-events-none absolute inset-0 overflow-hidden opacity-[0.4]"
+        style={{
+          backgroundImage: `
+            linear-gradient(rgba(110,130,100,0.07) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(110,130,100,0.07) 1px, transparent 1px)
+          `,
+          backgroundSize: "52px 52px",
+        }}
+        aria-hidden="true"
+      />
+      <div
+        className="pointer-events-none absolute left-1/2 top-28 h-[360px] w-[360px] -translate-x-1/2 rounded-full bg-[radial-gradient(circle,rgba(120,155,105,0.14)_0%,transparent_68%)]"
+        aria-hidden="true"
+      />
+
+      <div className="relative z-[1] flex shrink-0 items-center gap-3 border-b border-[#c8d4c0]/80 bg-white/75 px-4 py-3 backdrop-blur-sm">
+        <button
+          type="button"
+          onClick={onBack}
+          className="inline-flex items-center gap-1.5 rounded-md border border-[#b8c9b0] bg-[#f4f7f2] px-3 py-1.5 text-xs font-semibold text-[#2f4535] shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_1px_2px_rgba(45,65,40,0.08)] transition-colors hover:bg-[#eef3ea]"
+        >
+          <ChevronLeft className="h-3.5 w-3.5" />
+          Back to map
+        </button>
+        <div className="min-w-0 flex-1">
+          <h2 className="truncate text-sm font-bold text-[#1B2A3A]">{unitTitle}</h2>
+          {unitLocation ? (
+            <p className="truncate text-xs text-[#1B2A3A]/60">{unitLocation}</p>
+          ) : null}
+        </div>
+        <span className="mono shrink-0 text-[10px] font-bold uppercase tracking-wider text-[#4a6350]">
+          {DASHBOARD_PANEL_LABELS.optimization}
+        </span>
+      </div>
+
+      <div className="relative z-[1] min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
+        <div className="mx-auto flex w-full max-w-[920px] flex-col items-center gap-6 px-4 py-6 sm:gap-8 sm:px-8 sm:py-8">
+          <div className="flex flex-col items-center gap-4 animate-in fade-in zoom-in-95 duration-500 fill-mode-both">
+            <EmbossedOptimizationRing
+              value={overallScore}
+              label="Overall Optimization Score"
+              size={188}
+              stroke={13}
+              animate
+              animateDelay={120}
+            />
+            <span
+              className={`mono rounded-full border px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${statusMeta.className}`}
+            >
+              {statusMeta.label}
+            </span>
+            <OptimizationContributionBar scores={contributionScores} muted={mutedFactors} />
+          </div>
+
+          <OptimizationHubLines />
+
+          <div className="grid w-full grid-cols-1 gap-5 pb-4 sm:grid-cols-3 sm:gap-6">
+            {factors.map((factor, index) => (
+              <OptimizationFactorCard
+                key={factor.key}
+                value={factor.score}
+                label={factor.label}
+                muted={factor.muted}
+                animateDelay={380 + index * 140}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MapUnitPanel({
   marker,
   summary,
   isLoading,
   onClose,
+  onOpenOptimization,
 }: {
   marker: MapMarker;
   summary: MapUnitSummary | null;
   isLoading: boolean;
   onClose: () => void;
+  onOpenOptimization: () => void;
 }) {
   const unitTitle = marker.label.line1.trim() || "Unnamed unit";
   const showLinkedContent = !isLoading && marker.unitId != null && summary != null;
@@ -456,9 +731,9 @@ function MapUnitPanel({
       onDoubleClick={(event) => event.stopPropagation()}
     >
       <div className="relative border-b border-white/10 px-4 py-3 pr-10">
-        <h2 className="text-sm font-bold leading-snug text-white">{unitTitle}</h2>
+        <h2 className="mono text-sm font-bold uppercase leading-snug tracking-wide text-white">{unitTitle}</h2>
         {marker.label.line2.trim() ? (
-          <p className="mt-0.5 text-xs leading-snug text-white/55">{marker.label.line2.trim()}</p>
+          <p className="mono mt-0.5 text-xs leading-snug tracking-wide text-white/55">{marker.label.line2.trim()}</p>
         ) : null}
         <button
           type="button"
@@ -520,19 +795,25 @@ function MapUnitPanel({
               </MapUnitSummaryCard>
             </Link>
 
-            <MapUnitSummaryCard panel="optimization" accent={TILES[2].accent} className="flex-1 min-w-0">
-              <div className="flex flex-col items-center gap-3">
-                <ExecutiveProgressRing
-                  value={summary.optimizationScore}
-                  mode="optimization"
-                  suffix=""
-                />
-                <p className="mono text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground text-center max-w-[12rem] leading-snug">
-                  Overall Optimization Score
-                </p>
-                <OptimizationScoreLegend />
-              </div>
-            </MapUnitSummaryCard>
+            <button
+              type="button"
+              onClick={onOpenOptimization}
+              className="flex-1 min-w-0 cursor-pointer rounded-md border-0 bg-transparent p-0 text-left transition-[filter,box-shadow] hover:brightness-110 hover:ring-1 hover:ring-white/20"
+            >
+              <MapUnitSummaryCard panel="optimization" accent={TILES[2].accent} className="h-full w-full">
+                <div className="flex flex-col items-center gap-3">
+                  <ExecutiveProgressRing
+                    value={summary.optimizationScore}
+                    mode="optimization"
+                    suffix=""
+                  />
+                  <p className="mono text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground text-center max-w-[12rem] leading-snug">
+                    Overall Optimization Score
+                  </p>
+                  <OptimizationScoreLegend />
+                </div>
+              </MapUnitSummaryCard>
+            </button>
           </div>
         )}
       </div>
@@ -724,7 +1005,7 @@ function MapMarker({
               onChange={(event) =>
                 onUpdateUnitId(marker.id, event.target.value ? event.target.value : null)
               }
-              className="min-w-0 flex-1 border-0 bg-transparent px-1 py-1 text-[11px] font-bold text-black outline-none disabled:opacity-80"
+              className="mono min-w-0 flex-1 border-0 bg-transparent px-1 py-1 text-[11px] font-bold tracking-wide text-black outline-none disabled:opacity-80"
             >
               <option value="">— Select unit —</option>
               {units.map((unit) => (
@@ -740,7 +1021,7 @@ function MapMarker({
               <button
                 type="button"
                 data-map-marker-panel-trigger
-                className={`block text-left text-[13px] font-bold leading-tight whitespace-nowrap text-black cursor-pointer hover:underline ${
+                className={`mono block text-left text-[13px] font-bold uppercase leading-tight tracking-wide whitespace-nowrap text-black cursor-pointer hover:underline ${
                   isPanelOpen ? "underline" : ""
                 }`}
                 style={{ textShadow: LABEL_TEXT_SHADOW }}
@@ -769,7 +1050,7 @@ function MapMarker({
             )}
             {marker.label.line2 ? (
               <p
-                className="text-[11px] font-bold leading-tight whitespace-nowrap text-black"
+                className="mono text-[11px] font-bold leading-tight tracking-wide whitespace-nowrap text-black"
                 style={{ textShadow: LABEL_TEXT_SHADOW }}
               >
                 {marker.label.line2}
@@ -812,6 +1093,7 @@ function MapZoomPanViewport() {
   const [markers, setMarkers] = useState<MapMarker[]>(() => loadMapMarkers());
   const [newMarkerFocusId, setNewMarkerFocusId] = useState<string | null>(null);
   const [openMarkerId, setOpenMarkerId] = useState<string | null>(null);
+  const [optimizationOpen, setOptimizationOpen] = useState(false);
 
   const scale = ZOOM_LEVELS[zoomIndex];
 
@@ -837,8 +1119,10 @@ function MapZoomPanViewport() {
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as HTMLElement;
       if (target.closest("[data-unit-panel]")) return;
+      if (target.closest("[data-optimization-overlay]")) return;
       if (target.closest("[data-map-marker-panel-trigger]")) return;
       setOpenMarkerId(null);
+      setOptimizationOpen(false);
     };
 
     viewportNode.addEventListener("pointerdown", handlePointerDown);
@@ -901,9 +1185,20 @@ function MapZoomPanViewport() {
 
   const closeUnitPanel = useCallback(() => {
     setOpenMarkerId(null);
+    setOptimizationOpen(false);
+  }, []);
+
+  const openOptimizationFullscreen = useCallback(() => {
+    setOptimizationOpen(true);
+  }, []);
+
+  const backFromOptimization = useCallback(() => {
+    setOptimizationOpen(false);
+    setOpenMarkerId(null);
   }, []);
 
   const toggleUnitPanel = useCallback((id: string) => {
+    setOptimizationOpen(false);
     setOpenMarkerId((prev) => (prev === id ? null : id));
   }, []);
 
@@ -957,6 +1252,7 @@ function MapZoomPanViewport() {
     newMarkerIdsRef.current.delete(id);
     setNewMarkerFocusId((prev) => (prev === id ? null : prev));
     setOpenMarkerId((prev) => (prev === id ? null : prev));
+    setOptimizationOpen(false);
   }, []);
 
   const confirmMarker = useCallback((id: string) => {
@@ -1095,6 +1391,7 @@ function MapZoomPanViewport() {
 
       if (entering) {
         setOpenMarkerId(null);
+        setOptimizationOpen(false);
         setMarkers((currentMarkers) => {
           editSnapshotRef.current = Object.fromEntries(
             currentMarkers.map((marker) => [
@@ -1127,6 +1424,7 @@ function MapZoomPanViewport() {
       const target = event.target as HTMLElement;
       if (target.closest("[data-map-marker]")) return;
       if (target.closest("[data-unit-panel]")) return;
+      if (target.closest("[data-optimization-overlay]")) return;
 
       const { x, y } = getFocalPoint(event.clientX, event.clientY);
 
@@ -1300,13 +1598,26 @@ function MapZoomPanViewport() {
         })}
       </div>
 
-      {viewportNode && openMarker
+      {viewportNode && openMarker && !optimizationOpen
         ? createPortal(
             <MapUnitPanel
               marker={openMarker}
               summary={panelSummary}
               isLoading={isOperationalLoading}
               onClose={closeUnitPanel}
+              onOpenOptimization={openOptimizationFullscreen}
+            />,
+            viewportNode,
+          )
+        : null}
+
+      {viewportNode && optimizationOpen && openMarker && panelSummary
+        ? createPortal(
+            <MapUnitOptimizationFullscreen
+              unitTitle={openMarker.label.line1.trim() || "Unnamed unit"}
+              unitLocation={openMarker.label.line2.trim()}
+              data={panelSummary.optimization}
+              onBack={backFromOptimization}
             />,
             viewportNode,
           )

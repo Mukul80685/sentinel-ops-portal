@@ -703,8 +703,6 @@ export const Route = createFileRoute("/_authenticated/intel/$unitId")({
   component: IntelUnitView,
 });
 
-const MAP_BAR_COLORS = ["#3b82f6", "#22c55e", "#f59e0b"] as const;
-
 type IntelMapViewRow = {
   reportId: string;
   satelliteName: string;
@@ -727,52 +725,69 @@ function IntelUnitMapCard({ row }: { row: IntelMapViewRow }) {
     productivity > 60 ? "#22c55e" : productivity >= 40 ? "#eab308" : "#ef4444";
   const donutData = [{ value: productivity }, { value: 100 - productivity }];
   const dateLabel = row.reportTimestamp ? formatIntelCompactDate(row.reportTimestamp) : "—";
+  const gradientId = row.reportId.replace(/[^a-zA-Z0-9_-]/g, "-");
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white transition hover:brightness-110">
       <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-3 py-2.5">
-        <h3 className="font-bold text-[15px] leading-tight text-[#1B2A3A]">{row.satelliteName}</h3>
-        <p className="shrink-0 text-[12px] text-[#1B2A3A]/60">{dateLabel}</p>
+        <h3 className="font-bold text-[17px] leading-tight text-[#000000]">{row.satelliteName}</h3>
+        <p className="shrink-0 text-[13px] text-[#1B2A3A]/70">{dateLabel}</p>
       </div>
 
       <div className="flex flex-row gap-2 px-2 py-3">
         <div className="min-h-[160px] min-w-0 flex-1">
           <ResponsiveContainer width="100%" height={160}>
             <BarChart data={barData} margin={{ top: 20, right: 10, left: 10, bottom: 5 }}>
-              <XAxis dataKey="name" tick={{ fill: "#1B2A3A", fontSize: 10 }} />
-              <YAxis tick={{ fill: "#1B2A3A", fontSize: 10 }} />
+              <defs>
+                <linearGradient id={`gradientScanned-${gradientId}`} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#93c5fd" />
+                  <stop offset="100%" stopColor="#3b82f6" />
+                </linearGradient>
+                <linearGradient id={`gradientAnalysed-${gradientId}`} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#86efac" />
+                  <stop offset="100%" stopColor="#22c55e" />
+                </linearGradient>
+                <linearGradient id={`gradientPending-${gradientId}`} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#fcd34d" />
+                  <stop offset="100%" stopColor="#f59e0b" />
+                </linearGradient>
+              </defs>
+              <XAxis dataKey="name" tick={{ fill: "#1B2A3A", fontSize: 12 }} />
+              <YAxis tick={{ fill: "#1B2A3A", fontSize: 12 }} />
               <Bar dataKey="value" radius={[4, 4, 0, 0]}>
-                <LabelList dataKey="value" position="top" style={{ fill: "#1B2A3A", fontSize: 11 }} />
-                {MAP_BAR_COLORS.map((fill) => (
-                  <Cell key={fill} fill={fill} />
-                ))}
+                <LabelList dataKey="value" position="top" style={{ fill: "#000000", fontSize: 13 }} />
+                <Cell fill={`url(#gradientScanned-${gradientId})`} />
+                <Cell fill={`url(#gradientAnalysed-${gradientId})`} />
+                <Cell fill={`url(#gradientPending-${gradientId})`} />
               </Bar>
             </BarChart>
           </ResponsiveContainer>
         </div>
 
         <div className="relative w-[130px] shrink-0">
-          <PieChart width={120} height={120}>
-            <Pie
-              data={donutData}
-              cx={55}
-              cy={55}
-              innerRadius={35}
-              outerRadius={50}
-              startAngle={90}
-              endAngle={-270}
-              dataKey="value"
-              strokeWidth={0}
-            >
-              <PieCell fill={productivityColor} />
-              <PieCell fill="rgba(255,255,255,0.1)" />
-            </Pie>
-          </PieChart>
+          <div style={{ filter: "drop-shadow(0px 4px 6px rgba(0,0,0,0.15))" }}>
+            <PieChart width={120} height={120}>
+              <Pie
+                data={donutData}
+                cx={55}
+                cy={55}
+                innerRadius={35}
+                outerRadius={50}
+                startAngle={90}
+                endAngle={-270}
+                dataKey="value"
+                strokeWidth={0}
+              >
+                <PieCell fill={productivityColor} />
+                <PieCell fill="rgba(255,255,255,0.1)" />
+              </Pie>
+            </PieChart>
+          </div>
           <div className="pointer-events-none absolute left-0 right-0 top-[118px] flex flex-col items-center">
-            <span className="mono text-[13px] font-bold tabular-nums text-[#1B2A3A]">
+            <span className="mono text-[15px] font-bold tabular-nums text-[#000000]">
               {row.productivityScore !== null ? `${row.productivityScore}%` : "N/A"}
             </span>
-            <span className="mono text-[10px] text-[#1B2A3A]/60">Productivity</span>
+            <span className="mono text-[12px] text-[#1B2A3A]/70">Productivity</span>
           </div>
         </div>
       </div>

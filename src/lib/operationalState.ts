@@ -321,156 +321,63 @@ function computePriorityAlignmentScore(
   const slot = state.prioritySlot;
   const allocations = slot ? getAllocationsForUnit(slot) : [];
 
-  const chain =
-    unitEquipment.length > 0
-      ? countServiceableChainCapacity(unitEquipment)
-      : { totalChains: state.capability.maxPossibleScans };
+  const chain = unitEquipment.length > 0
+    ? countServiceableChainCapacity(unitEquipment)
+    : { totalChains: state.capability.maxPossibleScans };
   const capacity = Math.max(1, chain.totalChains, state.capability.maxPossibleScans);
 
   const monitoredCount = monitoredNames.length;
   const allocatedCount = allocations.length;
 
+  // Factor 1 — Priority Quality (60%): how high-priority are the monitored satellites?
   const monitoredWeight = monitoredNames.reduce(
     (sum, name) => sum + PRIORITY_TIER_POINTS[allocationTier(name, allocations)],
     0,
   );
-
-  /** 100% when every INT-monitored satellite is P1 in Priority & Allocation. */
   const maxMonitoredWeight = monitoredCount * PRIORITY_TIER_POINTS[1];
-  const monitoredQualityPct =
-    maxMonitoredWeight > 0
-      ? Math.min(100, (monitoredWeight / maxMonitoredWeight) * 100)
-      : 0;
+  const monitoredQualityPct = maxMonitoredWeight > 0
+    ? Math.min(100, (monitoredWeight / maxMonitoredWeight) * 100)
+    : 0;
 
-  const totalAllocatedWeight = allocations.reduce(
-    (sum, row) => sum + PRIORITY_TIER_POINTS[tierFromPriority(row.priority)],
-    0,
-  );
-  const fulfillmentPct =
-    totalAllocatedWeight > 0
-      ? Math.min(100, (monitoredWeight / totalAllocatedWeight) * 100)
-      : Math.min(100, (monitoredCount / capacity) * 100);
+  // Factor 2 — Capacity Utilisation (25%): is the unit using its capacity relative to allocation?
+  // effectiveTarget = min(allocatedCount, capacity) — unit not penalised for low geographic allocation
+  const effectiveTarget = allocatedCount > 0
+    ? Math.min(allocatedCount, capacity)
+    : capacity;
+  const capabilityLoadPct = Math.min(100, (monitoredCount / Math.max(1, effectiveTarget)) * 100);
 
-  const responsibilityTarget = Math.max(
-    1,
-    allocatedCount > 0 ? Math.min(allocatedCount, capacity) : capacity,
-  );
-  const capabilityLoadPct = Math.min(100, (monitoredCount / responsibilityTarget) * 100);
+  // Factor 3 — Allocation Fulfilment (15%): are monitored satellites matched in Priority & Allocation?
+  const matchedCount = monitoredNames.filter((name) =>
+    allocations.some((a) => satelliteNamesMatch(a.satelliteName, name)),
+  ).length;
+  const fulfilmentPct = monitoredCount > 0
+    ? Math.min(100, (matchedCount / monitoredCount) * 100)
+    : 0;
 
-  let allocatedHighWeight = 0;
-  let monitoredHighWeight = 0;
-  for (const row of allocations) {
-    const tier = tierFromPriority(row.priority);
-    if (tier <= 2) allocatedHighWeight += PRIORITY_TIER_POINTS[tier];
-  }
+  const score = Math.min(100, Math.max(1, Math.round(
+    monitoredQualityPct * 0.60 +
+    capabilityLoadPct * 0.25 +
+    fulfilmentPct * 0.15,
+  )));
+
+  const tierCounts = { p1: 0, p2: 0, p3: 0, unallocated: 0 };
   for (const name of monitoredNames) {
-    const tier = allocationTier(name, allocations);
-    if (tier <= 2) monitoredHighWeight += PRIORITY_TIER_POINTS[tier];
-  }
-  const highPriorityPct =
-    allocatedHighWeight > 0
-      ? Math.min(100, (monitoredHighWeight / allocatedHighWeight) * 100)
-      : monitoredQualityPct;
-
-  let score: number;
-  if (monitoredQualityPct >= 100) {
-    score = 100;
-  } else {
-    score = Math.round(
-      monitoredQualityPct * 0.75 +
-        highPriorityPct * 0.15 +
-        capabilityLoadPct * 0.05 +
-        fulfillmentPct * 0.05,
-    );
-  }
-  score = Math.min(100, Math.max(1, score));
-
-  const tierCounts = { p1: 0, p2: 0, p3: 0 };
-  const unmatched: string[] = [];
-  for (const name of monitoredNames) {
-    const row = allocations.find((a) => satelliteNamesMatch(a.satelliteName, name));
-    if (!row) unmatched.push(name);
     const t = allocationTier(name, allocations);
     if (t === 1) tierCounts.p1++;
     else if (t === 2) tierCounts.p2++;
-    else tierCounts.p3++;
+    else if (t === 3) tierCounts.p3++;
+    else tierCounts.unallocated++;
   }
 
   const issues = [
     `${monitoredCount} monitored / ${allocatedCount || "—"} allocated · cap ${capacity} · P1 ${tierCounts.p1} P2 ${tierCounts.p2} P3 ${tierCounts.p3}`,
-    `Priority quality ${Math.round(monitoredQualityPct)}% · Fulfillment ${Math.round(fulfillmentPct)}% · Load ${Math.round(capabilityLoadPct)}%`,
+    `Quality ${Math.round(monitoredQualityPct)}% · Load ${Math.round(capabilityLoadPct)}% · Fulfilment ${Math.round(fulfilmentPct)}%`,
   ];
-  if (unmatched.length > 0) {
-    issues.push(`${unmatched.length} monitored satellite(s) not matched in Priority & Allocation`);
+  if (tierCounts.unallocated > 0) {
+    issues.push(`${tierCounts.unallocated} monitored satellite(s) not found in Priority & Allocation`);
   }
-
-  return { score, issues };
-}
-
-/** Legacy prioritization — uses live engagement assignments (control-center fallback). */
-function computePriorityAlignmentScoreLegacy(
-  state: UnitOperationalState,
-  unitEquipment: any[],
-): {
-  score: number;
-  issues: string[];
-} {
-  const activeNames = state.capability.assignments.map((a) => a.name);
-  return computePriorityAlignmentScore(state, activeNames, unitEquipment);
-}
-
-/**
- * Resource utilization score — Resource Inventory SSOT.
- * Antenna/receiver/SDR chain capacity and equipment loading.
- */
-function computeResourceUtilizationScore(
-  state: UnitOperationalState,
-  unitEquipment: any[],
-): { score: number; issues: string[] } {
-  const cap = state.capability;
-  const maxCapacity = Math.max(cap.maxPossibleScans, 1);
-  const satelliteLoad = cap.activeChains;
-
-  const chain = countServiceableChainCapacity(unitEquipment);
-  const totalEq = unitEquipment.length;
-  const operational = unitEquipment.filter(
-    (e) => e.serviceability === "Operational",
-  ).length;
-
-  const antennas = unitEquipment.filter((e) =>
-    (e.category?.name ?? "").toLowerCase().includes("antenna"),
-  );
-  const operationalAntennas = antennas.filter(
-    (e) => e.serviceability === "Operational",
-  ).length;
-
-  const chainUtil =
-    maxCapacity > 0 ? Math.min(100, (satelliteLoad / maxCapacity) * 100) : 0;
-  const equipmentUtil = totalEq > 0 ? (operational / totalEq) * 100 : 50;
-  const antennaUtil =
-    antennas.length > 0 ? (operationalAntennas / antennas.length) * 100 : equipmentUtil;
-
-  const actualEngagementUtil = chainUtil;
-
-  let score: number;
-  if (cap.feasibilityStatus === "NON_OPERATIONAL") {
-    score = 15;
-  } else if (cap.feasibilityStatus === "DEGRADED") {
-    score = Math.round((actualEngagementUtil * 0.6 + equipmentUtil * 0.25 + antennaUtil * 0.15) * 0.75);
-  } else {
-    score = Math.round(actualEngagementUtil * 0.6 + equipmentUtil * 0.25 + antennaUtil * 0.15);
-  }
-
-  const issues: string[] = [];
-  if (cap.feasibilityStatus === "NON_OPERATIONAL") {
-    issues.push("Unit non-operational — no active scanning capacity");
-  } else {
-    issues.push(
-      `${operationalAntennas}/${antennas.length} antennas · ${chain.totalChains} chain(s) · ${satelliteLoad}/${maxCapacity} scan slots`,
-    );
-    if (satelliteLoad > maxCapacity) {
-      issues.push(`Overloaded — ${satelliteLoad - maxCapacity} scans above capacity`);
-    }
+  if (monitoredCount < effectiveTarget) {
+    issues.push(`Scanning ${monitoredCount} of ${effectiveTarget} effective target — capacity underutilised`);
   }
 
   return { score, issues };
@@ -491,7 +398,8 @@ export function buildUnitOptimizationData(
   const operational = unitEquipment.filter(
     (e) => e.serviceability === "Operational",
   ).length;
-  let serviceScore = totalEq === 0 ? 50 : Math.round((operational / totalEq) * 100);
+  let serviceScore = totalEq === 0 ? 0 : Math.round((operational / totalEq) * 100);
+  // Cap to 25 when equipment exists but no complete receive chain is available — partial serviceability penalty
   if (chain.totalChains === 0 && totalEq > 0) {
     serviceScore = Math.min(serviceScore, 25);
   }
@@ -530,25 +438,23 @@ export function buildUnitOptimizationData(
     };
   }
 
-  let resourceScore: number;
-  let resourceIssues: string[];
-  if (input?.isMonitoring) {
-    resourceScore = input.resourceEngagementPct;
-    resourceIssues = [
-      `Resource engagement ${resourceScore}% (Resource Engagement Status ring average)`,
-    ];
-    if (resourceScore < 40) {
-      resourceIssues.push("Low resource engagement despite active monitoring");
-    }
-  } else {
-    const resource = computeResourceUtilizationScore(state, unitEquipment);
-    resourceScore = resource.score;
-    resourceIssues = resource.issues;
+  const resourceScore: number = input?.resourceEngagementPct ?? 0;
+  const resourceIssues: string[] = [
+    `Resource engagement ${resourceScore}% across all equipment categories`,
+  ];
+  if (resourceScore === 0 && input?.isMonitoring) {
+    resourceIssues.push("No resources assigned in Engaged Resources table despite active monitoring");
+  } else if (resourceScore < 40 && input?.isMonitoring) {
+    resourceIssues.push("Low resource engagement — fewer than 40% of serviceable resources assigned");
+  } else if (!input?.isMonitoring) {
+    resourceIssues.push("Unit not monitoring satellites — resource engagement not applicable");
   }
 
-  const priorityResult = input?.isMonitoring
-    ? computePriorityAlignmentScore(state, input.monitoredSatelliteNames, unitEquipment)
-    : computePriorityAlignmentScoreLegacy(state, unitEquipment);
+  const priorityResult = computePriorityAlignmentScore(
+    state,
+    input?.monitoredSatelliteNames ?? [],
+    unitEquipment,
+  );
 
   const compositeScore = monitoringActive
     ? Math.round((resourceScore + priorityResult.score + serviceScore) / 3)

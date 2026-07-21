@@ -1,4 +1,4 @@
-import { Component, type ReactNode, useMemo, useState, useEffect, useCallback } from "react";
+import { Component, type ReactNode, useMemo, useState, useEffect, useCallback, useRef } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
@@ -64,8 +64,9 @@ import {
   setPlannedSatellites,
   type PlannedSatelliteRow,
 } from "@/lib/plannedSatelliteStore";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { ArrowDownToLine, Download, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import * as XLSX from "xlsx";
 
 const DEMOD_BAND_OPTIONS = ["Narrowband", "Wideband", "DVB"] as const;
 type DemodBand = (typeof DEMOD_BAND_OPTIONS)[number];
@@ -163,16 +164,16 @@ function resolveChainEquipmentDisplay(row: any, equipment: any[]) {
 
 function ChainEquipmentCell({ value }: { value: string }) {
   if (value === "—") {
-    return <span className="text-foreground/60">—</span>;
+    return <span className="text-[12.5px] text-foreground/60">—</span>;
   }
   const names = value.split(", ");
   if (names.length === 1) {
-    return <span className="text-foreground">{names[0]}</span>;
+    return <span className="text-[12.5px] text-foreground">{names[0]}</span>;
   }
   return (
     <div className="flex flex-col gap-0.5">
       {names.map((name) => (
-        <span key={name} className="text-foreground">{name}</span>
+        <span key={name} className="text-[12.5px] text-foreground">{name}</span>
       ))}
     </div>
   );
@@ -438,6 +439,185 @@ function parseDemodType(remarks: string | null): string {
   return legacy ? legacy[1] : "—";
 }
 
+const ENGAGEMENT_IMPORT_COMMENT =
+  "# Fill resource columns with exact names from Resource Inventory. Names that do not match will be highlighted in red.";
+
+const ENGAGEMENT_IMPORT_RESOURCE_COLUMNS = [
+  "Antenna",
+  "LNA",
+  "LNB",
+  "Demodulator",
+  "Processor",
+  "Other Resources",
+] as const;
+
+type EngagementImportResourceColumn = (typeof ENGAGEMENT_IMPORT_RESOURCE_COLUMNS)[number];
+
+const ENGAGEMENT_TEMPLATE_COLUMNS = ["Satellite", ...ENGAGEMENT_IMPORT_RESOURCE_COLUMNS];
+
+function escapeCsvField(value: string): string {
+  if (/[",\r\n]/.test(value)) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
+}
+
+function parseCsvLine(line: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') {
+          cur += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cur += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ",") {
+      out.push(cur);
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  out.push(cur);
+  return out;
+}
+
+function parseCsvText(text: string): string[][] {
+  const normalized = text.replace(/^\uFEFF/, "");
+  return normalized
+    .split(/\r?\n/)
+    .filter((line) => line.trim() !== "")
+    .map(parseCsvLine);
+}
+
+async function parseSpreadsheetFile(file: File): Promise<string[][]> {
+  const name = file.name.toLowerCase();
+  if (name.endsWith(".xlsx")) {
+    const buffer = await file.arrayBuffer();
+    const workbook = XLSX.read(buffer, { type: "array" });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" }) as unknown[][];
+    return rows.map((row) => row.map((cell) => String(cell ?? "").trim()));
+  }
+  return parseCsvText(await file.text());
+}
+
+function findImportHeaderIndex(rows: string[][]): number {
+  for (let i = 0; i < rows.length; i++) {
+    const first = (rows[i][0] ?? "").trim();
+    if (first.startsWith("#")) continue;
+    if (rows[i].some((cell) => cell.trim().toLowerCase() === "satellite")) return i;
+  }
+  return -1;
+}
+
+function getImportCell(record: Record<string, string>, column: string): string {
+  const key = Object.keys(record).find((k) => k.trim().toLowerCase() === column.toLowerCase());
+  return key ? record[key].trim() : "";
+}
+
+function equipmentMatchesImportColumn(
+  e: { category?: { name?: string } | null },
+  column: EngagementImportResourceColumn,
+): boolean {
+  const cat = (e.category?.name ?? "").toLowerCase();
+  switch (column) {
+    case "Antenna":
+      return cat.includes("antenna");
+    case "LNA":
+      return cat.includes("lna") && !cat.includes("lnb");
+    case "LNB":
+      return cat.includes("lnb");
+    case "Demodulator":
+      return cat.includes("demodulat");
+    case "Processor":
+      return cat.includes("processing");
+    case "Other Resources":
+      return isOtherResourcesEquipment(e);
+    default:
+      return false;
+  }
+}
+
+function resolveImportEquipmentNames(
+  rawValue: string,
+  column: EngagementImportResourceColumn,
+  equipment: any[],
+  unitId: string,
+): { ids: string[]; hasUnmatched: boolean } {
+  const names = rawValue.split(",").map((s) => s.trim()).filter(Boolean);
+  if (!names.length) return { ids: [], hasUnmatched: false };
+
+  const ids: string[] = [];
+  let hasUnmatched = false;
+  for (const name of names) {
+    const eq = equipment.find(
+      (e) =>
+        e.unit_id === unitId &&
+        e.serviceability === "Operational" &&
+        equipmentMatchesImportColumn(e, column) &&
+        (e.name ?? "").trim().toLowerCase() === name.toLowerCase(),
+    );
+    if (eq) ids.push(eq.id as string);
+    else hasUnmatched = true;
+  }
+  return { ids, hasUnmatched };
+}
+
+function downloadEngagementTemplate(
+  unitCode: string,
+  monitoringRows: { satelliteName: string }[],
+) {
+  const date = new Date().toISOString().slice(0, 10);
+  const filename = `SSACC-Engagement-Template-${unitCode}-${date}.csv`;
+  const lines = [
+    ENGAGEMENT_IMPORT_COMMENT,
+    ENGAGEMENT_TEMPLATE_COLUMNS.join(","),
+    ...monitoringRows.map((row) =>
+      [
+        escapeCsvField(row.satelliteName),
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+      ].join(","),
+    ),
+  ];
+  const blob = new Blob([lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function withImportWarning(
+  satName: string | undefined,
+  column: string,
+  content: ReactNode,
+  isEmpty: boolean,
+  warnings: Map<string, Set<string>>,
+): ReactNode {
+  if (!satName || !warnings.get(satName)?.has(column)) return content;
+  if (isEmpty) {
+    return <span className="text-red-400 font-semibold">Unmatched ⚠</span>;
+  }
+  return <span className="text-red-400 font-semibold">{content} ⚠</span>;
+}
+
 // ─── Resource rings ───────────────────────────────────────────────────────────
 
 function SmallRing({
@@ -610,6 +790,9 @@ function EngagementUnit() {
   const canEdit    = useCanEdit();
   const qc         = useQueryClient();
   const [hiddenRevision, setHiddenRevision] = useState(0);
+  const [importWarnings, setImportWarnings] = useState<Map<string, Set<string>>>(() => new Map());
+  const importFileRef = useRef<HTMLInputElement>(null);
+  const importBatchRef = useRef(false);
 
   useEffect(() => {
     const handler = () => setHiddenRevision((n) => n + 1);
@@ -712,13 +895,9 @@ function EngagementUnit() {
         if (eng.id === row.id) continue;
         collectEngagementAllocatedIds([eng], equipmentRaw).forEach((id) => ids.add(id));
       }
-      for (const tableRow of intelActiveRows) {
-        if (tableRow.id === row.id) continue;
-        collectEngagementAllocatedIds([tableRow], equipmentRaw).forEach((id) => ids.add(id));
-      }
       return ids;
     },
-    [enrichedEngagementSource, unitId, intelActiveRows, equipmentRaw],
+    [enrichedEngagementSource, unitId, equipmentRaw],
   );
 
   const resourceStats = useMemo(
@@ -755,6 +934,14 @@ function EngagementUnit() {
         ? getOperationalDataset().satellites.find((s) => s.id === patch.satellite_id)?.name
         : undefined);
 
+    if (!importBatchRef.current && satDisplayName) {
+      setImportWarnings((prev) => {
+        const next = new Map(prev);
+        next.delete(satDisplayName);
+        return next;
+      });
+    }
+
     let satelliteId = patch.satellite_id as string | undefined;
     if (!satelliteId) {
       satelliteId = resolveSatelliteIdFromRow(row);
@@ -777,23 +964,24 @@ function EngagementUnit() {
 
     if (!isSyntheticEngagementId(row.id) && updateOperationalEngagement(row.id, patchWithSat)) {
       if (satDisplayName) restoreEngagementTableRow(unitId, satDisplayName);
-      await invalidateEngagementQueries();
+      if (!importBatchRef.current) await invalidateEngagementQueries();
       return true;
     }
 
     const sat = satelliteId
       ? getOperationalDataset().satellites.find((s) => s.id === satelliteId)
       : undefined;
+    const allUnitEngagements = getOperationalEngagements().filter((e) => e.unit_id === unitId);
     const existingBySatellite = sat
-      ? freshRows.find((r) => {
-          const name = r.satellites?.name as string | undefined;
+      ? allUnitEngagements.find((r) => {
+          const name = (r.satellites?.name ?? r.satellite_name) as string | undefined;
           return name && satelliteNamesMatch(name, sat.name);
         })
       : undefined;
 
     if (existingBySatellite && updateOperationalEngagement(existingBySatellite.id, patchWithSat)) {
       if (satDisplayName) restoreEngagementTableRow(unitId, satDisplayName);
-      await invalidateEngagementQueries();
+      if (!importBatchRef.current) await invalidateEngagementQueries();
       return true;
     }
 
@@ -804,6 +992,15 @@ function EngagementUnit() {
 
     if (!satelliteId) {
       toast.error("Could not resolve satellite for this row.");
+      return false;
+    }
+
+    const alreadyExists = allUnitEngagements.some((r) => {
+      const name = (r.satellites?.name ?? r.satellite_name) as string | undefined;
+      return name && satDisplayName && satelliteNamesMatch(name, satDisplayName);
+    });
+    if (alreadyExists) {
+      toast.error("An engagement for this satellite already exists.");
       return false;
     }
 
@@ -826,7 +1023,7 @@ function EngagementUnit() {
       return false;
     }
     if (satDisplayName) restoreEngagementTableRow(unitId, satDisplayName);
-    await invalidateEngagementQueries();
+    if (!importBatchRef.current) await invalidateEngagementQueries();
     return true;
   }
 
@@ -834,6 +1031,14 @@ function EngagementUnit() {
     const satName = row.satellites?.name as string | undefined;
     const label = satName ?? "this satellite";
     if (!confirm(`Remove this engagement row for ${label}?`)) return;
+
+    if (satName) {
+      setImportWarnings((prev) => {
+        const next = new Map(prev);
+        next.delete(satName);
+        return next;
+      });
+    }
 
     if (!isSyntheticEngagementId(row.id)) {
       removeOperationalEngagement(row.id);
@@ -846,9 +1051,131 @@ function EngagementUnit() {
       if (existing) removeOperationalEngagement(existing.id);
     }
 
-    if (satName) hideEngagementTableRow(unitId, satName);
     await invalidateEngagementQueries();
+    if (satName) hideEngagementTableRow(unitId, satName);
     toast.success("Engagement row removed.");
+  }
+
+  async function importEngagementCSV(file: File) {
+    importBatchRef.current = true;
+    try {
+      const rows = await parseSpreadsheetFile(file);
+      const headerIndex = findImportHeaderIndex(rows);
+      if (headerIndex < 0) {
+        toast.error("Could not find a header row with a Satellite column.");
+        return;
+      }
+
+      const headers = rows[headerIndex].map((cell) => cell.trim());
+      const nextWarnings = new Map<string, Set<string>>();
+      let importedRows = 0;
+      let unmatchedCells = 0;
+
+      for (let i = headerIndex + 1; i < rows.length; i++) {
+        const values = rows[i];
+        const firstCell = (values[0] ?? "").trim();
+        if (!firstCell || firstCell.startsWith("#")) continue;
+
+        const record: Record<string, string> = {};
+        headers.forEach((header, colIdx) => {
+          record[header] = (values[colIdx] ?? "").trim();
+        });
+
+        const satelliteRaw = getImportCell(record, "Satellite");
+        if (!satelliteRaw) continue;
+
+        const monitoringRow = visibleIntelMonitoringRows.find((row) =>
+          satelliteNamesMatch(row.satelliteName, satelliteRaw),
+        );
+        if (!monitoringRow) continue;
+
+        const satName = monitoringRow.satelliteName;
+        const tableRow = intelActiveRows.find((row: any) =>
+          row.satellites?.name && satelliteNamesMatch(row.satellites.name, satName),
+        );
+        if (!tableRow) continue;
+
+        const antennaRaw = getImportCell(record, "Antenna");
+        const lnaRaw = getImportCell(record, "LNA");
+        const lnbRaw = getImportCell(record, "LNB");
+        const demodRaw = getImportCell(record, "Demodulator");
+        const procRaw = getImportCell(record, "Processor");
+        const otherRaw = getImportCell(record, "Other Resources");
+
+        const antenna = resolveImportEquipmentNames(antennaRaw, "Antenna", equipmentRaw, unitId);
+        const lna = resolveImportEquipmentNames(lnaRaw, "LNA", equipmentRaw, unitId);
+        const lnb = resolveImportEquipmentNames(lnbRaw, "LNB", equipmentRaw, unitId);
+        const demod = resolveImportEquipmentNames(demodRaw, "Demodulator", equipmentRaw, unitId);
+        const proc = resolveImportEquipmentNames(procRaw, "Processor", equipmentRaw, unitId);
+        const other = resolveImportEquipmentNames(otherRaw, "Other Resources", equipmentRaw, unitId);
+
+        const columnResults: { column: EngagementImportResourceColumn; hasUnmatched: boolean; ids: string[] }[] = [
+          { column: "Antenna", hasUnmatched: antenna.hasUnmatched, ids: antenna.ids.slice(0, 1) },
+          { column: "LNA", hasUnmatched: lna.hasUnmatched, ids: lna.ids },
+          { column: "LNB", hasUnmatched: lnb.hasUnmatched, ids: lnb.ids },
+          { column: "Demodulator", hasUnmatched: demod.hasUnmatched, ids: demod.ids },
+          { column: "Processor", hasUnmatched: proc.hasUnmatched, ids: proc.ids },
+          { column: "Other Resources", hasUnmatched: other.hasUnmatched, ids: other.ids },
+        ];
+
+        for (const { column, hasUnmatched } of columnResults) {
+          if (hasUnmatched) {
+            if (!nextWarnings.has(satName)) nextWarnings.set(satName, new Set());
+            nextWarnings.get(satName)!.add(column);
+            unmatchedCells++;
+          }
+        }
+
+        const validResourceCount = columnResults.reduce((sum, item) => sum + item.ids.length, 0);
+        if (validResourceCount === 0) continue;
+
+        let frontEndType: FrontEndType = "";
+        let lnaIds: string[] = [];
+        let lnbIds: string[] = [];
+        if (lna.ids.length > 0) {
+          frontEndType = "LNA";
+          lnaIds = lna.ids;
+        } else if (lnb.ids.length > 0) {
+          frontEndType = "LNB";
+          lnbIds = lnb.ids;
+        }
+
+        const form: EngagementChainForm = {
+          satellite_id: resolveSatelliteIdFromRow(tableRow),
+          antenna_id: antenna.ids[0] ?? "",
+          front_end_type: frontEndType,
+          lna_ids: lnaIds,
+          lnb_ids: lnbIds,
+          demod_bands: inferDemodBandsFromIds(demod.ids, equipmentRaw),
+          demodulator_ids: demod.ids,
+          processing_server_ids: proc.ids,
+          observation_start: "",
+          remarks: "",
+          other_resource_ids: other.ids,
+        };
+
+        const remarks = buildRemarksFromForm(form, equipmentRaw);
+        const saved = await saveEngagementRecord(tableRow, {
+          satellite_id: form.satellite_id || undefined,
+          antenna_id: form.antenna_id || null,
+          demodulator_id: form.demodulator_ids[0] ?? null,
+          processing_server_id: form.processing_server_ids[0] ?? null,
+          observation_start: null,
+          status: tableRow.status,
+          remarks: remarks || null,
+        });
+        if (saved) importedRows++;
+      }
+
+      setImportWarnings(nextWarnings);
+      await invalidateEngagementQueries();
+      toast.success(`${importedRows} rows imported, ${unmatchedCells} cells had unmatched resource names`);
+    } catch (error) {
+      console.error("[importEngagementCSV]", error);
+      toast.error("Could not import engagement file.");
+    } finally {
+      importBatchRef.current = false;
+    }
   }
 
   const unitLabel = unit ? unitDisplayLabel(unit) : "Unit";
@@ -887,12 +1214,49 @@ function EngagementUnit() {
       {/* Engaged resources — active monitoring sessions (no scan statistics) */}
       <div className="panel overflow-hidden mb-3">
         <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-secondary/20">
-          <span className="mono text-[10.5px] font-bold uppercase tracking-wider text-foreground">
-            Engaged Resources — Active Monitoring
+          <span className="mono text-[12px] font-bold uppercase tracking-wider text-foreground">
+            Engaged Resources
           </span>
-          <span className="mono text-[7.5px] uppercase tracking-[0.15em] text-foreground/70">
-            {intelActiveRows.length} sessions · synced with Intelligence Repository
-          </span>
+          <div className="flex items-center gap-2">
+            {canEdit && (
+              <>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 mono text-[10.5px] uppercase tracking-wider gap-1 cursor-pointer"
+                  onClick={() =>
+                    downloadEngagementTemplate(
+                      unit ? unitDisplayCode(unit.code) : unitId,
+                      visibleIntelMonitoringRows,
+                    )
+                  }
+                >
+                  <Download className="h-3 w-3" /> Template
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 mono text-[10.5px] uppercase tracking-wider gap-1 cursor-pointer"
+                  onClick={() => importFileRef.current?.click()}
+                >
+                  <ArrowDownToLine className="h-3 w-3" /> Import
+                </Button>
+                <input
+                  ref={importFileRef}
+                  type="file"
+                  accept=".csv,.xlsx"
+                  className="hidden"
+                  onChange={(event) => {
+                    const selected = event.target.files?.[0];
+                    if (selected) void importEngagementCSV(selected);
+                    event.target.value = "";
+                  }}
+                />
+              </>
+            )}
+          </div>
         </div>
 
         {intelActiveRows.length === 0 ? (
@@ -901,13 +1265,13 @@ function EngagementUnit() {
           </div>
         ) : (
           <div className="overflow-auto" style={{ maxHeight: 320 }}>
-            <table className="w-full mono text-[11px]">
+            <table className="w-full mono text-[12.5px]">
               <thead className="sticky top-0 z-10 bg-card border-b border-border">
                 <tr>
                   {RESOURCE_HEADERS.map((h) => (
                     <th
                       key={h || "actions"}
-                      className="text-left px-3 py-2 text-[8px] uppercase tracking-wider text-foreground
+                      className="text-left px-3 py-2 text-[9.5px] uppercase tracking-wider text-foreground
                                  font-bold whitespace-nowrap border-r border-border/50 last:border-r-0"
                     >
                       {h}
@@ -921,62 +1285,100 @@ function EngagementUnit() {
                     ? intelRowToAnalysis(r._intelRow)
                     : analysisByEngId.get(r.id) ?? computeSatelliteAnalysis(r, intelRows);
                   const chain = resolveChainEquipmentDisplay(r, equipmentRaw);
+                  const satName = r.satellites?.name as string | undefined;
+                  const otherResources = otherResourceNamesFromRow(r, equipmentRaw);
 
                   return (
                     <tr key={r.id} className="hover:bg-secondary/20 transition-colors">
-                      <td className="px-3 py-2.5 text-foreground/70">{idx + 1}</td>
+                      <td className="px-3 py-2.5 text-[12.5px] text-foreground/70">{idx + 1}</td>
 
-                      <td className="px-3 py-2.5 font-bold text-foreground whitespace-nowrap">
-                        {r.satellites?.name ?? "—"}
+                      <td className="px-3 py-2.5 text-[12.5px] font-bold text-foreground whitespace-nowrap">
+                        {satName ?? "—"}
                       </td>
 
                       <td className="px-3 py-2.5 whitespace-nowrap">
                         {analysis.polarization !== "—" ? (
-                          <span className="mono text-[9px] font-semibold text-primary bg-primary/5 border border-primary/15 px-1.5 py-0.5 rounded-sm">
+                          <span className="mono text-[10.5px] font-semibold text-primary bg-primary/5 border border-primary/15 px-1.5 py-0.5 rounded-sm">
                             {analysis.polarization}
                           </span>
                         ) : (
-                          <span className="text-foreground/60">—</span>
+                          <span className="text-[12.5px] text-foreground/60">—</span>
                         )}
                       </td>
 
                       <td className="px-3 py-2.5 whitespace-nowrap">
-                        {r.antenna?.name ? (
-                          <span className="text-foreground">{r.antenna.name}</span>
-                        ) : (
-                          <span className="text-foreground/60">—</span>
+                        {withImportWarning(
+                          satName,
+                          "Antenna",
+                          r.antenna?.name ? (
+                            <span className="text-[12.5px] text-foreground">{r.antenna.name}</span>
+                          ) : (
+                            <span className="text-[12.5px] text-foreground/60">—</span>
+                          ),
+                          !r.antenna?.name,
+                          importWarnings,
                         )}
                       </td>
 
                       <td className="px-3 py-2.5 text-foreground">
-                        <ChainEquipmentCell value={chain.lna} />
+                        {withImportWarning(
+                          satName,
+                          "LNA",
+                          <ChainEquipmentCell value={chain.lna} />,
+                          chain.lna === "—",
+                          importWarnings,
+                        )}
                       </td>
 
                       <td className="px-3 py-2.5 text-foreground">
-                        <ChainEquipmentCell value={chain.lnb} />
+                        {withImportWarning(
+                          satName,
+                          "LNB",
+                          <ChainEquipmentCell value={chain.lnb} />,
+                          chain.lnb === "—",
+                          importWarnings,
+                        )}
                       </td>
 
                       <td className="px-3 py-2.5">
-                        {chain.demodulators !== "—" ? (
-                          <div className="flex flex-col gap-0.5">
-                            <ChainEquipmentCell value={chain.demodulators} />
-                            {parseDemodType(r.remarks) !== "—" && (
-                              <span className="text-[8px] text-foreground/70 uppercase">
-                                {parseDemodType(r.remarks)}
-                              </span>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-foreground/60">—</span>
+                        {withImportWarning(
+                          satName,
+                          "Demodulator",
+                          chain.demodulators !== "—" ? (
+                            <div className="flex flex-col gap-0.5">
+                              <ChainEquipmentCell value={chain.demodulators} />
+                              {parseDemodType(r.remarks) !== "—" && (
+                                <span className="text-[9.5px] text-foreground/70 uppercase">
+                                  {parseDemodType(r.remarks)}
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-foreground/60">—</span>
+                          ),
+                          chain.demodulators === "—",
+                          importWarnings,
                         )}
                       </td>
 
                       <td className="px-3 py-2.5 text-foreground">
-                        <ChainEquipmentCell value={chain.processors} />
+                        {withImportWarning(
+                          satName,
+                          "Processor",
+                          <ChainEquipmentCell value={chain.processors} />,
+                          chain.processors === "—",
+                          importWarnings,
+                        )}
                       </td>
 
                       <td className="px-3 py-2.5 text-foreground whitespace-nowrap">
-                        <ChainEquipmentCell value={otherResourceNamesFromRow(r, equipmentRaw)} />
+                        {withImportWarning(
+                          satName,
+                          "Other Resources",
+                          <ChainEquipmentCell value={otherResources} />,
+                          otherResources === "—",
+                          importWarnings,
+                        )}
                       </td>
 
                       <td className="px-2 py-2.5">
@@ -1462,7 +1864,7 @@ function EditEngagement({
 
   useEffect(() => {
     if (open) setForm(parseEngagementFormFromRow(row, equipment));
-  }, [open, row, equipment]);
+  }, [open, row, equipment, row.remarks, row.antenna_id, row.demodulator_id, row.processing_server_id]);
 
   function setField<K extends keyof EngagementChainForm>(k: K, v: EngagementChainForm[K]) {
     setForm((f) => ({ ...f, [k]: v }));
@@ -1537,7 +1939,7 @@ function EditEngagement({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="ghost" size="sm" className="h-7 px-2 mono text-[9px] uppercase tracking-wider gap-1">
+        <Button variant="ghost" size="sm" className="h-7 px-2 mono text-[10.5px] uppercase tracking-wider gap-1">
           <Pencil className="h-3 w-3" /> Edit
         </Button>
       </DialogTrigger>
