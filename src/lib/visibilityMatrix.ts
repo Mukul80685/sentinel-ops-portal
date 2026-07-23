@@ -417,6 +417,43 @@ export function resolveMatrixVisibility(unitId: string, satelliteName: string): 
   };
 }
 
+function inventoryLineMatchesUnitVisibleBeams(inventoryLabel: string, visible: string[]): boolean {
+  const l = inventoryLabel.toLowerCase();
+  for (const v of visible) {
+    const vl = v.toLowerCase();
+    if (l.includes("ku") && vl.includes("ku")) return true;
+    if (l.includes("ka") && vl.includes("ka")) return true;
+    if ((l.includes("c-band") || l.includes("c band")) && (vl.includes("c-band") || vl.includes("c band")))
+      return true;
+    if (l.includes("regional") && vl.includes("regional")) return true;
+    if (l.includes("spot") && vl.includes("spot")) return true;
+    if (l.includes("wide") && vl.includes("wide")) return true;
+  }
+  return false;
+}
+
+/**
+ * Unit-specific beam details for Priority & Allocation — derived from this unit's
+ * Visible Beams in the Satellite Visibility Matrix. No leading beam count; full list.
+ */
+export function formatUnitBeamDetailsForAllocation(
+  unitId: string,
+  sat: GeoSatellite,
+  regionId: string,
+): string {
+  const visible = getVisibleBeams(unitId, sat.id, regionId);
+  if (visible.length === 0) {
+    const fallback = sat.beamCoverage?.trim();
+    return fallback || "—";
+  }
+
+  const { beams } = getBeamBreakdown(sat);
+  const filtered = beams.filter((label) => inventoryLineMatchesUnitVisibleBeams(label, visible));
+  if (filtered.length > 0) return filtered.join(", ");
+
+  return visible.join(", ");
+}
+
 /** Infer authorized bands from matrix-visible beam labels. */
 export function bandsFromVisibleBeams(beamNames: string[]): string[] {
   const bands = new Set<string>();

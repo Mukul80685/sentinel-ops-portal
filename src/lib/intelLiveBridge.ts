@@ -14,6 +14,7 @@ import {
   buildIntelLinkageContext,
   buildIntelLinkageVisibilityRows,
   buildIntelSatelliteTable,
+  deriveIntPendingFrequencies,
   deriveIntScanPhaseStatus,
   hasIntelData,
   hasIntRepositoryContent,
@@ -22,9 +23,12 @@ import {
 } from "@/lib/intelAnalysisData";
 import { loadImportedRecords } from "@/lib/intelRepository";
 import {
+  buildIntelReportId,
   loadScanOverrides,
   loadSuppressedSatNames,
   mergeIntelSatelliteTableWithStorage,
+  reportIdForOverride,
+  scanRowKey,
 } from "@/lib/intelScanStorage";
 import { intelStorageSlug } from "@/lib/intelStorageKeys";
 import { resolveIntUnitSlug } from "@/lib/operationalSync";
@@ -72,7 +76,7 @@ function buildSyntheticEngagement(
 export function intelRowToAnalysis(row: IntelSatelliteReportRow): SatelliteAnalysis {
   const scanned = row.totalScanned;
   const analyzed = row.analyzed;
-  const pending = row.pending;
+  const pending = deriveIntPendingFrequencies(scanned, analyzed);
   return {
     polarization: row.polarization !== "—" ? row.polarization : "—",
     lastUpdate: row.reportTimestamp,
@@ -347,10 +351,33 @@ export function unitHasIntRepositoryPresence(intUnitSlug: string, unitCode?: str
   return false;
 }
 
+function isActiveIntelMonitoringRow(row: IntelSatelliteReportRow): boolean {
+  return row.scanEligible && row.engagementStatus != null && row.totalScanned > 0;
+}
+
 /**
- * Satellites a unit is monitoring — mirrors the INT Repository unit table.
- * Includes roster units (alpha/bravo/charlie) with scan data, plus any unit
- * with user-uploaded overrides/imports. Units with no INT presence return [].
+ * Active INT scan rows for Engagement Status / resource allocation tables.
+ * Filters the full repository table to rows with real scan metrics.
+ */
+export function listActiveIntelMonitoringSatellites(
+  unitDbId: string,
+  unitCode: string | undefined,
+  engagements: any[],
+  equipment: any[],
+  intelRows: any[],
+): IntelSatelliteReportRow[] {
+  return listIntelMonitoringSatellites(
+    unitDbId,
+    unitCode,
+    engagements,
+    equipment,
+    intelRows,
+  ).filter(isActiveIntelMonitoringRow);
+}
+
+/**
+ * Satellite rows shown in the INT Repository unit table — same merge rules as the
+ * Intelligence Repository page (scan overrides, suppressions, roster + uploads).
  */
 export function listIntelMonitoringSatellites(
   unitDbId: string,
@@ -367,11 +394,6 @@ export function listIntelMonitoringSatellites(
   const slug = intelStorageSlug(intUnitSlug, unitCode);
   const suppressed = loadSuppressedSatNames(slug, unitCode);
   const allOverrides = loadScanOverrides(slug, unitCode);
-  const zeroImported = new Set(
-    allOverrides
-      .filter((o) => o.totalScanned === 0)
-      .map((o) => o.satelliteName.toLowerCase()),
-  );
 
   const unitEngs = engagements.filter((e) => e.unit_id === unitDbId);
   const unitEq = equipment.filter((e: any) => e.unit_id === unitDbId);
@@ -383,76 +405,75 @@ export function listIntelMonitoringSatellites(
     unitCode,
   );
 
-  const fromTable = table.filter(
-    (row) =>
-      !suppressed.has(row.satelliteName.toLowerCase()) &&
-      !zeroImported.has(row.satelliteName.toLowerCase()) &&
-      row.scanEligible &&
-      row.engagementStatus != null &&
-      row.totalScanned > 0,
-  );
-
-  if (fromTable.length > 0 || UNIT_SATELLITE_ROSTER[intUnitSlug]) {
-    return fromTable;
+  if (table.length > 0) {
+    return table;
   }
 
   // Upload-only unit (no seed roster): build rows from overrides + imports.
   const overrides = allOverrides.filter(
-    (o) => o.totalScanned > 0 && !suppressed.has(o.satelliteName.toLowerCase()),
+    (o) => !suppressed.has(o.satelliteName.toLowerCase()),
   );
   const imports = loadImportedRecords(slug).filter(
     (r) => !r.archived && !suppressed.has(r.satellite.toLowerCase()),
   );
-  const satNames = new Set<string>();
-  for (const o of overrides) satNames.add(o.satelliteName);
-  for (const r of imports) satNames.add(r.satellite);
 
   const rows: IntelSatelliteReportRow[] = [];
-  for (const name of satNames) {
-    const key = name.toLowerCase();
-    const ov = overrides.find((o) => o.satelliteName.toLowerCase() === key);
-    if (ov) {
-      rows.push({
-        reportId: `${intUnitSlug}__${name.replace(/\s+/g, "-")}`,
-        satelliteName: name,
-        scanEligible: true,
-        totalScanned: ov.totalScanned,
-        analyzed: ov.analyzed,
-        pending: ov.pending,
-        productivityScore: ov.productivityScore,
-        reportTimestamp: ov.updatedOn,
-        polarization: ov.polarization,
-        processingStatus: ov.pending > 0 ? "Active Scanning" : "Analysis Complete",
-        engagementStatus: deriveIntScanPhaseStatus(ov.totalScanned, ov.analyzed, ov.pending),
-      });
-      continue;
-    }
-    const satImports = imports.filter((r) => r.satellite.toLowerCase() === key);
-    if (satImports.length > 0) {
-      const analyzed = satImports.filter((r) => r.productivity === "productive").length;
-      const totalScanned = satImports.length;
-      const pending = Math.max(0, totalScanned - analyzed);
-      rows.push({
-        reportId: `${intUnitSlug}__${name.replace(/\s+/g, "-")}`,
-        satelliteName: name,
-        scanEligible: true,
-        totalScanned,
-        analyzed,
-        pending,
-        productivityScore:
-          analyzed > 0 ? Math.round((analyzed / totalScanned) * 100) : null,
-        reportTimestamp: satImports[0]?.collectionDate ?? null,
-        polarization: satImports[0]?.polarization ?? "—",
-        processingStatus: pending > 0 ? "Active Scanning" : "Analysis Complete",
-        engagementStatus: deriveIntScanPhaseStatus(totalScanned, analyzed, pending),
-      });
-    }
+  for (const ov of overrides) {
+    const pending = deriveIntPendingFrequencies(ov.totalScanned, ov.analyzed);
+    rows.push({
+      reportId: reportIdForOverride(intUnitSlug, ov),
+      satelliteName: ov.satelliteName,
+      scanEligible: true,
+      totalScanned: ov.totalScanned,
+      analyzed: ov.analyzed,
+      pending,
+      productivityScore: ov.productivityScore,
+      reportTimestamp: ov.updatedOn,
+      polarization: ov.polarization,
+      processingStatus: pending > 0 ? "Active Scanning" : "Analysis Complete",
+      engagementStatus: deriveIntScanPhaseStatus(ov.totalScanned, ov.analyzed, pending),
+    });
   }
 
-  return rows.filter((r) => r.totalScanned > 0 && r.engagementStatus != null);
+  const overrideRowKeys = new Set(
+    overrides.map((o) => scanRowKey(o.satelliteName, o.polarization)),
+  );
+
+  const importGroups = new Map<string, typeof imports>();
+  for (const rec of imports) {
+    const key = scanRowKey(rec.satellite, rec.polarization ?? "—");
+    if (overrideRowKeys.has(key)) continue;
+    const bucket = importGroups.get(key) ?? [];
+    bucket.push(rec);
+    importGroups.set(key, bucket);
+  }
+
+  for (const [, group] of importGroups) {
+    if (group.length === 0) continue;
+    const first = group[0]!;
+    const analyzed = group.filter((r) => r.productivity === "productive").length;
+    const totalScanned = group.length;
+    const pending = Math.max(0, totalScanned - analyzed);
+    rows.push({
+      reportId: buildIntelReportId(intUnitSlug, first.satellite, first.polarization ?? "—"),
+      satelliteName: first.satellite,
+      scanEligible: true,
+      totalScanned,
+      analyzed,
+      pending,
+      productivityScore:
+        analyzed > 0 ? Math.round((analyzed / totalScanned) * 100) : null,
+      reportTimestamp: first.collectionDate ?? null,
+      polarization: first.polarization ?? "—",
+      processingStatus: pending > 0 ? "Active Scanning" : "Analysis Complete",
+      engagementStatus: deriveIntScanPhaseStatus(totalScanned, analyzed, pending),
+    });
+  }
+
+  return rows;
 }
 
-/** True when INT Repository reports at least one satellite with scan data for this unit. */
+/** True when INT Repository reports at least one satellite with active scan metrics. */
 export function unitHasIntMonitoringActivity(
   unitDbId: string,
   unitCode: string | undefined,
@@ -460,8 +481,8 @@ export function unitHasIntMonitoringActivity(
   equipment: any[],
   intelRows: any[],
 ): boolean {
-  return (
-    listIntelMonitoringSatellites(unitDbId, unitCode, engagements, equipment, intelRows).length > 0
+  return listIntelMonitoringSatellites(unitDbId, unitCode, engagements, equipment, intelRows).some(
+    isActiveIntelMonitoringRow,
   );
 }
 
@@ -485,7 +506,8 @@ export function computeGatedResourceEngagementPct(
     engagements,
     equipment,
     intelRows,
-  );
+  ).filter(isActiveIntelMonitoringRow);
+  if (intMonitoring.length === 0) return 0;
   return computeTableDrivenResourceEngagementPct(
     unitDbId,
     equipment,

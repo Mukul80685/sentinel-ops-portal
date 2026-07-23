@@ -19,6 +19,12 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -99,6 +105,9 @@ import {
   editSatelliteInUnitOverlay,
   editSatelliteInOverlay,
   removeSatelliteFromUnitOverlay,
+  hideUnitRegion,
+  isUnitRegionHidden,
+  unhideUnitRegion,
   VISIBILITY_OVERLAY_EVENT,
 } from "@/lib/visibilityOverlay";
 import { mergeRegionsWithOverlay, useVisibleSatelliteCounts } from "@/lib/satelliteCatalog";
@@ -348,6 +357,39 @@ function VisibilityPage() {
     [mergedRegions, activeRegionId],
   );
 
+  const visibleRegions = useMemo(() => {
+    if (!selectedUnitId) return mergedRegions;
+    return mergedRegions.filter((r) => !isUnitRegionHidden(selectedUnitId, r.id));
+  }, [mergedRegions, selectedUnitId, overlayVersion]);
+
+  const hiddenRegions = useMemo(() => {
+    if (!selectedUnitId) return [];
+    return mergedRegions.filter((r) => isUnitRegionHidden(selectedUnitId, r.id));
+  }, [mergedRegions, selectedUnitId, overlayVersion]);
+
+  function handleHideRegion(region: Region) {
+    if (!selectedUnitId) return;
+    if (region.satellites.length > 0) {
+      toast.error(
+        `${region.label} still has ${region.satellites.length} satellite` +
+          `${region.satellites.length !== 1 ? "s" : ""}. Delete those entries first, then remove this region tile.`,
+      );
+      return;
+    }
+    hideUnitRegion(selectedUnitId, region.id);
+    if (activeRegionId === region.id) {
+      setActiveRegionId(null);
+      setFocusSatelliteId(null);
+    }
+    toast.success(`${region.label} region tile removed.`);
+  }
+
+  function handleRestoreRegion(region: Region) {
+    if (!selectedUnitId) return;
+    unhideUnitRegion(selectedUnitId, region.id);
+    toast.success(`${region.label} region tile restored.`);
+  }
+
   // Unit-beam visibility for satellite detail modal (from Visibility Matrix SSOT)
   const { data: units = [] } = useQuery({ queryKey: ["units"], queryFn: listUnits });
 
@@ -461,8 +503,11 @@ function VisibilityPage() {
       {/* ── Level 2: Region selection (inside a unit) ────────────────────── */}
       {selectedUnitId && !activeRegion && (
         <RegionGrid
-          regions={mergedRegions}
+          regions={visibleRegions}
+          hiddenRegions={hiddenRegions}
           onSelect={(r) => setActiveRegionId(r.id)}
+          onHideRegion={handleHideRegion}
+          onRestoreRegion={handleRestoreRegion}
           unit={selectedUnit}
           onBackToUnits={() => { setSelectedUnitId(null); setActiveRegionId(null); }}
         />
@@ -704,12 +749,18 @@ const REGION_ICON: Record<string, React.ReactNode> = {
 
 function RegionGrid({
   regions,
+  hiddenRegions,
   onSelect,
+  onHideRegion,
+  onRestoreRegion,
   unit,
   onBackToUnits,
 }: {
   regions: Region[];
+  hiddenRegions: Region[];
   onSelect: (r: Region) => void;
+  onHideRegion: (r: Region) => void;
+  onRestoreRegion: (r: Region) => void;
   unit?: VisibilityUnit | null;
   onBackToUnits?: () => void;
 }) {
@@ -719,7 +770,7 @@ function RegionGrid({
     <div className="space-y-5">
       {/* Unit context header — back to units + breadcrumb */}
       {unit && onBackToUnits && (
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <Button
             type="button"
             variant="outline"
@@ -729,38 +780,127 @@ function RegionGrid({
           >
             <ArrowLeft className="h-3.5 w-3.5 mr-1" /> All Units
           </Button>
-          <div className="flex items-center gap-1.5 text-[12px] mono text-muted-foreground">
-            <SatIcon className="h-3.5 w-3.5" />
-            <span>{unit.name}</span>
+          <div className="flex items-center gap-1.5 text-[12px] mono text-muted-foreground min-w-0 flex-1">
+            <SatIcon className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">{unit.name}</span>
             <span>/</span>
-            <span className="text-foreground font-bold uppercase">Select Region</span>
+            <span className="text-foreground font-bold uppercase shrink-0">Select Region</span>
           </div>
+          {hiddenRegions.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mono text-[11px] h-8 uppercase tracking-wider shrink-0"
+                >
+                  <Plus className="h-3.5 w-3.5 mr-1" /> Add Region
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-[14rem]">
+                <div className="px-2 py-1.5 mono text-[9px] uppercase tracking-wider text-muted-foreground">
+                  Restore removed tiles
+                </div>
+                {hiddenRegions.map((region) => (
+                  <DropdownMenuItem
+                    key={region.id}
+                    className="mono text-[11px] cursor-pointer gap-2"
+                    onClick={() => onRestoreRegion(region)}
+                  >
+                    <RegionFlagIcon
+                      flagCode={region.flagCode}
+                      emoji={region.emoji}
+                      label={region.label}
+                      variant="row"
+                      className="w-6 h-4 shrink-0"
+                      fallback={REGION_ICON[region.id] ?? <Globe className="h-4 w-4 text-muted-foreground" />}
+                    />
+                    <span>{region.label}</span>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
       )}
 
-      {/* Country / region tiles */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        {regions.map((region) => (
-          <button
-            key={region.id}
-            type="button"
-            onClick={() => onSelect(region)}
-            className="panel flex flex-col items-center justify-center gap-3 py-7 px-3 min-h-[130px] hover:bg-secondary/60 focus:outline-none focus:ring-1 focus:ring-primary transition-colors group"
-          >
-            <RegionFlagIcon
-              flagCode={region.flagCode}
-              emoji={region.emoji}
-              label={region.label}
-              variant="tile"
-              className="w-14 h-9"
-              fallback={REGION_ICON[region.id] ?? <Globe className="h-9 w-9 text-muted-foreground" />}
-            />
-            <span className="mono text-[11px] font-bold uppercase tracking-widest text-center leading-tight">
-              {region.label}
-            </span>
-          </button>
-        ))}
-      </div>
+      {regions.length === 0 ? (
+        <div className="panel p-8 text-center space-y-4">
+          <p className="mono text-[13px] font-bold uppercase tracking-wider text-foreground">
+            No region tiles visible
+          </p>
+          <p className="mono text-[11px] text-muted-foreground max-w-md mx-auto">
+            {hiddenRegions.length > 0
+              ? "Use Add Region above to restore a country or region tile you removed by mistake."
+              : "All country and region tiles for this unit have been removed."}
+          </p>
+          {hiddenRegions.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" className="mono uppercase tracking-wider text-[11px]">
+                  <Plus className="h-4 w-4 mr-1.5" /> Add Region
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="center" className="min-w-[14rem]">
+                {hiddenRegions.map((region) => (
+                  <DropdownMenuItem
+                    key={region.id}
+                    className="mono text-[11px] cursor-pointer gap-2"
+                    onClick={() => onRestoreRegion(region)}
+                  >
+                    <RegionFlagIcon
+                      flagCode={region.flagCode}
+                      emoji={region.emoji}
+                      label={region.label}
+                      variant="row"
+                      className="w-6 h-4 shrink-0"
+                      fallback={REGION_ICON[region.id] ?? <Globe className="h-4 w-4 text-muted-foreground" />}
+                    />
+                    <span>{region.label}</span>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          {regions.map((region) => (
+            <div key={region.id} className="relative group/tile">
+              <button
+                type="button"
+                onClick={() => onSelect(region)}
+                className="panel flex flex-col items-center justify-center gap-3 py-7 px-3 min-h-[130px] w-full hover:bg-secondary/60 focus:outline-none focus:ring-1 focus:ring-primary transition-colors group"
+              >
+                <RegionFlagIcon
+                  flagCode={region.flagCode}
+                  emoji={region.emoji}
+                  label={region.label}
+                  variant="tile"
+                  className="w-14 h-9"
+                  fallback={REGION_ICON[region.id] ?? <Globe className="h-9 w-9 text-muted-foreground" />}
+                />
+                <span className="mono text-[11px] font-bold uppercase tracking-widest text-center leading-tight">
+                  {region.label}
+                </span>
+              </button>
+              <button
+                type="button"
+                title={`Remove ${region.label} region tile`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onHideRegion(region);
+                }}
+                className="absolute top-1.5 right-1.5 p-1 rounded-sm border border-border/60 bg-card/90 text-muted-foreground
+                           opacity-0 group-hover/tile:opacity-100 hover:text-destructive hover:border-destructive/40 transition-opacity"
+              >
+                <Trash2 className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Total KPI — centered summary block */}
       <div className="border-t border-border pt-5 flex flex-col items-center gap-1.5">

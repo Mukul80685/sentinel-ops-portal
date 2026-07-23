@@ -9,7 +9,6 @@ import {
   Landmark,
   Settings,
   User,
-  FileText,
   Clock,
   Trash2,
   Star,
@@ -51,17 +50,9 @@ import { Input } from "@/components/ui/input";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 /** Support / utility navigation — NOT main dashboard modules (those live on the homepage). */
-const supportNavItems = [
-  { key: "satellites", label: "Satellites",         icon: Satellite, adminTo: "/admin/satellites", userTo: "/visibility" },
-  { key: "minutes",    label: "Recent Discussions", icon: Clock,     adminTo: "/minutes",           userTo: "/minutes" },
-  { key: "reports",    label: "Reports",            icon: FileText,  adminTo: "/reports",           userTo: "/reports" },
-  { key: "discarded",  label: "Discarded Frequencies", icon: Trash2, adminTo: "/discarded",       userTo: "/discarded" },
-] as const;
-
 const standardNavItems = [
   { key: "units",      label: "Units",               icon: Landmark,  adminTo: "/admin/units",      userTo: "/inventory" },
   { key: "satellites", label: "Satellites",          icon: Satellite, adminTo: "/admin/satellites", userTo: "/visibility" },
-  { key: "reports",    label: "Reports and Returns", icon: FileText,  adminTo: "/reports",           userTo: "/reports" },
   { key: "discarded",  label: "Discarded Frequencies", icon: Trash2, adminTo: "/discarded",       userTo: "/discarded" },
   { key: "minutes",    label: "Recent Discussions",  icon: Clock,     adminTo: "/minutes",           userTo: "/minutes" },
 ] as const;
@@ -589,13 +580,6 @@ function PrimaryNavSidebar({
             onClick={() => openModule("discussions")}
             iconTheme="discussions"
           />
-          <SidebarModalButton
-            label="Reports"
-            icon={FileText}
-            active={activeModule === "reports"}
-            onClick={() => openModule("reports")}
-            iconTheme="reports"
-          />
           <SidebarLink
             to="/administrator"
             search={ccHubSearch("important")}
@@ -706,7 +690,6 @@ function SecondarySidebar({
   const secondaryIconTheme: Partial<Record<(typeof standardNavItems)[number]["key"], HomeIconTheme>> = {
     units: "inventory",
     satellites: "satellite",
-    reports: "reports",
     discarded: "discarded",
     minutes: "discussions",
   };
@@ -749,18 +732,6 @@ function SecondarySidebar({
                 icon={item.icon}
                 active={activeModule === "discussions"}
                 onClick={() => openModule("discussions")}
-                iconTheme={iconTheme}
-              />
-            );
-          }
-          if (item.key === "reports") {
-            return (
-              <SidebarModalButton
-                key={item.key}
-                label={item.label}
-                icon={item.icon}
-                active={activeModule === "reports"}
-                onClick={() => openModule("reports")}
                 iconTheme={iconTheme}
               />
             );

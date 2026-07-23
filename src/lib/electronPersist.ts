@@ -5,6 +5,8 @@
 
 import { OPERATIONAL_STORE_KEY, OPERATIONAL_STORE_EVENT } from "@/lib/operationalConstants";
 import { invalidateOperationalStoreCache } from "@/lib/operationalStore";
+import { INTEL_CELL_EDITS_EVENT } from "@/lib/intelCellStore";
+import { PRIORITY_ALLOCATION_EVENT } from "@/lib/priorityAllocation";
 
 const DISK_SNAPSHOT_MARKER = "ssacc_disk_snapshot_at";
 const RESTORE_MARKER = "ssacc_snapshot_restored_at";
@@ -71,6 +73,12 @@ function applyLocalStorageSnapshot(data: Record<string, string>): void {
   }
 }
 
+/** Full replace — used after reinstall/port change when the origin partition is empty. */
+function replaceLocalStorageSnapshot(data: Record<string, string>): void {
+  localStorage.clear();
+  applyLocalStorageSnapshot(data);
+}
+
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** Debounced write of all localStorage keys to disk (Electron userData). */
@@ -92,7 +100,10 @@ export async function flushElectronStorage(): Promise<void> {
   const data = collectLocalStorageSnapshot();
   data[DISK_SNAPSHOT_MARKER] = savedAt;
 
-  await api.write({ savedAt, data });
+  const ok = await api.write({ savedAt, data });
+  if (!ok) {
+    throw new Error("Failed to persist application data to disk.");
+  }
   localStorage.setItem(DISK_SNAPSHOT_MARKER, savedAt);
 }
 
@@ -125,15 +136,20 @@ export async function hydrateElectronStorage(): Promise<boolean> {
   if (!diskHasStore) return false;
 
   const restoredAt = localStorage.getItem(RESTORE_MARKER);
-  if (restoredAt && localUserManaged && diskAt && restoredAt > diskAt) {
-    return false;
+  const diskRestoredAt = envelope.data[RESTORE_MARKER] ?? "";
+
+  // In-memory snapshot restore wins over disk until a successful flush copies it to userData.
+  if (restoredAt && localUserManaged) {
+    if (!diskRestoredAt || restoredAt >= diskRestoredAt) {
+      return false;
+    }
   }
 
   const localMissingStore = !localStoreRaw;
   const diskIsNewer = !!diskAt && (!localMarker || diskAt > localMarker);
 
   if (localMissingStore) {
-    applyLocalStorageSnapshot(envelope.data);
+    replaceLocalStorageSnapshot(envelope.data);
     invalidateOperationalStoreCache();
     if (diskAt) localStorage.setItem(DISK_SNAPSHOT_MARKER, diskAt);
     return true;
@@ -164,10 +180,14 @@ export function installElectronPersistenceHooks(): () => void {
   };
 
   const onOperationalChange = () => scheduleElectronStorageFlush();
+  const onIntelCellEdits = () => scheduleElectronStorageFlush();
+  const onPriorityChange = () => scheduleElectronStorageFlush();
 
   window.addEventListener("beforeunload", onBeforeUnload);
   window.addEventListener("storage", onStorage);
   window.addEventListener(OPERATIONAL_STORE_EVENT, onOperationalChange);
+  window.addEventListener(INTEL_CELL_EDITS_EVENT, onIntelCellEdits);
+  window.addEventListener(PRIORITY_ALLOCATION_EVENT, onPriorityChange);
 
   const interval = window.setInterval(() => scheduleElectronStorageFlush(0), 60_000);
 
@@ -175,6 +195,8 @@ export function installElectronPersistenceHooks(): () => void {
     window.removeEventListener("beforeunload", onBeforeUnload);
     window.removeEventListener("storage", onStorage);
     window.removeEventListener(OPERATIONAL_STORE_EVENT, onOperationalChange);
+    window.removeEventListener(INTEL_CELL_EDITS_EVENT, onIntelCellEdits);
+    window.removeEventListener(PRIORITY_ALLOCATION_EVENT, onPriorityChange);
     window.clearInterval(interval);
     if (flushTimer) clearTimeout(flushTimer);
   };

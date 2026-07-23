@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { resetOperationalDataSourceCache } from "@/lib/operationalDataSource";
 import {
   ensureOperationalDataset,
+  hasPersistedUserWorkbenchData,
   resetOperationalDataset,
 } from "@/lib/operationalStore";
 import { OPERATIONAL_DATASET_VERSION } from "@/lib/operationalConstants";
@@ -32,7 +33,7 @@ export function OperationalStoreGate() {
             equipment?: unknown[];
             userManaged?: boolean;
           };
-          if (parsed.userManaged) {
+          if (parsed.userManaged || hasPersistedUserWorkbenchData()) {
             ensureOperationalDataset();
           } else if (
             parsed.version !== OPERATIONAL_DATASET_VERSION ||

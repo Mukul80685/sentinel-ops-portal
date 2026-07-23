@@ -51,6 +51,7 @@ import {
   type ReportCellEdits,
 } from "@/lib/intelCellStore";
 import {
+  filterFrequencyImportRecords,
   gridToRecords,
   parseIntelSpreadsheet,
   SpreadsheetHeaderError,
@@ -380,7 +381,7 @@ function DisplayTable({
           )}
           <span className="mono text-[10px] font-bold uppercase tracking-wider text-foreground truncate">{title}</span>
           <span className="mono text-[9px] text-foreground/55 shrink-0">
-            ({visibilityBlocked ? 0 : allRows.length})
+            ({allRows.length})
           </span>
           {hasInvalid && (
             <span className="flex items-center gap-1 mono text-[9px] text-amber-600 dark:text-amber-400 shrink-0">
@@ -544,7 +545,9 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
   async function handleImportSatellite(file: File) {
     try {
       const grid = await parseIntelSpreadsheet(file);
-      const objs = gridToRecords(grid, TEMPLATES.satellite.headers);
+      const objs = gridToRecords(grid, TEMPLATES.satellite.headers, {
+        templateExample: TEMPLATES.satellite.example,
+      });
       if (!objs.length) return toast.error("No data rows found in file");
       const row = objs[0]!;
       const ok = saveEdits((prev) => ({
@@ -571,7 +574,9 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
   async function handleImportScan(file: File) {
     try {
       const grid = await parseIntelSpreadsheet(file);
-      const objs = gridToRecords(grid, TEMPLATES.scan.headers);
+      const objs = gridToRecords(grid, TEMPLATES.scan.headers, {
+        templateExample: TEMPLATES.scan.example,
+      });
       if (!objs.length) return toast.error("No data rows found in file");
       const row = objs[0]!;
       const ok = saveEdits((prev) => ({
@@ -598,9 +603,24 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
   async function handleImportTable(table: "productive" | "nonProductive" | "novel", file: File) {
     try {
       const templateKey = table;
+      const template = TEMPLATES[templateKey];
       const grid = await parseIntelSpreadsheet(file);
-      const objs = gridToRecords(grid, TEMPLATES[templateKey].headers);
-      if (!objs.length) return toast.error("No data rows found in file");
+      const parsed = gridToRecords(grid, template.headers, {
+        templateExample: template.example,
+      });
+      const freqHeader = table === "novel" ? "Frequency" : "Frequency ID";
+      const objs =
+        table === "novel"
+          ? filterFrequencyImportRecords(parsed, template.headers, freqHeader)
+          : filterFrequencyImportRecords(parsed, template.headers);
+      const dropped = parsed.length - objs.length;
+      if (!objs.length) {
+        return toast.error(
+          dropped > 0
+            ? "No valid frequency rows found — each row needs a Frequency ID plus at least one other column filled. Band labels (e.g. C-band) alone are not imported."
+            : "No data rows found — remove the template example row and add your frequency data below the header.",
+        );
+      }
 
       const stamp = Date.now();
       const extra = objs.map((row, i) => {
@@ -636,7 +656,10 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
         [table]: { cells: {}, extra, importedMode: true },
       }));
       if (!ok) return toast.error("Could not save imported data — storage may be full");
-      toast.success(`Imported ${extra.length} row${extra.length !== 1 ? "s" : ""}`);
+      toast.success(
+        `Imported ${extra.length} row${extra.length !== 1 ? "s" : ""}` +
+          (dropped > 0 ? ` (${dropped} invalid row${dropped !== 1 ? "s" : ""} skipped)` : ""),
+      );
     } catch (err) {
       toast.error(
         err instanceof SpreadsheetHeaderError
@@ -654,34 +677,17 @@ export function IntelSatelliteDrillDown({ report, open, onClose }: Props) {
 
   function buildProductiveRows(): MergedRow[] {
     if (!report) return [];
-    const tbl = edits.productive;
-    if (usesImportedRows(tbl)) return tbl.extra.map((r) => ({ ...r, isExtra: true })) as MergedRow[];
-    return report.productive.map((f) => ({
-      id: f.id, isExtra: false,
-      frequencyId: f.frequencyId, outputType: f.outputType,
-      details: f.detailsOfInterception, protocol: f.protocolEncountered ?? "",
-    }));
+    return edits.productive.extra.map((r) => ({ ...r, isExtra: true })) as MergedRow[];
   }
 
   function buildNonProductiveRows(): MergedRow[] {
     if (!report) return [];
-    const tbl = edits.nonProductive;
-    if (usesImportedRows(tbl)) return tbl.extra.map((r) => ({ ...r, isExtra: true })) as MergedRow[];
-    return report.nonProductive.map((f) => ({
-      id: f.id, isExtra: false,
-      frequencyId: f.frequencyId, level: f.level,
-      protocol: f.protocolEncountered ?? "", remarks: f.remarks,
-    }));
+    return edits.nonProductive.extra.map((r) => ({ ...r, isExtra: true })) as MergedRow[];
   }
 
   function buildNovelRows(): MergedRow[] {
     if (!report) return [];
-    const tbl = edits.novel;
-    if (usesImportedRows(tbl)) return tbl.extra.map((r) => ({ ...r, isExtra: true })) as MergedRow[];
-    return report.novelProtocols.map((p, i) => ({
-      id: `novel-${i}`, isExtra: false,
-      frequency: p.frequency, protocol: p.protocol, remarks: p.remarks,
-    }));
+    return edits.novel.extra.map((r) => ({ ...r, isExtra: true })) as MergedRow[];
   }
 
   function buildNovelInvalidIds(): Set<string> {

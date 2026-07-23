@@ -204,6 +204,8 @@ async function migrateLegacyLocalStorageIfNeeded() {
   if (!app.isPackaged) return;
 
   const existing = readPersistEnvelope();
+  // Never overwrite an on-disk snapshot once operational data exists (seed, user edits, or restore flush).
+  if (existing?.data?.[OPERATIONAL_STORE_KEY]) return;
   if (persistHasUserManagedStore(existing)) return;
 
   let bestSnapshot = existing?.data ?? null;
@@ -253,7 +255,10 @@ function serveStatic(req, res) {
   }
   if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
     const ext = path.extname(filePath);
-    const mime = MIME_TYPES[ext] || 'application/octet-stream';
+    const mime =
+      ext === '.html'
+        ? 'text/html; charset=utf-8'
+        : MIME_TYPES[ext] || 'application/octet-stream';
     res.writeHead(200, { 'Content-Type': mime });
     fs.createReadStream(filePath).pipe(res);
     return true;

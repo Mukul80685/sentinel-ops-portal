@@ -4,12 +4,22 @@
  */
 
 import {
+  findSatelliteCatalogRowById,
   flattenGlobalSatelliteCatalog,
+  getVisibleSatelliteCatalogIdsForUnit,
+  listVisibleSatelliteCatalogForUnit,
   parseLaunchDate,
   type FlatSatelliteRow,
 } from "@/lib/satelliteCatalog";
+import { scheduleElectronStorageFlush } from "@/lib/electronPersist";
+import { resolveIntUnitSlug } from "@/lib/operationalSync";
 import type { GeoSatellite } from "@/lib/visibilityMatrix";
-import { getBeamBreakdown, formatSatelliteTransponders } from "@/lib/visibilityMatrix";
+import {
+  canonicalSatelliteKey,
+  formatSatelliteTransponders,
+  formatUnitBeamDetailsForAllocation,
+} from "@/lib/visibilityMatrix";
+import { VISIBILITY_OVERLAY_EVENT } from "@/lib/visibilityOverlay";
 import { useEffect, useState } from "react";
 
 export const UNIT_SLOTS = [
@@ -230,11 +240,90 @@ function parseFrequencyBand(sat: GeoSatellite): string {
   return bands.length ? bands.join(" / ") : sat.transponders;
 }
 
+/** Stable per-unit identity — one satellite once per unit (id + canonical name). */
+export function allocationIdentityKey(row: {
+  satelliteId?: string;
+  satelliteName?: string;
+  /** FlatSatelliteRow / catalog shape */
+  id?: string;
+  name?: string;
+}): string {
+  const id = (row.satelliteId ?? row.id)?.trim();
+  if (id) return id;
+  return canonicalSatelliteKey(row.satelliteName ?? row.name ?? "");
+}
+
+/** Repair degree sign corruption common in legacy offline / EXE persisted data. */
+export function normalizeOrbitalPosition(position: string): string {
+  if (!position) return position;
+  return position
+    .replace(/(\d(?:\.\d+)?)\?(?=[EWew])/g, "$1°")
+    .replace(/(\d(?:\.\d+)?)\uFFFD(?=[EWew])/g, "$1°")
+    .replace(/(\d(?:\.\d+)?)Â°/g, "$1°");
+}
+
+function dedupeAllocationRows(rows: PriorityAllocationRow[]): PriorityAllocationRow[] {
+  const seen = new Set<string>();
+  const out: PriorityAllocationRow[] = [];
+  for (const row of rows) {
+    const key = allocationIdentityKey(row);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
+  }
+  return out;
+}
+
+function dedupeUserRows(rows: PriorityAllocationRow[]): PriorityAllocationRow[] {
+  return dedupeAllocationRows(rows);
+}
+
 function statusForTier(tier: number): AllocationStatus {
   if (tier === 1) return "Primary Monitor";
   if (tier <= 2) return "Active";
   if (tier <= 4) return "Secondary Monitor";
   return "Standby";
+}
+
+/** Satellite metadata columns — always resolved live from Visibility Matrix SSOT. */
+function catalogFieldsForAllocation(
+  catalogRow: FlatSatelliteRow,
+  intUnitSlug: string,
+): Pick<
+  PriorityAllocationRow,
+  | "satelliteName"
+  | "country"
+  | "orbitalPosition"
+  | "launchDate"
+  | "orbitType"
+  | "frequencyBand"
+  | "transponders"
+  | "beamDetails"
+> {
+  const sat = catalogRow.satellite;
+  return {
+    satelliteName: catalogRow.name,
+    country: catalogRow.countryOfOrigin,
+    orbitalPosition: normalizeOrbitalPosition(sat.position),
+    launchDate: sat.launchDate,
+    orbitType: sat.orbitType ?? "GEO",
+    frequencyBand: parseFrequencyBand(sat),
+    transponders: formatSatelliteTransponders(sat),
+    beamDetails: formatUnitBeamDetailsForAllocation(intUnitSlug, sat, catalogRow.regionId),
+  };
+}
+
+function enrichAllocationRowsFromVisibility(
+  rows: PriorityAllocationRow[],
+  intUnitSlug: string,
+): PriorityAllocationRow[] {
+  return rows.map((row) => {
+    const catalogRow = findSatelliteCatalogRowById(row.satelliteId, intUnitSlug);
+    if (!catalogRow) {
+      return { ...row, orbitalPosition: normalizeOrbitalPosition(row.orbitalPosition) };
+    }
+    return { ...row, ...catalogFieldsForAllocation(catalogRow, intUnitSlug) };
+  });
 }
 
 function lastUpdatedForSat(slot: UnitSlot, satId: string, launchDate: string): string {
@@ -347,26 +436,17 @@ const REGION_TIERS: Record<UnitSlot, Record<string, number>> = {
   },
 };
 
-const UNIT_SAT_CAP: Partial<Record<UnitSlot, number>> = {
-  alpha: 42,
-  bravo: 40,
-  charlie: 38,
-  delta: 36,
-  echo: 38,
-  foxtrot: 41,
-  golf: 32,
-  hotel: 28,
-};
-
 function buildSeedRowsFixed(slot: UnitSlot): PriorityAllocationRow[] {
   const tiers = REGION_TIERS[slot];
   // Dynamically created units have no seed data — they start empty.
   if (!tiers) return [];
   const catalog = flattenGlobalSatelliteCatalog();
-  const cap = UNIT_SAT_CAP[slot] ?? 36;
+  const visibleIds = getVisibleSatelliteCatalogIdsForUnit(slot);
+  const cap = visibleIds.size;
 
   const ranked = catalog
     .map((row) => ({ row, tier: tiers[row.regionId] ?? 9 }))
+    .filter(({ row }) => visibleIds.has(row.id))
     .sort((a, b) => {
       if (a.tier !== b.tier) return a.tier - b.tier;
       return a.row.name.localeCompare(b.row.name, undefined, { sensitivity: "base" });
@@ -374,28 +454,15 @@ function buildSeedRowsFixed(slot: UnitSlot): PriorityAllocationRow[] {
     .slice(0, cap);
 
   const rows: PriorityAllocationRow[] = ranked.map(({ row, tier }, idx) => {
-    const sat = row.satellite;
-    const { beams } = getBeamBreakdown(sat);
-    const beamSummary =
-      beams.length > 0
-        ? `${beams.length} beams — ${beams.slice(0, 2).join(", ")}${beams.length > 2 ? "…" : ""}`
-        : sat.beamCoverage;
-
+    const fields = catalogFieldsForAllocation(row, slot);
     return {
       id: `${slot}-${row.id}`,
       satelliteId: row.id,
       priority: tier,
-      satelliteName: row.name,
-      country: row.countryOfOrigin,
-      orbitalPosition: sat.position,
-      launchDate: sat.launchDate,
-      orbitType: sat.orbitType ?? "GEO",
-      frequencyBand: parseFrequencyBand(sat),
-      transponders: formatSatelliteTransponders(sat),
-      beamDetails: beamSummary,
+      ...fields,
       status: statusForTier(tier),
       assignedBy: ASSIGNED_BY[(idx + slot.length) % ASSIGNED_BY.length],
-      lastUpdated: lastUpdatedForSat(slot, row.id, sat.launchDate),
+      lastUpdated: lastUpdatedForSat(slot, row.id, row.satellite.launchDate),
     };
   });
 
@@ -428,11 +495,13 @@ function loadUserRows(slot: UnitSlot): PriorityAllocationRow[] {
 
 function saveUserRows(slot: UnitSlot, rows: PriorityAllocationRow[]): boolean {
   try {
+    const deduped = dedupeUserRows(rows);
     const raw = localStorage.getItem(STORAGE_KEY);
     const parsed: UserStore = raw ? JSON.parse(raw) : {};
-    parsed[slot] = rows;
+    parsed[slot] = deduped;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
     notifyAllocationChange();
+    scheduleElectronStorageFlush();
     return true;
   } catch {
     return false;
@@ -450,19 +519,27 @@ function loadSuppressed(slot: UnitSlot): Set<string> {
   }
 }
 
-function saveSuppressed(slot: UnitSlot, ids: Set<string>): void {
+function saveSuppressed(slot: UnitSlot, ids: Set<string>, notify = true): void {
   try {
     const raw = localStorage.getItem(SUPPRESSED_KEY);
     const parsed: SuppressedStore = raw ? JSON.parse(raw) : {};
     parsed[slot] = [...ids];
     localStorage.setItem(SUPPRESSED_KEY, JSON.stringify(parsed));
-    notifyAllocationChange();
+    if (notify) notifyAllocationChange();
   } catch {
     /* ignore */
   }
 }
 
-export function getAllocationsForUnit(slot: UnitSlot): PriorityAllocationRow[] {
+/** Resolve visibility-matrix slug for a storage slot (seed alpha…hotel or op-unit-*). */
+export function intUnitSlugForAllocationSlot(slot: UnitSlot): string {
+  const op = slot.match(/^op-unit-(.+)$/i);
+  if (op) return resolveIntUnitSlug(`op-unit-${op[1]}`, undefined) ?? op[1].toLowerCase();
+  if ((UNIT_SLOTS as readonly string[]).includes(slot)) return slot;
+  return resolveIntUnitSlug(slot, undefined) ?? slot;
+}
+
+function mergeAllocationsRaw(slot: UnitSlot): PriorityAllocationRow[] {
   const suppressed = loadSuppressed(slot);
   const overrides = loadPOverrides(slot);
   const seed = buildSeedRowsFixed(slot).filter((r) => !suppressed.has(r.satelliteId));
@@ -470,14 +547,156 @@ export function getAllocationsForUnit(slot: UnitSlot): PriorityAllocationRow[] {
   const userExtra = loadUserRows(slot)
     .filter((r) => !seedIds.has(r.satelliteId) && !suppressed.has(r.satelliteId))
     .map((r) => ({ ...r, isUserAdded: true as const }));
-  const merged = [...seed, ...userExtra]
-    .map((r) =>
-      overrides[r.satelliteId] !== undefined
-        ? { ...r, priority: overrides[r.satelliteId] }
-        : r,
-    )
+  const merged = dedupeAllocationRows(
+    [...seed, ...userExtra]
+      .map((r) =>
+        overrides[r.satelliteId] !== undefined
+          ? { ...r, priority: overrides[r.satelliteId] }
+          : r,
+      )
+      .sort((a, b) => a.priority - b.priority || a.satelliteName.localeCompare(b.satelliteName)),
+  );
+
+  return enrichAllocationRowsFromVisibility(merged, intUnitSlugForAllocationSlot(slot));
+}
+
+/**
+ * Retrospectively align stored allocations with the Visibility Matrix:
+ * drop non-visible satellites and trim to the visible cap (highest priority kept).
+ */
+export function reconcileUnitAllocationsToVisibility(
+  slot: UnitSlot,
+  intUnitSlug: string = intUnitSlugForAllocationSlot(slot),
+): boolean {
+  const visibleIds = getVisibleSatelliteCatalogIdsForUnit(intUnitSlug);
+  const cap = visibleIds.size;
+  const merged = mergeAllocationsRaw(slot);
+  if (merged.length === 0) return false;
+
+  const visibleRows = merged
+    .filter((r) => visibleIds.has(r.satelliteId))
     .sort((a, b) => a.priority - b.priority || a.satelliteName.localeCompare(b.satelliteName));
-  return merged;
+  const keepSatIds = new Set(visibleRows.slice(0, cap).map((r) => r.satelliteId));
+
+  const removeSatIds = new Set<string>();
+  for (const row of merged) {
+    if (!visibleIds.has(row.satelliteId) || !keepSatIds.has(row.satelliteId)) {
+      removeSatIds.add(row.satelliteId);
+    }
+  }
+  if (removeSatIds.size === 0) return false;
+
+  const seedSatIds = new Set(buildSeedRowsFixed(slot).map((r) => r.satelliteId));
+  const userRows = loadUserRows(slot);
+  const suppressed = loadSuppressed(slot);
+  const suppressedBefore = new Set(suppressed);
+
+  const newUserRows = userRows.filter((r) => !removeSatIds.has(r.satelliteId));
+  for (const satId of removeSatIds) {
+    if (seedSatIds.has(satId)) suppressed.add(satId);
+  }
+
+  const userChanged = newUserRows.length !== userRows.length;
+  const suppressedChanged =
+    suppressed.size !== suppressedBefore.size ||
+    [...removeSatIds].some((id) => seedSatIds.has(id) && !suppressedBefore.has(id));
+
+  if (userChanged) saveUserRows(slot, newUserRows);
+  if (suppressedChanged) saveSuppressed(slot, suppressed, !userChanged);
+
+  scheduleElectronStorageFlush();
+  return true;
+}
+
+function collectAllocationSlots(): Set<UnitSlot> {
+  const slots = new Set<UnitSlot>(UNIT_SLOTS);
+  const ingest = (raw: string | null) => {
+    if (!raw) return;
+    try {
+      for (const slot of Object.keys(JSON.parse(raw) as Record<string, unknown>)) {
+        slots.add(slot);
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+  ingest(localStorage.getItem(STORAGE_KEY));
+  ingest(localStorage.getItem(SUPPRESSED_KEY));
+  return slots;
+}
+
+/**
+ * Remove duplicate user-added rows persisted in localStorage (offline EXE can accumulate these).
+ * Returns true when storage was modified.
+ */
+export function sanitizePriorityAllocationStorage(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw) as UserStore;
+    let changed = false;
+    for (const slot of Object.keys(parsed)) {
+      const suppressed = loadSuppressed(slot);
+      const activeSeedKeys = new Set(
+        buildSeedRowsFixed(slot)
+          .filter((r) => !suppressed.has(r.satelliteId))
+          .map((r) => allocationIdentityKey(r)),
+      );
+      const rows = parsed[slot] ?? [];
+      const deduped = dedupeUserRows(rows).filter(
+        (r) => !activeSeedKeys.has(allocationIdentityKey(r)),
+      );
+      if (deduped.length !== rows.length) {
+        parsed[slot] = deduped;
+        changed = true;
+      }
+    }
+    if (!changed) return false;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+    notifyAllocationChange();
+    scheduleElectronStorageFlush();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Reconcile every known unit slot against the current Visibility Matrix. */
+export function reconcileAllUnitAllocationsToVisibility(): number {
+  if (typeof window === "undefined") return 0;
+  let changed = 0;
+  for (const slot of collectAllocationSlots()) {
+    if (reconcileUnitAllocationsToVisibility(slot, intUnitSlugForAllocationSlot(slot))) {
+      changed += 1;
+    }
+  }
+  return changed;
+}
+
+let reconciliationInstalled = false;
+
+/** Run on startup and whenever visibility overlay changes (EXE upgrade / matrix edits). */
+export function installAllocationVisibilityReconciliation(): () => void {
+  if (typeof window === "undefined" || reconciliationInstalled) return () => {};
+  reconciliationInstalled = true;
+
+  sanitizePriorityAllocationStorage();
+  reconcileAllUnitAllocationsToVisibility();
+
+  const onVisibilityChange = () => {
+    sanitizePriorityAllocationStorage();
+    reconcileAllUnitAllocationsToVisibility();
+  };
+  window.addEventListener(VISIBILITY_OVERLAY_EVENT, onVisibilityChange);
+  return () => {
+    reconciliationInstalled = false;
+    window.removeEventListener(VISIBILITY_OVERLAY_EVENT, onVisibilityChange);
+  };
+}
+
+export function getAllocationsForUnit(slot: UnitSlot): PriorityAllocationRow[] {
+  return mergeAllocationsRaw(slot);
 }
 
 export function clearUserAllocationsForUnit(slot: UnitSlot): number {
@@ -524,11 +743,49 @@ export function getUserAllocationCount(slot: UnitSlot): number {
   return loadUserRows(slot).length;
 }
 
+/** Max satellites this unit may hold — equals visible satellites in the Visibility Matrix. */
+export function getVisibleAllocationCap(intUnitSlug: string): number {
+  return listVisibleSatelliteCatalogForUnit(intUnitSlug).length;
+}
+
+export function getRemainingAllocationSlots(slot: UnitSlot, intUnitSlug: string): number {
+  const cap = getVisibleAllocationCap(intUnitSlug);
+  const current = getAllocationsForUnit(slot).length;
+  return Math.max(0, cap - current);
+}
+
+/** Human-readable block reason when an allocation cannot be added. */
+export function getAllocationAddError(
+  slot: UnitSlot,
+  intUnitSlug: string,
+  catalogRow: FlatSatelliteRow,
+): string | null {
+  const visibleIds = getVisibleSatelliteCatalogIdsForUnit(intUnitSlug);
+  if (!visibleIds.has(catalogRow.id)) {
+    return `${catalogRow.name} is not visible to this unit in the Satellite Visibility Matrix. Only visible satellites can be allocated.`;
+  }
+
+  const cap = visibleIds.size;
+  if (getAllocationsForUnit(slot).length >= cap) {
+    return `This unit can have at most ${cap} allocated satellite${cap !== 1 ? "s" : ""} (visibility matrix limit). Remove an allocation first.`;
+  }
+
+  if (getAllocationsForUnit(slot).some((r) => allocationIdentityKey(r) === allocationIdentityKey(catalogRow))) {
+    return `${catalogRow.name} is already allocated to this unit.`;
+  }
+
+  return null;
+}
+
 export function addAllocationForUnit(
   slot: UnitSlot,
   catalogRow: FlatSatelliteRow,
+  intUnitSlug: string,
   priority?: SatPriority,
 ): PriorityAllocationRow | null {
+  const block = getAllocationAddError(slot, intUnitSlug, catalogRow);
+  if (block) return null;
+
   // Re-adding a previously removed seed satellite must clear suppression first.
   const suppressed = loadSuppressed(slot);
   if (suppressed.has(catalogRow.id)) {
@@ -540,45 +797,40 @@ export function addAllocationForUnit(
   }
 
   const existing = getAllocationsForUnit(slot);
-  if (existing.some((r) => r.satelliteId === catalogRow.id)) return null;
+  const identityKey = allocationIdentityKey(catalogRow);
+  if (existing.some((r) => allocationIdentityKey(r) === identityKey)) return null;
 
   const userRows = loadUserRows(slot);
-  const existingUser = userRows.find((r) => r.satelliteId === catalogRow.id);
+  const existingUser = userRows.find((r) => allocationIdentityKey(r) === identityKey);
   if (existingUser) {
-    if (priority !== undefined) savePOverride(slot, catalogRow.id, priority);
-    return existingUser;
+    const visibleInList = existing.some((r) => allocationIdentityKey(r) === identityKey);
+    if (visibleInList) {
+      if (priority !== undefined) savePOverride(slot, catalogRow.id, priority);
+      return existingUser;
+    }
+    // Orphan user row hidden from merge (e.g. stale offline data) — drop and re-add below.
+    const pruned = userRows.filter((r) => allocationIdentityKey(r) !== identityKey);
+    saveUserRows(slot, pruned);
   }
 
-  const maxPriority = existing.reduce((m, r) => Math.max(m, r.priority), 0);
-  const sat = catalogRow.satellite;
-  const { beams } = getBeamBreakdown(sat);
-  const beamSummary =
-    beams.length > 0
-      ? `${beams.length} beams — ${beams.slice(0, 2).join(", ")}${beams.length > 2 ? "…" : ""}`
-      : sat.beamCoverage;
-
+  const mergedAfterPrune = getAllocationsForUnit(slot);
+  const maxPriority = mergedAfterPrune.reduce((m, r) => Math.max(m, r.priority), 0);
   const assignedPriority: SatPriority = priority ?? (Math.min(maxPriority + 1, 3) as SatPriority);
 
   const row: PriorityAllocationRow = {
     id: `${slot}-user-${catalogRow.id}-${Date.now()}`,
     satelliteId: catalogRow.id,
     priority: assignedPriority,
-    satelliteName: catalogRow.name,
-    country: catalogRow.countryOfOrigin,
-    orbitalPosition: sat.position,
-    launchDate: sat.launchDate,
-    orbitType: sat.orbitType ?? "GEO",
-    frequencyBand: parseFrequencyBand(sat),
-    transponders: formatSatelliteTransponders(sat),
-    beamDetails: beamSummary,
+    ...catalogFieldsForAllocation(catalogRow, intUnitSlug),
     status: "Standby",
     assignedBy: ASSIGNED_BY[0],
     lastUpdated: new Date().toISOString().slice(0, 10),
     isUserAdded: true,
   };
 
-  userRows.push(row);
-  if (!saveUserRows(slot, userRows)) return null;
+  const nextUserRows = loadUserRows(slot);
+  nextUserRows.push(row);
+  if (!saveUserRows(slot, nextUserRows)) return null;
   if (priority !== undefined) savePOverride(slot, catalogRow.id, priority);
   return row;
 }

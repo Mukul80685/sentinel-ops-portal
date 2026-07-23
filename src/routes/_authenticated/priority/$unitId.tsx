@@ -32,10 +32,14 @@ import { HomeNavIconBadge } from "@/components/home/HomeNavIcons";
 import { toast } from "sonner";
 import {
   addAllocationForUnit,
+  allocationIdentityKey,
   allocationRowsToCsv,
   clearUserAllocationsForUnit,
+  getAllocationAddError,
   getAllocationsForUnit,
+  getRemainingAllocationSlots,
   getUserAllocationCount,
+  getVisibleAllocationCap,
   removeAllocationsByIds,
   sortAllocationRows,
   updateAllocationPriority,
@@ -43,12 +47,14 @@ import {
   SAT_PRIORITIES,
   SAT_PRIORITY_LABEL,
   PRIORITY_ALLOCATION_EVENT,
+  type UnitSlot,
   type AllocationSortKey,
   type SatPriority,
   type SortDir,
 } from "@/lib/priorityAllocation";
-import { flattenGlobalSatelliteCatalog } from "@/lib/satelliteCatalog";
+import { listVisibleSatelliteCatalogForUnit } from "@/lib/satelliteCatalog";
 import { VISIBILITY_OVERLAY_EVENT } from "@/lib/visibilityOverlay";
+import { resolveIntUnitSlug } from "@/lib/operationalSync";
 
 export const Route = createFileRoute("/_authenticated/priority/$unitId")({
   component: PriorityUnit,
@@ -64,7 +70,7 @@ const STATIC_COLUMNS: { label: string; cls?: string }[] = [
   { label: "Country", cls: "min-w-[100px]" },
   { label: "Orbital Position", cls: "min-w-[110px]" },
   { label: "Transponders", cls: "min-w-[140px]" },
-  { label: "Beam Details", cls: "min-w-[160px]" },
+  { label: "Beam Details", cls: "min-w-[180px] max-w-[240px]" },
 ];
 
 function StaticTh({ label, cls }: { label: string; cls?: string }) {
@@ -175,7 +181,11 @@ function PriorityUnit() {
   useEffect(() => {
     const refresh = () => setRefreshKey((k) => k + 1);
     window.addEventListener(PRIORITY_ALLOCATION_EVENT, refresh);
-    return () => window.removeEventListener(PRIORITY_ALLOCATION_EVENT, refresh);
+    window.addEventListener(VISIBILITY_OVERLAY_EVENT, refresh);
+    return () => {
+      window.removeEventListener(PRIORITY_ALLOCATION_EVENT, refresh);
+      window.removeEventListener(VISIBILITY_OVERLAY_EVENT, refresh);
+    };
   }, []);
 
   const { data: unit } = useQuery({
@@ -184,7 +194,22 @@ function PriorityUnit() {
   });
 
   const slot = unit ? allocationSlotForUnit(unit) : null;
+  const intUnitSlug = unit
+    ? (resolveIntUnitSlug(unit.id, unit.code) ?? allocationSlotForUnit(unit))
+    : null;
   const shortLabel = unit ? unitDisplayLabel(unit) : "Unit";
+
+  const visibleCap = useMemo(() => {
+    if (!intUnitSlug) return 0;
+    void refreshKey;
+    return getVisibleAllocationCap(intUnitSlug);
+  }, [intUnitSlug, refreshKey]);
+
+  const remainingSlots = useMemo(() => {
+    if (!slot || !intUnitSlug) return 0;
+    void refreshKey;
+    return getRemainingAllocationSlots(slot, intUnitSlug);
+  }, [slot, intUnitSlug, refreshKey]);
 
   const rows = useMemo(() => {
     if (!slot) return [];
@@ -303,8 +328,16 @@ function PriorityUnit() {
           >
             <Download className="h-3.5 w-3.5 mr-1" /> Download CSV
           </Button>
-          {canEdit && slot && (
-            <AddAllocation slot={slot} existingIds={rows.map((r) => r.satelliteId)} onAdded={handleAdded} />
+          {canEdit && slot && intUnitSlug && (
+            <AddAllocation
+              slot={slot}
+              intUnitSlug={intUnitSlug}
+              allocatedIdentityKeys={rows.map((r) => allocationIdentityKey(r))}
+              allocatedCount={rows.length}
+              visibleCap={visibleCap}
+              remainingSlots={remainingSlots}
+              onAdded={handleAdded}
+            />
           )}
         </div>
 
@@ -333,7 +366,8 @@ function PriorityUnit() {
         <div className="panel overflow-hidden flex flex-col flex-1 min-h-0">
           <div className="px-4 py-1.5 border-b border-border bg-secondary/20 flex items-center justify-between gap-2 shrink-0">
             <span className="mono text-[10px] uppercase tracking-wider text-muted-foreground">
-              {sortedRows.length} satellite{sortedRows.length !== 1 ? "s" : ""} allocated
+              {sortedRows.length} / {visibleCap} satellite{visibleCap !== 1 ? "s" : ""} allocated
+              {visibleCap > 0 ? " (visibility matrix limit)" : ""}
             </span>
             <span className="mono text-[9px] text-muted-foreground">
               Sorted by {SORTABLE_COLUMNS.find((c) => c.key === sortKey)?.label} ({sortDir === "asc" ? "ascending" : "descending"})
@@ -422,7 +456,9 @@ function PriorityUnit() {
                     <td className="px-3 py-2 text-muted-foreground">{r.orbitalPosition}</td>
                     <td className="px-3 py-2">{r.launchDate}</td>
                     <td className="px-3 py-2">{r.transponders}</td>
-                    <td className="px-3 py-2 text-[11px]">{r.beamDetails}</td>
+                    <td className="px-3 py-2 text-[11px] whitespace-normal break-words leading-snug align-top">
+                      {r.beamDetails}
+                    </td>
                     {canEdit && (
                       <td className="w-10 px-1 py-2 border-l border-border/40 text-center">
                         <button
@@ -508,29 +544,45 @@ function PriorityUnit() {
 
 function AddAllocation({
   slot,
-  existingIds,
+  intUnitSlug,
+  allocatedIdentityKeys,
+  allocatedCount,
+  visibleCap,
+  remainingSlots,
   onAdded,
 }: {
-  slot: string;
-  existingIds: string[];
+  slot: UnitSlot;
+  intUnitSlug: string;
+  allocatedIdentityKeys: string[];
+  allocatedCount: number;
+  visibleCap: number;
+  remainingSlots: number;
   onAdded: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  // Per-satellite priority: defaults to P1 when a satellite is first checked
   const [priorities, setPriorities] = useState<Record<string, SatPriority>>({});
 
-  const [catalog, setCatalog] = useState(() => flattenGlobalSatelliteCatalog());
+  const [visibleCatalog, setVisibleCatalog] = useState(() =>
+    listVisibleSatelliteCatalogForUnit(intUnitSlug),
+  );
   useEffect(() => {
-    const refresh = () => setCatalog(flattenGlobalSatelliteCatalog());
+    const refresh = () => setVisibleCatalog(listVisibleSatelliteCatalogForUnit(intUnitSlug));
+    refresh();
     window.addEventListener(VISIBILITY_OVERLAY_EVENT, refresh);
     return () => window.removeEventListener(VISIBILITY_OVERLAY_EVENT, refresh);
-  }, []);
+  }, [intUnitSlug]);
+
+  const allocatedKeys = useMemo(
+    () => new Set(allocatedIdentityKeys),
+    [allocatedIdentityKeys],
+  );
 
   const available = useMemo(
-    () => catalog.filter((s) => !existingIds.includes(s.id)),
-    [catalog, existingIds],
+    () =>
+      visibleCatalog.filter((s) => !allocatedKeys.has(allocationIdentityKey(s))),
+    [visibleCatalog, allocatedKeys],
   );
 
   const filtered = useMemo(() => {
@@ -549,8 +601,13 @@ function AddAllocation({
       if (next.has(id)) {
         next.delete(id);
       } else {
+        if (next.size >= remainingSlots) {
+          toast.error(
+            `This unit can only have ${visibleCap} allocated satellite${visibleCap !== 1 ? "s" : ""} (visibility matrix limit).`,
+          );
+          return prev;
+        }
         next.add(id);
-        // Default priority to P1 when first selected
         setPriorities((p) => (id in p ? p : { ...p, [id]: 1 }));
       }
       return next;
@@ -560,15 +617,21 @@ function AddAllocation({
   function toggleAll() {
     if (selected.size === filtered.length && filtered.length > 0) {
       setSelected(new Set());
-    } else {
-      const newIds = filtered.map((s) => s.id);
-      setSelected(new Set(newIds));
-      setPriorities((prev) => {
-        const next = { ...prev };
-        for (const id of newIds) if (!(id in next)) next[id] = 1;
-        return next;
-      });
+      return;
     }
+    const limit = Math.min(filtered.length, remainingSlots);
+    const newIds = filtered.slice(0, limit).map((s) => s.id);
+    if (limit < filtered.length) {
+      toast.info(
+        `Only ${limit} slot${limit !== 1 ? "s" : ""} remaining — selected the first ${limit} visible satellite${limit !== 1 ? "s" : ""}.`,
+      );
+    }
+    setSelected(new Set(newIds));
+    setPriorities((prev) => {
+      const next = { ...prev };
+      for (const id of newIds) if (!(id in next)) next[id] = 1;
+      return next;
+    });
   }
 
   function setPriority(id: string, p: SatPriority) {
@@ -584,32 +647,83 @@ function AddAllocation({
     }
   }
 
+  const availableById = useMemo(
+    () => new Map(available.map((s) => [s.id, s])),
+    [available],
+  );
+
   function submit() {
     if (selected.size === 0) return;
-    let added = 0;
-    let failed = 0;
-    for (const id of selected) {
-      const row = catalog.find((s) => s.id === id);
-      if (!row) continue;
-      const result = addAllocationForUnit(slot, row, priorities[id] ?? 1);
-      if (result) added++;
-      else failed++;
+
+    const liveRemaining = getRemainingAllocationSlots(slot, intUnitSlug);
+    if (liveRemaining <= 0) {
+      toast.error(
+        `This unit already has the maximum ${visibleCap} allocation${visibleCap !== 1 ? "s" : ""} allowed by the visibility matrix.`,
+      );
+      return;
     }
+
+    let added = 0;
+    const errors = new Set<string>();
+    for (const id of selected) {
+      if (added >= liveRemaining) break;
+      const row = availableById.get(id);
+      if (!row) {
+        errors.add(
+          "A selected satellite is no longer available — close this dialog and open it again.",
+        );
+        continue;
+      }
+      try {
+        const block = getAllocationAddError(slot, intUnitSlug, row);
+        if (block) {
+          errors.add(block);
+          continue;
+        }
+        const result = addAllocationForUnit(slot, row, intUnitSlug, priorities[id] ?? 1);
+        if (result) {
+          added++;
+        } else {
+          errors.add(getAllocationAddError(slot, intUnitSlug, row) ?? "Could not add satellite.");
+        }
+      } catch (err) {
+        errors.add(err instanceof Error ? err.message : "Could not add satellite.");
+      }
+    }
+
     if (added > 0) {
       toast.success(`${added} satellite${added !== 1 ? "s" : ""} allocated.`);
       onAdded();
-    } else if (failed > 0) {
-      toast.error("No new satellites were added (already allocated or save failed).");
+      handleOpen(false);
+      return;
     }
-    handleOpen(false);
+
+    if (errors.size > 0) {
+      toast.error([...errors][0] ?? "No new satellites were added.");
+    } else {
+      toast.error("No satellites were allocated. Close this dialog and try again.");
+    }
   }
 
   const allFiltered = filtered.length > 0 && selected.size === filtered.length;
+  const atCap = remainingSlots <= 0;
+  const addDisabled = atCap || visibleCap === 0;
 
   return (
     <Dialog open={open} onOpenChange={handleOpen}>
       <DialogTrigger asChild>
-        <Button size="sm" className="mono text-[11px] uppercase tracking-wider h-8">
+        <Button
+          size="sm"
+          className="mono text-[11px] uppercase tracking-wider h-8"
+          disabled={addDisabled}
+          title={
+            visibleCap === 0
+              ? "No satellites are visible to this unit in the Visibility Matrix"
+              : atCap
+                ? `Maximum ${visibleCap} allocations reached`
+                : undefined
+          }
+        >
           <Plus className="h-3.5 w-3.5 mr-1" /> Add Satellite
         </Button>
       </DialogTrigger>
@@ -619,6 +733,13 @@ function AddAllocation({
         </DialogHeader>
 
         <div className="space-y-3">
+          <p className="mono text-[10px] text-muted-foreground leading-relaxed">
+            Only satellites visible to this unit in the Satellite Visibility Matrix can be allocated.
+            {visibleCap > 0
+              ? ` ${allocatedCount} of ${visibleCap} slots used (${remainingSlots} remaining).`
+              : " No visible satellites for this unit — update the Visibility Matrix first."}
+          </p>
+
           {/* Search */}
           <Input
             placeholder="Search by name or country…"
@@ -626,6 +747,7 @@ function AddAllocation({
             onChange={(e) => { setSearch(e.target.value); setSelected(new Set()); setPriorities({}); }}
             className="mono text-xs h-8"
             autoFocus
+            disabled={available.length === 0}
           />
 
           {/* Column header */}
@@ -658,9 +780,11 @@ function AddAllocation({
           <div className="overflow-y-auto max-h-60 space-y-0.5 pr-1">
             {filtered.length === 0 ? (
               <p className="mono text-[11px] text-muted-foreground text-center py-6">
-                {available.length === 0
-                  ? "All satellites are already allocated."
-                  : "No satellites match your search."}
+                {visibleCap === 0
+                  ? "No satellites are visible to this unit in the Visibility Matrix."
+                  : available.length === 0
+                    ? "All visible satellites are already allocated."
+                    : "No satellites match your search."}
               </p>
             ) : (
               filtered.map((s) => (
@@ -717,8 +841,9 @@ function AddAllocation({
           </div>
 
           <Button
+            type="button"
             className="w-full mono uppercase tracking-wider"
-            disabled={selected.size === 0}
+            disabled={selected.size === 0 || remainingSlots <= 0}
             onClick={submit}
           >
             Allocate {selected.size > 0 ? `${selected.size} Satellite${selected.size !== 1 ? "s" : ""}` : ""}

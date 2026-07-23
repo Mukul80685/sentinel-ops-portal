@@ -3,7 +3,6 @@ import { createContext, useContext, useState, type ReactNode } from "react";
 export type SidebarModule =
   | "satellites"
   | "discussions"
-  | "reports"
   | "settings"
   | "profile"
   | null;

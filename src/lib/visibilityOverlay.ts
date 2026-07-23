@@ -4,6 +4,8 @@
  */
 
 import type { GeoSatellite } from "@/lib/visibilityMatrix";
+import { GEO_REGIONS, canonicalSatelliteKey } from "@/lib/visibilityMatrix";
+import { scheduleElectronStorageFlush } from "@/lib/electronPersist";
 
 export const VISIBILITY_OVERLAY_EVENT = "ssacc-visibility-overlay";
 
@@ -14,9 +16,16 @@ export type VisibilityOverlay = {
   editedSats: Record<string, GeoSatellite>;
   /** Base-catalog satellite ids hidden by the user (user-added sats are removed from addedSats). */
   deletedSatIds?: string[];
+  /** Region tile ids hidden per unit on the visibility matrix region grid. */
+  hiddenUnitRegions?: Record<string, string[]>;
 };
 
-const EMPTY: VisibilityOverlay = { addedSats: {}, editedSats: {}, deletedSatIds: [] };
+const EMPTY: VisibilityOverlay = {
+  addedSats: {},
+  editedSats: {},
+  deletedSatIds: [],
+  hiddenUnitRegions: {},
+};
 
 function loadJson(): VisibilityOverlay {
   if (typeof window === "undefined") return EMPTY;
@@ -31,6 +40,7 @@ function loadJson(): VisibilityOverlay {
 function saveJson(overlay: VisibilityOverlay): void {
   if (typeof window === "undefined") return;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(overlay));
+  scheduleElectronStorageFlush();
   window.dispatchEvent(new Event(VISIBILITY_OVERLAY_EVENT));
 }
 
@@ -170,4 +180,75 @@ export function getUnitRegionImportedCounts(unitId: string): Record<string, numb
     }
   }
   return counts;
+}
+
+/** Region ids the user hid from the unit's region tile grid. */
+export function getHiddenUnitRegions(unitId: string): string[] {
+  return loadJson().hiddenUnitRegions?.[unitId] ?? [];
+}
+
+export function isUnitRegionHidden(unitId: string, regionId: string): boolean {
+  return getHiddenUnitRegions(unitId).includes(regionId);
+}
+
+/** Hide a country/region tile for one unit (tile must have zero satellite rows first). */
+export function hideUnitRegion(unitId: string, regionId: string): void {
+  const overlay = loadJson();
+  const current = new Set(overlay.hiddenUnitRegions?.[unitId] ?? []);
+  current.add(regionId);
+  patchVisibilityOverlay({
+    hiddenUnitRegions: { ...(overlay.hiddenUnitRegions ?? {}), [unitId]: [...current] },
+  });
+}
+
+export function unhideUnitRegion(unitId: string, regionId: string): void {
+  const overlay = loadJson();
+  const next = (overlay.hiddenUnitRegions?.[unitId] ?? []).filter((id) => id !== regionId);
+  const hiddenUnitRegions = { ...(overlay.hiddenUnitRegions ?? {}) };
+  if (next.length > 0) hiddenUnitRegions[unitId] = next;
+  else delete hiddenUnitRegions[unitId];
+  patchVisibilityOverlay({ hiddenUnitRegions });
+}
+
+/**
+ * Remove duplicate overlay imports (same satellite id or canonical name).
+ * Offline EXE data can accumulate repeats when units re-import the same satellite.
+ */
+export function sanitizeVisibilityOverlayDuplicateSatellites(): boolean {
+  if (typeof window === "undefined") return false;
+  const overlay = loadJson();
+  const knownNames = new Set<string>();
+  for (const region of GEO_REGIONS) {
+    for (const sat of region.satellites) {
+      knownNames.add(canonicalSatelliteKey(sat.name));
+    }
+  }
+
+  const nextAdded: Record<string, GeoSatellite[]> = {};
+  let changed = false;
+
+  for (const [key, sats] of Object.entries(overlay.addedSats)) {
+    const kept: GeoSatellite[] = [];
+    const bucketIds = new Set<string>();
+    for (const sat of sats) {
+      const nameKey = canonicalSatelliteKey(sat.name);
+      if (knownNames.has(nameKey) || bucketIds.has(sat.id)) {
+        changed = true;
+        continue;
+      }
+      if (kept.some((k) => canonicalSatelliteKey(k.name) === nameKey)) {
+        changed = true;
+        continue;
+      }
+      kept.push(sat);
+      bucketIds.add(sat.id);
+      knownNames.add(nameKey);
+    }
+    if (kept.length > 0) nextAdded[key] = kept;
+    else if (sats.length > 0) changed = true;
+  }
+
+  if (!changed) return false;
+  patchVisibilityOverlay({ addedSats: nextAdded });
+  return true;
 }

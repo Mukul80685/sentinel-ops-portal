@@ -20,6 +20,9 @@ import {
   isElectronPersistAvailable,
   whenElectronStorageReady,
 } from "../lib/electronPersist";
+import { installAllocationVisibilityReconciliation } from "../lib/priorityAllocation";
+import { sanitizeIntelCellEditsStorage } from "../lib/intelCellStore";
+import { sanitizeVisibilityOverlayDuplicateSatellites } from "../lib/visibilityOverlay";
 
 /**
  * IMPORTANT:
@@ -174,6 +177,13 @@ function RootComponent() {
 
     return () => disposeHooks();
   }, []);
+
+  useEffect(() => {
+    if (!storageReady) return;
+    sanitizeVisibilityOverlayDuplicateSatellites();
+    sanitizeIntelCellEditsStorage();
+    return installAllocationVisibilityReconciliation();
+  }, [storageReady]);
 
   if (!storageReady) return null;
 

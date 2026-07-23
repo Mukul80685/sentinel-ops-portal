@@ -5,10 +5,7 @@ import {
   Bar,
   BarChart,
   Cell,
-  Cell as PieCell,
   LabelList,
-  Pie,
-  PieChart,
   ResponsiveContainer,
   XAxis,
   YAxis,
@@ -27,9 +24,12 @@ import {
   buildIntelLinkageVisibilityRows,
   buildIntelSatelliteTable,
   buildSyntheticDrillDownReport,
+  deriveIntPendingFrequencies,
   enrichDrillDownFromScanSeed,
   formatIntelCompactDate,
   hasIntelData,
+  type IntelSatelliteReportRow,
+  UNIT_SATELLITE_ROSTER,
 } from "@/lib/intelAnalysisData";
 import { INT_UNITS } from "@/lib/intelUnits";
 import { unitDisplayLabel } from "@/lib/operationalDataset";
@@ -47,6 +47,7 @@ import {
 } from "@/lib/intelCellStore";
 import {
   coerceSpreadsheetCell,
+  filterFrequencyImportRecords,
   gridToRecords,
   parseIntelSpreadsheet,
 } from "@/lib/intelSpreadsheetImport";
@@ -80,7 +81,22 @@ import {
   saveScanOverrides,
   loadSuppressedSatNamesList,
   saveSuppressedSatNames,
+  loadSuppressedScanRowKeys,
+  saveSuppressedScanRowKeys,
+  clearSuppressedScanRowKeys,
   mergeIntelSatelliteTableWithStorage,
+  parseIntelImportDate,
+  reportIdForOverride,
+  scanOverrideToReportRow,
+  overrideRowKey,
+  scanRowContentKey,
+  buildIntelReportId,
+  findScanOverrideForReportId,
+  buildScanOverrideFromTableRow,
+  formatIsoDateForEditInput,
+  materializeTableRowsAsScanOverrides,
+  legacyReportIdsForScanRow,
+  scanRowKey,
   type ScanReportOverride,
 } from "@/lib/intelScanStorage";
 import { unhideUnitInModule } from "@/lib/moduleUnitRegistry";
@@ -88,7 +104,6 @@ import { rebindAndPersistUnitEngagements } from "@/lib/operationalStore";
 import { notifyOperationalDerivedRefresh } from "@/lib/operationalRefresh";
 import {
   applyIntelScanRowEdit,
-  buildIntelReportId,
   type IntelScanRowDraft,
 } from "@/lib/intelScanRowEdit";
 
@@ -96,94 +111,34 @@ import {
 // Uses shared intelScanStorage helpers (canonical slot-based keys).
 
 const SCAN_IMPORT_HEADERS = [
-  "Satellite", "Polarization", "Scanned", "Analyzed",
-  "Pending", "Productivity (%)", "Updated On",
+  "Satellite", "Polarization", "Scanned", "Analyzed", "Pending", "Updated On",
 ] as const;
 
-// ── Date parsing ─────────────────────────────────────────────────────────────
-// Excel serial-date epoch: 1 = 1 Jan 1900 (with a known Excel leap-year bug for 1900).
-const EXCEL_EPOCH_MS = new Date(Date.UTC(1899, 11, 30)).getTime();
-const MONTH_NAMES_LOWER = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
+const LEGACY_SCAN_IMPORT_HEADERS = [
+  "Satellite", "Polarization", "Scanned", "Analyzed", "Pending", "Productivity (%)", "Updated On",
+] as const;
 
-/**
- * Convert any date-like value from an Excel/CSV cell into an ISO-8601 date string
- * (YYYY-MM-DD in UTC).  Handles:
- *   • Excel serial numbers  (e.g. 46049)
- *   • ISO strings           (YYYY-MM-DD / YYYY/MM/DD)
- *   • US format             MM/DD/YYYY  MM-DD-YYYY
- *   • European format       DD/MM/YYYY  DD-MM-YYYY  (detected when day > 12)
- *   • Named-month format    DD-Mon-YYYY  DD Mon YYYY
- *   • Compact numeric       YYYYMMDD
- * Returns today's ISO date if parsing fails.
- */
-function parseImportDate(raw: unknown): string {
-  const fallback = new Date().toISOString().slice(0, 10);
+const INT_TABLE_GRID =
+  "[grid-template-columns:1.5rem_2rem_minmax(0,1.3fr)_repeat(3,minmax(0,0.75fr))_minmax(0,1.1fr)_3.5rem]";
 
-  // --- Excel serial number ---
-  const numVal = typeof raw === "number" ? raw : parseFloat(String(raw ?? ""));
-  if (!isNaN(numVal) && numVal > 1 && numVal < 2_958_466) {
-    // 2 958 466 ≈ year 9999 in Excel serial
-    const ms = EXCEL_EPOCH_MS + Math.round(numVal) * 86_400_000;
-    const d = new Date(ms);
-    if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
-  }
-
-  const str = String(raw ?? "").trim();
-  if (!str) return fallback;
-
-  // --- ISO: YYYY-MM-DD or YYYY/MM/DD ---
-  const isoMatch = str.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
-  if (isoMatch) {
-    const [, y, m, d] = isoMatch;
-    const dt = new Date(Date.UTC(+y, +m - 1, +d));
-    if (!isNaN(dt.getTime())) return dt.toISOString().slice(0, 10);
-  }
-
-  // --- Compact YYYYMMDD ---
-  const compactMatch = str.match(/^(\d{4})(\d{2})(\d{2})$/);
-  if (compactMatch) {
-    const [, y, m, d] = compactMatch;
-    const dt = new Date(Date.UTC(+y, +m - 1, +d));
-    if (!isNaN(dt.getTime())) return dt.toISOString().slice(0, 10);
-  }
-
-  // --- Named-month: DD-Mon-YYYY or DD Mon YYYY ---
-  const namedMatch = str.match(/^(\d{1,2})[-\s]([A-Za-z]{3,9})[-\s](\d{4})$/);
-  if (namedMatch) {
-    const [, d, mon, y] = namedMatch;
-    const mIdx = MONTH_NAMES_LOWER.indexOf(mon.slice(0, 3).toLowerCase());
-    if (mIdx !== -1) {
-      const dt = new Date(Date.UTC(+y, mIdx, +d));
-      if (!isNaN(dt.getTime())) return dt.toISOString().slice(0, 10);
-    }
-  }
-
-  // --- Numeric with separator: could be MM/DD/YYYY or DD/MM/YYYY ---
-  const numericMatch = str.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})$/);
-  if (numericMatch) {
-    let [, a, b, y] = numericMatch;
-    if (y.length === 2) y = `20${y}`;
-    const aNum = +a, bNum = +b;
-    // If first part is definitely > 12, it must be the day (DD/MM/YYYY)
-    if (aNum > 12) {
-      const dt = new Date(Date.UTC(+y, bNum - 1, aNum));
-      if (!isNaN(dt.getTime())) return dt.toISOString().slice(0, 10);
-    }
-    // If second part is > 12, it must be the day (MM/DD/YYYY)
-    if (bNum > 12) {
-      const dt = new Date(Date.UTC(+y, aNum - 1, bNum));
-      if (!isNaN(dt.getTime())) return dt.toISOString().slice(0, 10);
-    }
-    // Ambiguous (both ≤ 12) — assume MM/DD/YYYY (US, common in English-locale spreadsheets)
-    const dt = new Date(Date.UTC(+y, aNum - 1, bNum));
-    if (!isNaN(dt.getTime())) return dt.toISOString().slice(0, 10);
-  }
-
-  // --- Last resort: let the JS engine try (ISO-only strings are safe) ---
-  const fallbackDate = new Date(str);
-  if (!isNaN(fallbackDate.getTime())) return fallbackDate.toISOString().slice(0, 10);
-
-  return fallback;
+function scanImportRowToOverride(
+  row: unknown[],
+  updatedOnIndex: number,
+  previousByContent: Map<string, ScanReportOverride>,
+): ScanReportOverride {
+  const totalScanned = Math.max(0, parseInt(String(row[2] ?? "0").replace(/\D/g, ""), 10) || 0);
+  const analyzed = Math.max(0, parseInt(String(row[3] ?? "0").replace(/\D/g, ""), 10) || 0);
+  const draft: ScanReportOverride = {
+    satelliteName: String(row[0] ?? "").trim(),
+    polarization: String(row[1] ?? "").trim() || "—",
+    totalScanned,
+    analyzed,
+    pending: deriveIntPendingFrequencies(totalScanned, analyzed),
+    productivityScore: null,
+    updatedOn: parseIntelImportDate(row[updatedOnIndex]),
+  };
+  const prev = previousByContent.get(scanRowContentKey(draft));
+  return prev?.rowId ? { ...draft, rowId: prev.rowId } : { ...draft, rowId: crypto.randomUUID() };
 }
 
 // ── Suppressed satellite rows ────────────────────────────────────────────────
@@ -382,11 +337,27 @@ function SatelliteSetupDialog({
       }
 
       // 2b. At least one data row
-      const objs = gridToRecords(grid, expectedHeaders, { validateHeaders: false });
+      let objs = gridToRecords(grid, expectedHeaders, {
+        validateHeaders: false,
+        templateExample: sec.template.example,
+      });
+      let filteredDropCount = 0;
+      if (
+        sectionKey === "productive" ||
+        sectionKey === "nonProductive" ||
+        sectionKey === "novel"
+      ) {
+        const freqHeader = sectionKey === "novel" ? "Frequency" : "Frequency ID";
+        const beforeFilter = objs.length;
+        objs = filterFrequencyImportRecords(objs, expectedHeaders, freqHeader);
+        filteredDropCount = beforeFilter - objs.length;
+      }
       if (objs.length === 0) {
         toast.error(
-          `Your file has a header row but no data. ` +
-          `Add at least one row of data below the column headings and re-upload.`,
+          filteredDropCount > 0
+            ? `No valid frequency rows found — each row needs a ${sectionKey === "novel" ? "Frequency" : "Frequency ID"} plus at least one other column filled. Band labels (e.g. C-band) alone are not imported.`
+            : `Your file has a header row but no data. ` +
+              `Remove the template example row and add at least one row of real data below the column headings.`,
         );
         return;
       }
@@ -460,17 +431,6 @@ function SatelliteSetupDialog({
         };
 
       } else if (sectionKey === "productive") {
-        const missing = objs
-          .map((r, i) => ({ rowNum: i + 2, val: (r["Frequency ID"] ?? "").trim() }))
-          .filter(({ val }) => !val);
-        if (missing.length) {
-          toast.error(
-            `"Frequency ID" is blank in spreadsheet row${missing.length > 1 ? "s" : ""} ` +
-            missing.map(({ rowNum }) => rowNum).join(", ") +
-            `. Every productive frequency must have a Frequency ID — fill in the missing value${missing.length > 1 ? "s" : ""} and re-upload.`,
-          );
-          return;
-        }
         edits.productive = {
           importedMode: true, cells: {},
           extra: objs.map((r, i) => ({
@@ -483,17 +443,6 @@ function SatelliteSetupDialog({
         };
 
       } else if (sectionKey === "nonProductive") {
-        const missing = objs
-          .map((r, i) => ({ rowNum: i + 2, val: (r["Frequency ID"] ?? "").trim() }))
-          .filter(({ val }) => !val);
-        if (missing.length) {
-          toast.error(
-            `"Frequency ID" is blank in spreadsheet row${missing.length > 1 ? "s" : ""} ` +
-            missing.map(({ rowNum }) => rowNum).join(", ") +
-            `. Every non-productive frequency must have a Frequency ID — fill in the missing value${missing.length > 1 ? "s" : ""} and re-upload.`,
-          );
-          return;
-        }
         edits.nonProductive = {
           importedMode: true, cells: {},
           extra: objs.map((r, i) => ({
@@ -506,17 +455,6 @@ function SatelliteSetupDialog({
         };
 
       } else if (sectionKey === "novel") {
-        const missing = objs
-          .map((r, i) => ({ rowNum: i + 2, val: (r["Frequency"] ?? "").trim() }))
-          .filter(({ val }) => !val);
-        if (missing.length) {
-          toast.error(
-            `"Frequency" is blank in spreadsheet row${missing.length > 1 ? "s" : ""} ` +
-            missing.map(({ rowNum }) => rowNum).join(", ") +
-            `. Every newly encountered protocol must reference a frequency — fill in the missing value${missing.length > 1 ? "s" : ""} and re-upload.`,
-          );
-          return;
-        }
         edits.novel = {
           importedMode: true, cells: {},
           extra: objs.map((r, i) => ({
@@ -534,7 +472,12 @@ function SatelliteSetupDialog({
         return;
       }
       persist({ ...progress, [sectionKey]: "done" });
-      toast.success(`${sec.label} imported — ${objs.length} row${objs.length !== 1 ? "s" : ""} saved`);
+      toast.success(
+        `${sec.label} imported — ${objs.length} row${objs.length !== 1 ? "s" : ""} saved` +
+          (filteredDropCount > 0
+            ? ` (${filteredDropCount} invalid row${filteredDropCount !== 1 ? "s" : ""} skipped)`
+            : ""),
+      );
     } catch (err) {
       // Catch unexpected errors and surface them as actionable messages
       const detail = err instanceof Error ? err.message : String(err);
@@ -709,21 +652,42 @@ type IntelMapViewRow = {
   totalScanned: number;
   analyzed: number;
   pending: number;
-  productivityScore: number | null;
   reportTimestamp: string | null;
 };
 
+function ScanBarValueLabel({
+  x,
+  y,
+  width,
+  value,
+}: {
+  x?: number;
+  y?: number;
+  width?: number;
+  value?: number;
+}) {
+  if (x == null || y == null || width == null || value == null) return null;
+  return (
+    <text
+      x={x + width / 2}
+      y={y - 8}
+      fill="#000000"
+      textAnchor="middle"
+      fontSize={13}
+      fontFamily="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+    >
+      {value}
+    </text>
+  );
+}
+
 function IntelUnitMapCard({ row }: { row: IntelMapViewRow }) {
+  const pending = deriveIntPendingFrequencies(row.totalScanned, row.analyzed);
   const barData = [
     { name: "Scanned", value: row.totalScanned },
     { name: "Analysed", value: row.analyzed },
-    { name: "Pending", value: row.pending },
+    { name: "Pending", value: pending },
   ];
-
-  const productivity = row.productivityScore ?? 0;
-  const productivityColor =
-    productivity > 60 ? "#22c55e" : productivity >= 40 ? "#eab308" : "#ef4444";
-  const donutData = [{ value: productivity }, { value: 100 - productivity }];
   const dateLabel = row.reportTimestamp ? formatIntelCompactDate(row.reportTimestamp) : "—";
   const gradientId = row.reportId.replace(/[^a-zA-Z0-9_-]/g, "-");
 
@@ -734,62 +698,54 @@ function IntelUnitMapCard({ row }: { row: IntelMapViewRow }) {
         <p className="shrink-0 text-[13px] text-[#1B2A3A]/70">{dateLabel}</p>
       </div>
 
-      <div className="flex flex-row gap-2 px-2 py-3">
-        <div className="min-h-[160px] min-w-0 flex-1">
-          <ResponsiveContainer width="100%" height={160}>
-            <BarChart data={barData} margin={{ top: 20, right: 10, left: 10, bottom: 5 }}>
-              <defs>
-                <linearGradient id={`gradientScanned-${gradientId}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#93c5fd" />
-                  <stop offset="100%" stopColor="#3b82f6" />
-                </linearGradient>
-                <linearGradient id={`gradientAnalysed-${gradientId}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#86efac" />
-                  <stop offset="100%" stopColor="#22c55e" />
-                </linearGradient>
-                <linearGradient id={`gradientPending-${gradientId}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#fcd34d" />
-                  <stop offset="100%" stopColor="#f59e0b" />
-                </linearGradient>
-              </defs>
-              <XAxis dataKey="name" tick={{ fill: "#1B2A3A", fontSize: 12 }} />
-              <YAxis tick={{ fill: "#1B2A3A", fontSize: 12 }} />
-              <Bar dataKey="value" radius={[4, 4, 0, 0]}>
-                <LabelList dataKey="value" position="top" style={{ fill: "#000000", fontSize: 13 }} />
-                <Cell fill={`url(#gradientScanned-${gradientId})`} />
-                <Cell fill={`url(#gradientAnalysed-${gradientId})`} />
-                <Cell fill={`url(#gradientPending-${gradientId})`} />
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-
-        <div className="relative w-[130px] shrink-0">
-          <div style={{ filter: "drop-shadow(0px 4px 6px rgba(0,0,0,0.15))" }}>
-            <PieChart width={120} height={120}>
-              <Pie
-                data={donutData}
-                cx={55}
-                cy={55}
-                innerRadius={35}
-                outerRadius={50}
-                startAngle={90}
-                endAngle={-270}
-                dataKey="value"
-                strokeWidth={0}
-              >
-                <PieCell fill={productivityColor} />
-                <PieCell fill="rgba(255,255,255,0.1)" />
-              </Pie>
-            </PieChart>
-          </div>
-          <div className="pointer-events-none absolute left-0 right-0 top-[118px] flex flex-col items-center">
-            <span className="mono text-[15px] font-bold tabular-nums text-[#000000]">
-              {row.productivityScore !== null ? `${row.productivityScore}%` : "N/A"}
-            </span>
-            <span className="mono text-[12px] text-[#1B2A3A]/70">Productivity</span>
-          </div>
-        </div>
+      <div className="h-[190px] w-full px-2 py-3">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={barData} margin={{ top: 24, right: 12, left: 8, bottom: 8 }}>
+            <defs>
+              <linearGradient id={`gradientScanned-${gradientId}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#93c5fd" />
+                <stop offset="100%" stopColor="#3b82f6" />
+              </linearGradient>
+              <linearGradient id={`gradientAnalysed-${gradientId}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#86efac" />
+                <stop offset="100%" stopColor="#22c55e" />
+              </linearGradient>
+              <linearGradient id={`gradientPending-${gradientId}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#fcd34d" />
+                <stop offset="100%" stopColor="#f59e0b" />
+              </linearGradient>
+            </defs>
+            <XAxis
+              dataKey="name"
+              interval={0}
+              tick={{ fill: "#1B2A3A", fontSize: 12 }}
+              axisLine={{ stroke: "#d1d5db" }}
+              tickLine={false}
+            />
+            <YAxis
+              allowDecimals={false}
+              tick={{ fill: "#1B2A3A", fontSize: 12 }}
+              axisLine={{ stroke: "#d1d5db" }}
+              tickLine={false}
+              width={36}
+            />
+            <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={72}>
+              {barData.map((entry, index) => (
+                <Cell
+                  key={entry.name}
+                  fill={
+                    index === 0
+                      ? `url(#gradientScanned-${gradientId})`
+                      : index === 1
+                        ? `url(#gradientAnalysed-${gradientId})`
+                        : `url(#gradientPending-${gradientId})`
+                  }
+                />
+              ))}
+              <LabelList dataKey="value" content={ScanBarValueLabel} />
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
       </div>
     </div>
   );
@@ -841,15 +797,20 @@ function IntelUnitView() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
-  const [editingReportId, setEditingReportId] = useState<string | null>(null);
+  const [editingRowKey, setEditingRowKey] = useState<string | null>(null);
+  const [editingTargetReportId, setEditingTargetReportId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<IntelScanRowDraft | null>(null);
   const importFileRef = useRef<HTMLInputElement>(null);
   const [scanOverrides, setScanOverrides] = useState<ScanReportOverride[]>([]);
   const [suppressedSatNames, setSuppressedSatNames] = useState<Set<string>>(new Set());
+  const [suppressedRowKeys, setSuppressedRowKeys] = useState<Set<string>>(new Set());
+  const [pendingNewRow, setPendingNewRow] = useState<IntelSatelliteReportRow | null>(null);
   // Keep a ref so the navigate-back effect always reads the latest overrides without
   // triggering unnecessary re-runs.
   const scanOverridesRef = useRef(scanOverrides);
   useEffect(() => { scanOverridesRef.current = scanOverrides; }, [scanOverrides]);
+  /** Stable override row identity for in-progress edits before first persist. */
+  const pendingEditOverrideRef = useRef<{ reportId: string; override: ScanReportOverride } | null>(null);
   const prevReportIdRef = useRef<string | null>(null);
   // Setup wizard: holds the satellite name when the user clicks an imported (non-roster) satellite
   const [setupSatellite, setSetupSatellite] = useState<{ name: string; reportId: string } | null>(null);
@@ -882,6 +843,7 @@ function IntelUnitView() {
     setSuppressedSatNames(
       new Set(loadSuppressedSatNamesList(intUnitSlug, unit?.code).map((n) => n.toLowerCase())),
     );
+    setSuppressedRowKeys(loadSuppressedScanRowKeys(intUnitSlug, unit?.code));
   }, [intUnitSlug, unit?.code]);
 
   const { data: engagements = [], isLoading: engLoading } = useQuery({
@@ -937,13 +899,31 @@ function IntelUnitView() {
         row.analyzed === 0 &&
         row.pending === 0,
     }));
-  }, [tableRows, scanOverrides, intUnitSlug, unit?.code]);
+  }, [tableRows, scanOverrides, intUnitSlug, unit?.code, suppressedSatNames, suppressedRowKeys]);
+
+  const visibleTableRows = useMemo(() => {
+    if (!pendingNewRow) return mergedTableRows;
+    if (mergedTableRows.some((row) => row.reportId === pendingNewRow.reportId)) return mergedTableRows;
+    return [pendingNewRow, ...mergedTableRows];
+  }, [mergedTableRows, pendingNewRow]);
 
   const mapViewRows = useMemo(
     () =>
-      mergedTableRows.filter(
-        (row) => !(row.totalScanned === 0 && row.analyzed === 0 && row.pending === 0),
-      ),
+      mergedTableRows
+        .filter(
+          (row) => !(row.totalScanned === 0 && row.analyzed === 0 && row.pending === 0),
+        )
+        .map((row) => {
+          const pending = deriveIntPendingFrequencies(row.totalScanned, row.analyzed);
+          return {
+            reportId: row.reportId,
+            satelliteName: row.satelliteName,
+            totalScanned: row.totalScanned,
+            analyzed: row.analyzed,
+            pending,
+            reportTimestamp: row.reportTimestamp,
+          };
+        }),
     [mergedTableRows],
   );
 
@@ -961,10 +941,21 @@ function IntelUnitView() {
       : undefined;
 
     const built = buildIntelDrillDownReport(intUnitSlug, selectedReportId, linkageCtx, unitEngagements);
-    if (built) return enrichDrillDownFromScanSeed(built, scanSeed);
+    if (built) {
+      const enriched = enrichDrillDownFromScanSeed(built, scanSeed);
+      return enriched.reportId === selectedReportId
+        ? enriched
+        : { ...enriched, reportId: selectedReportId };
+    }
 
     return selectedRow
-      ? buildSyntheticDrillDownReport(selectedRow.satelliteName, intUnitSlug, linkageCtx, scanSeed)
+      ? buildSyntheticDrillDownReport(
+          selectedRow.satelliteName,
+          intUnitSlug,
+          linkageCtx,
+          scanSeed,
+          selectedReportId,
+        )
       : null;
   }, [selectedReportId, unit, intUnitSlug, linkageCtx, unitEngagements, mergedTableRows]);
 
@@ -998,12 +989,13 @@ function IntelUnitView() {
 
     if (wasEverImported && allEmpty) {
       const currentOverrides = scanOverridesRef.current;
-      const satName = currentOverrides.find(
-        (o) => `${intUnitSlug}__${o.satelliteName.replace(/\s+/g, "-")}` === prev,
-      )?.satelliteName;
-      if (satName) {
+      const match = currentOverrides.find(
+        (o) => reportIdForOverride(intUnitSlug, o) === prev,
+      );
+      if (match) {
+        const rowId = overrideRowKey(match);
         const updated = currentOverrides.map((o) =>
-          o.satelliteName.toLowerCase() === satName.toLowerCase()
+          overrideRowKey(o) === rowId
             ? { ...o, totalScanned: 0, analyzed: 0, pending: 0, productivityScore: null }
             : o,
         );
@@ -1014,10 +1006,21 @@ function IntelUnitView() {
   }, [selectedReportId, intUnitSlug, unitId]);
 
   function downloadImportTemplate() {
-    const example = ["EXAMPLE-SAT-1", "V/H", "450", "320", "130", "71", "2024-01-15"];
+    const example = ["EXAMPLE-SAT-1", "V/H", "450", "320", "130", "2024-01-15"];
     const csv = buildCsv([...SCAN_IMPORT_HEADERS], [example]);
     downloadCsv("scan-report-template.csv", csv);
     toast.info("Template downloaded — columns match the Satellite Scan Reports table exactly");
+  }
+
+  function resolveImportHeaders(fileHeaders: string[]) {
+    const normalized = fileHeaders.map((header) => header.trim());
+    if (SCAN_IMPORT_HEADERS.every((header, index) => normalized[index] === header)) {
+      return { ok: true as const, updatedOnIndex: 5 };
+    }
+    if (LEGACY_SCAN_IMPORT_HEADERS.every((header, index) => normalized[index] === header)) {
+      return { ok: true as const, updatedOnIndex: 6 };
+    }
+    return { ok: false as const };
   }
 
   async function handleImportFile(file: File) {
@@ -1026,112 +1029,202 @@ function IntelUnitView() {
     try {
       const { read, utils } = await import("xlsx");
       const buffer = await file.arrayBuffer();
-      // Use raw:true so Excel date serial numbers arrive as numbers (not pre-formatted strings).
-      // We handle all conversion ourselves via parseImportDate.
       const wb = read(buffer, { type: "array" });
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows = utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: true }) as unknown[][];
 
       if (!rows.length) return toast.error("File is empty");
 
-      // Header row: force to string for comparison regardless of raw mode
       const fileHeaders = (rows[0] ?? []).map((h) => String(h ?? "").trim());
-      for (let i = 0; i < SCAN_IMPORT_HEADERS.length; i++) {
-        if (fileHeaders[i] !== SCAN_IMPORT_HEADERS[i]) {
-          toast.error(
-            `Wrong format — column ${i + 1} must be "${SCAN_IMPORT_HEADERS[i]}"` +
-            (fileHeaders[i] ? ` but got "${fileHeaders[i]}"` : " (column missing)") +
-            `. Required columns: ${SCAN_IMPORT_HEADERS.join(", ")}`,
-          );
-          return;
-        }
+      const headerMatch = resolveImportHeaders(fileHeaders);
+      if (!headerMatch.ok) {
+        toast.error(
+          `Wrong format — required columns: ${SCAN_IMPORT_HEADERS.join(", ")}` +
+            ` (legacy files with Productivity (%) are also accepted).`,
+        );
+        return;
       }
 
       const dataRows = rows.slice(1).filter((r) => String((r as unknown[])[0] ?? "").trim());
       if (dataRows.length === 0) return toast.error("No data rows found — add at least one satellite row below the header");
 
-      const overrides: ScanReportOverride[] = (dataRows as unknown[][]).map((r) => ({
-        satelliteName: String(r[0] ?? "").trim(),
-        polarization: String(r[1] ?? "").trim() || "—",
-        totalScanned: Math.max(0, parseInt(String(r[2] ?? "0").replace(/\D/g, "")) || 0),
-        analyzed:     Math.max(0, parseInt(String(r[3] ?? "0").replace(/\D/g, "")) || 0),
-        pending:      Math.max(0, parseInt(String(r[4] ?? "0").replace(/\D/g, "")) || 0),
-        productivityScore: (() => {
-          const v = parseFloat(String(r[5] ?? "").replace(/[^0-9.]/g, ""));
-          return isNaN(v) ? null : Math.min(100, Math.max(0, v));
-        })(),
-        // Use the robust multi-format date parser so serial numbers, DD/MM/YYYY, etc. all work
-        updatedOn: parseImportDate(r[6]),
-      }));
+      const previous = loadScanOverrides(intUnitSlug, unit?.code);
+      const previousByContent = new Map(previous.map((o) => [scanRowContentKey(o), o]));
 
-      saveScanOverrides(intUnitSlug, overrides, unit?.code);
-      setScanOverrides(overrides);
-      const importedLower = new Set(overrides.map((o) => o.satelliteName.toLowerCase()));
-      const newSuppressed = [...suppressedSatNames].filter((n) => !importedLower.has(n));
-      saveSuppressedSatNames(intUnitSlug, newSuppressed, unit?.code);
-      setSuppressedSatNames(new Set(newSuppressed));
+      const overrides: ScanReportOverride[] = (dataRows as unknown[][]).map((row) =>
+        scanImportRowToOverride(row, headerMatch.updatedOnIndex, previousByContent),
+      );
+
+      const deduped = new Map<string, ScanReportOverride>();
+      for (const row of overrides) {
+        deduped.set(scanRowContentKey(row), row);
+      }
+      const nextOverrides = [...deduped.values()];
+
+      for (const old of previous) {
+        if (nextOverrides.some((row) => row.rowId && row.rowId === old.rowId)) continue;
+        const reportId = reportIdForOverride(intUnitSlug, old);
+        removeReportCellEdits(reportId);
+        localStorage.removeItem(setupKey(reportId, old.satelliteName));
+        const legacyId = buildIntelReportId(intUnitSlug, old.satelliteName, "—");
+        if (legacyId !== reportId) {
+          removeReportCellEdits(legacyId);
+          localStorage.removeItem(setupKey(legacyId, old.satelliteName));
+        }
+      }
+
+      saveScanOverrides(intUnitSlug, nextOverrides, unit?.code);
+      saveImportedRecords(intUnitSlug, []);
+      clearSuppressedScanRowKeys(intUnitSlug, unit?.code);
+      setScanOverrides(nextOverrides);
+      setSuppressedRowKeys(new Set());
+
+      const importedNames = new Set(nextOverrides.map((o) => o.satelliteName.toLowerCase()));
+      const roster = UNIT_SATELLITE_ROSTER[intUnitSlug] ?? [];
+      const rosterToHide = roster
+        .map((name) => name.toLowerCase())
+        .filter((name) => !importedNames.has(name));
+      const newSuppressed = new Set(rosterToHide);
+      saveSuppressedSatNames(intUnitSlug, [...newSuppressed], unit?.code);
+      setSuppressedSatNames(newSuppressed);
+
+      setPendingNewRow(null);
+      cancelRowEdit();
       unhideUnitInModule(dbUnitId, "intel");
       rebindAndPersistUnitEngagements(dbUnitId);
       notifyOperationalDerivedRefresh();
       void qc.invalidateQueries({ queryKey: ENGAGEMENTS_ALL_KEY });
       void qc.invalidateQueries({ queryKey: ["units"] });
-      toast.success(`Imported ${overrides.length} scan report row${overrides.length !== 1 ? "s" : ""}`);
+      toast.success(`Imported ${nextOverrides.length} scan report row${nextOverrides.length !== 1 ? "s" : ""} — previous scan data replaced.`);
     } catch {
       toast.error("Failed to parse file — ensure it matches the downloaded template");
     }
   }
 
-  function deleteIntelForSatNames(satNames: string[]) {
-    const nameSet = new Set(satNames.map((n) => n.toLowerCase()));
-    const remaining = loadImportedRecords(intUnitSlug).filter(
-      (r) => !nameSet.has(r.satellite.toLowerCase()),
+  function deleteIntelForReportRows(
+    rows: { reportId: string; satelliteName: string; polarization: string }[],
+  ) {
+    const deleteRowKeys = new Set(
+      rows.map((row) => scanRowKey(row.satelliteName, row.polarization).toLowerCase()),
     );
-    saveImportedRecords(intUnitSlug, remaining);
-    const remainingOverrides = scanOverrides.filter((o) => !nameSet.has(o.satelliteName.toLowerCase()));
+    const deleteReportIds = new Set(rows.map((row) => row.reportId));
+
+    const storedOverrides = loadScanOverrides(intUnitSlug, unit?.code);
+    const remainingOverrides = storedOverrides.filter((override) => {
+      const rowKey = scanRowKey(override.satelliteName, override.polarization).toLowerCase();
+      if (deleteRowKeys.has(rowKey)) return false;
+      return !deleteReportIds.has(reportIdForOverride(intUnitSlug, override));
+    });
+
     saveScanOverrides(intUnitSlug, remainingOverrides, unit?.code);
     setScanOverrides(remainingOverrides);
-    // Clear setup wizard progress and imported cell data so a re-import starts fresh.
-    for (const satName of satNames) {
-      const repId = `${intUnitSlug}__${satName.replace(/\s+/g, "-")}`;
-      localStorage.removeItem(setupKey(repId, satName));
-      removeReportCellEdits(repId);
-    }
-    // Suppress these satellites so they don't re-appear from the seeded roster.
-    const newSuppressed = [...new Set([...suppressedSatNames, ...nameSet])];
-    saveSuppressedSatNames(intUnitSlug, newSuppressed, unit?.code);
-    setSuppressedSatNames(new Set(newSuppressed));
 
+    const remainingImports = loadImportedRecords(intUnitSlug).filter(
+      (record) => !deleteRowKeys.has(scanRowKey(record.satellite, record.polarization ?? "—").toLowerCase()),
+    );
+    saveImportedRecords(intUnitSlug, remainingImports);
+
+    const nextSuppressedRowKeys = new Set(loadSuppressedScanRowKeys(intUnitSlug, unit?.code));
+    for (const key of deleteRowKeys) nextSuppressedRowKeys.add(key);
+    saveSuppressedScanRowKeys(intUnitSlug, [...nextSuppressedRowKeys], unit?.code);
+    setSuppressedRowKeys(nextSuppressedRowKeys);
+
+    for (const row of rows) {
+      const legacyIds = legacyReportIdsForScanRow(intUnitSlug, row.satelliteName, row.polarization);
+      for (const reportId of new Set([row.reportId, ...legacyIds])) {
+        localStorage.removeItem(setupKey(reportId, row.satelliteName));
+        removeReportCellEdits(reportId);
+      }
+    }
+
+    const namesStillVisible = new Set(
+      mergedTableRows
+        .filter((entry) => !deleteReportIds.has(entry.reportId))
+        .map((entry) => entry.satelliteName.toLowerCase()),
+    );
+    const namesToSuppress = rows
+      .map((row) => row.satelliteName.toLowerCase())
+      .filter((name) => !namesStillVisible.has(name));
+    if (namesToSuppress.length > 0) {
+      const newSuppressed = new Set([...suppressedSatNames, ...namesToSuppress]);
+      saveSuppressedSatNames(intUnitSlug, [...newSuppressed], unit?.code);
+      setSuppressedSatNames(newSuppressed);
+    }
+
+    if (pendingNewRow && deleteReportIds.has(pendingNewRow.reportId)) {
+      setPendingNewRow(null);
+      cancelRowEdit();
+    }
+
+    const namesFullyRemoved = new Set(namesToSuppress);
     const opIds = (intelRows as any[])
-      .filter((r) => nameSet.has((r.satellites?.name ?? "").toLowerCase()))
-      .map((r) => r.id)
+      .filter((record) => namesFullyRemoved.has((record.satellites?.name ?? "").toLowerCase()))
+      .map((record) => record.id)
       .filter((id: string) => id.startsWith("op-intel-"));
     if (opIds.length > 0) removeOperationalIntelRows(opIds);
-    qc.invalidateQueries({ queryKey: ["intel-eng", dbUnitId] });
-    qc.invalidateQueries({ queryKey: ENGAGEMENTS_ALL_KEY });
+
+    notifyOperationalDerivedRefresh();
+    void qc.invalidateQueries({ queryKey: ["intel-eng", dbUnitId] });
+    void qc.invalidateQueries({ queryKey: ENGAGEMENTS_ALL_KEY });
+  }
+
+  function startAddSatellite() {
+    if (editingRowKey) return;
+    const override: ScanReportOverride = {
+      rowId: crypto.randomUUID(),
+      satelliteName: "",
+      polarization: "—",
+      totalScanned: 0,
+      analyzed: 0,
+      pending: 0,
+      productivityScore: null,
+      updatedOn: new Date().toISOString().slice(0, 10),
+    };
+    const reportId = reportIdForOverride(intUnitSlug, override);
+    const draftRow = scanOverrideToReportRow(intUnitSlug, override);
+    pendingEditOverrideRef.current = { reportId, override };
+    setPendingNewRow(draftRow);
+    setEditingRowKey(override.rowId!);
+    setEditingTargetReportId(reportId);
+    setEditDraft({
+      satelliteName: "",
+      polarization: "",
+      totalScanned: "0",
+      analyzed: "0",
+      pending: "0",
+      productivity: "",
+      updatedOn: override.updatedOn,
+    });
   }
 
   function confirmDeleteSingle() {
     if (!deleteTargetId) return;
-    const row = mergedTableRows.find((r) => r.reportId === deleteTargetId);
+    const row = visibleTableRows.find((r) => r.reportId === deleteTargetId);
     if (!row) return;
-    deleteIntelForSatNames([row.satelliteName]);
+    deleteIntelForReportRows([
+      { reportId: row.reportId, satelliteName: row.satelliteName, polarization: row.polarization },
+    ]);
     toast.success("Intel records cleared for satellite.");
     setDeleteTargetId(null);
     setSelectedIds((s) => { const n = new Set(s); n.delete(deleteTargetId); return n; });
   }
 
   function confirmBulkDelete() {
-    const names = mergedTableRows
+    const targets = visibleTableRows
       .filter((r) => selectedIds.has(r.reportId))
-      .map((r) => r.satelliteName);
-    deleteIntelForSatNames(names);
-    toast.success(`${names.length} satellite intel record${names.length !== 1 ? "s" : ""} cleared.`);
+      .map((r) => ({
+        reportId: r.reportId,
+        satelliteName: r.satelliteName,
+        polarization: r.polarization,
+      }));
+    deleteIntelForReportRows(targets);
+    toast.success(`${targets.length} satellite intel record${targets.length !== 1 ? "s" : ""} cleared.`);
     setSelectedIds(new Set());
     setBulkDeleteOpen(false);
   }
 
-  const deleteTargetRow = mergedTableRows.find((r) => r.reportId === deleteTargetId) ?? null;
-  const visibleIds = mergedTableRows.map((r) => r.reportId);
+  const deleteTargetRow = visibleTableRows.find((r) => r.reportId === deleteTargetId) ?? null;
+  const visibleIds = visibleTableRows.map((r) => r.reportId);
   const selectAll = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
 
   function handleSelectAll() {
@@ -1139,7 +1232,16 @@ function IntelUnitView() {
   }
 
   function startRowEdit(row: (typeof mergedTableRows)[number]) {
-    setEditingReportId(row.reportId);
+    const storedOverrides = loadScanOverrides(intUnitSlug, unit?.code);
+    let existingOverride = findScanOverrideForReportId(intUnitSlug, storedOverrides, row.reportId);
+    if (!existingOverride) {
+      existingOverride = buildScanOverrideFromTableRow(row);
+      pendingEditOverrideRef.current = { reportId: row.reportId, override: existingOverride };
+    } else {
+      pendingEditOverrideRef.current = null;
+    }
+    setEditingRowKey(overrideRowKey(existingOverride));
+    setEditingTargetReportId(row.reportId);
     setEditDraft({
       satelliteName: row.satelliteName,
       polarization: row.polarization,
@@ -1147,30 +1249,63 @@ function IntelUnitView() {
       analyzed: String(row.analyzed),
       pending: String(row.pending),
       productivity: row.productivityScore === null ? "" : String(row.productivityScore),
-      updatedOn: row.reportTimestamp ?? "",
+      updatedOn: formatIsoDateForEditInput(row.reportTimestamp),
     });
   }
 
   function cancelRowEdit() {
-    setEditingReportId(null);
+    pendingEditOverrideRef.current = null;
+    setPendingNewRow(null);
+    setEditingRowKey(null);
+    setEditingTargetReportId(null);
     setEditDraft(null);
   }
 
   function confirmRowEdit() {
-    if (!editingReportId || !editDraft) return;
-    const row = mergedTableRows.find((r) => r.reportId === editingReportId);
+    if (!editingRowKey || !editingTargetReportId || !editDraft) return;
+    const row =
+      visibleTableRows.find((entry) => entry.reportId === editingTargetReportId) ??
+      mergedTableRows.find((entry) => entry.reportId === editingTargetReportId);
     if (!row) return;
+
+    const storedOverrides = loadScanOverrides(intUnitSlug, unit?.code);
+    const pinnedByReportId: Record<string, ScanReportOverride> = {};
+    const pending = pendingEditOverrideRef.current;
+    if (pending && pending.reportId === editingTargetReportId) {
+      pinnedByReportId[pending.reportId] = pending.override;
+    }
+
+    const rowsForMaterialize = [row];
+
+    const workingOverrides = materializeTableRowsAsScanOverrides(
+      intUnitSlug,
+      rowsForMaterialize,
+      storedOverrides,
+      pinnedByReportId,
+    );
+
+    let editingOverride =
+      workingOverrides.find((o) => overrideRowKey(o) === editingRowKey) ??
+      findScanOverrideForReportId(intUnitSlug, workingOverrides, editingTargetReportId) ??
+      (pending?.reportId === editingTargetReportId ? pending.override : undefined);
+
+    if (!editingOverride?.rowId) {
+      toast.error("Could not locate the scan row to update.");
+      return;
+    }
+
+    const previousRowKey = overrideRowKey(editingOverride);
 
     const result = applyIntelScanRowEdit({
       intUnitSlug,
       unitCode: unit?.code,
       dbUnitId,
-      previousSatelliteName: row.satelliteName,
+      previousRowId: previousRowKey,
+      previousSatelliteName: editingOverride.satelliteName,
+      previousPolarization: editingOverride.polarization,
       draft: editDraft,
-      existingOverrides: scanOverrides,
-      otherSatelliteNames: mergedTableRows
-        .filter((r) => r.reportId !== editingReportId)
-        .map((r) => r.satelliteName),
+      existingOverrides: workingOverrides,
+      otherOverrides: workingOverrides.filter((o) => overrideRowKey(o) !== previousRowKey),
     });
 
     if (!result.ok) {
@@ -1178,14 +1313,33 @@ function IntelUnitView() {
       return;
     }
 
-    const newName = editDraft.satelliteName.trim();
-    const reportIdChanged = row.reportId !== buildIntelReportId(intUnitSlug, newName);
+    const updatedOverride = result.overrides.find((o) => o.rowId === editingOverride!.rowId);
+    const newReportId = updatedOverride
+      ? reportIdForOverride(intUnitSlug, updatedOverride)
+      : row.reportId;
+    const reportIdChanged = row.reportId !== newReportId;
 
-    setScanOverrides(result.overrides);
-    if (selectedReportId === editingReportId && reportIdChanged) {
-      setSelectedReportId(buildIntelReportId(intUnitSlug, newName));
+    if (updatedOverride) {
+      const rowKey = scanRowKey(updatedOverride.satelliteName, updatedOverride.polarization).toLowerCase();
+      const nextSuppressedRowKeys = new Set(loadSuppressedScanRowKeys(intUnitSlug, unit?.code));
+      nextSuppressedRowKeys.delete(rowKey);
+      saveSuppressedScanRowKeys(intUnitSlug, [...nextSuppressedRowKeys], unit?.code);
+      setSuppressedRowKeys(nextSuppressedRowKeys);
+
+      const nextSuppressedNames = new Set(suppressedSatNames);
+      nextSuppressedNames.delete(updatedOverride.satelliteName.toLowerCase());
+      saveSuppressedSatNames(intUnitSlug, [...nextSuppressedNames], unit?.code);
+      setSuppressedSatNames(nextSuppressedNames);
     }
-    setEditingReportId(null);
+
+    pendingEditOverrideRef.current = null;
+    setPendingNewRow(null);
+    setScanOverrides(result.overrides);
+    if (selectedReportId === editingTargetReportId && reportIdChanged) {
+      setSelectedReportId(newReportId);
+    }
+    setEditingRowKey(null);
+    setEditingTargetReportId(null);
     setEditDraft(null);
     unhideUnitInModule(dbUnitId, "intel");
     rebindAndPersistUnitEngagements(dbUnitId);
@@ -1218,7 +1372,7 @@ function IntelUnitView() {
 
   // DECISION: Treat cleared units like new units — show upload onboarding whenever no rows remain.
   const showScanUploadOnboarding =
-    !isLoading && scanOverrides.length === 0 && mergedTableRows.length === 0;
+    !isLoading && scanOverrides.length === 0 && mergedTableRows.length === 0 && !pendingNewRow;
 
   return (
     <AppShell
@@ -1308,6 +1462,15 @@ function IntelUnitView() {
               <Button
                 type="button"
                 variant="outline"
+                onClick={startAddSatellite}
+                disabled={!!editingRowKey}
+                className="mono uppercase tracking-wider text-[11px]"
+              >
+                Add Satellite
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
                 onClick={downloadImportTemplate}
                 className="mono uppercase tracking-wider text-[11px]"
               >
@@ -1333,7 +1496,7 @@ function IntelUnitView() {
           ) : (
             <IntelUnitMapView rows={mapViewRows} />
           )
-        ) : mergedTableRows.length === 0 ? (
+        ) : mergedTableRows.length === 0 && !pendingNewRow ? (
           <Empty
             title="No satellite reports"
             hint={
@@ -1354,6 +1517,16 @@ function IntelUnitView() {
               <div className="ml-auto flex items-center gap-1.5">
                 <button
                   type="button"
+                  onClick={startAddSatellite}
+                  disabled={!!editingRowKey}
+                  title="Add a single satellite row"
+                  className="inline-flex items-center gap-1 mono text-[9px] uppercase tracking-wider text-primary
+                             border border-primary/40 hover:bg-primary/10 px-1.5 py-0.5 rounded-sm transition-colors disabled:opacity-40"
+                >
+                  Add Satellite
+                </button>
+                <button
+                  type="button"
                   onClick={downloadImportTemplate}
                   title="Download CSV/Excel import template"
                   className="inline-flex items-center gap-1 mono text-[9px] uppercase tracking-wider text-foreground/60
@@ -1364,7 +1537,7 @@ function IntelUnitView() {
                 <button
                   type="button"
                   onClick={() => importFileRef.current?.click()}
-                  title="Import satellite records from CSV / Excel"
+                  title="Import satellite records from CSV / Excel (replaces existing scan rows)"
                   className="inline-flex items-center gap-1 mono text-[9px] uppercase tracking-wider text-primary
                              border border-primary/40 hover:bg-primary/10 px-1.5 py-0.5 rounded-sm transition-colors"
                 >
@@ -1375,10 +1548,9 @@ function IntelUnitView() {
             </div>
 
             <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-1">
-              {/* Column template: checkbox | # | satellite | 3 numeric | productivity | date | actions */}
+              {/* Column template: checkbox | # | satellite | scanned | analyzed | pending | date | actions */}
               <div
-                className="grid items-center gap-x-2 sticky top-0 z-10 bg-secondary/30 backdrop-blur-sm border-b border-border
-                           [grid-template-columns:1.5rem_2rem_minmax(0,1.3fr)_repeat(3,minmax(0,0.75fr))_minmax(0,1fr)_minmax(0,1.1fr)_3.5rem]"
+                className={`grid items-center gap-x-2 sticky top-0 z-10 bg-secondary/30 backdrop-blur-sm border-b border-border ${INT_TABLE_GRID}`}
               >
                 {allowEdit && (
                   <div className="px-1 py-2 flex items-center justify-center">
@@ -1397,22 +1569,21 @@ function IntelUnitView() {
                 <Th align="center">Scanned</Th>
                 <Th align="center">Analyzed</Th>
                 <Th align="center">Pending</Th>
-                <Th align="center">Productivity</Th>
                 <Th align="center">Updated On</Th>
                 <div />
               </div>
               <div className="divide-y divide-border/50">
-                {mergedTableRows.map((row, idx) => {
+                {visibleTableRows.map((row, idx) => {
                   const checked = selectedIds.has(row.reportId);
-                  const isEditing = editingReportId === row.reportId && editDraft !== null;
+                  const isEditing =
+                    editingTargetReportId === row.reportId && editingRowKey !== null && editDraft !== null;
                   const compactInputCls =
                     "h-7 mono text-[11px] px-1.5 py-0.5 min-w-0 border-border bg-background";
                   return (
                     <div
                       key={row.reportId}
                       role="row"
-                      className={`grid items-center gap-x-2 transition-colors
-                                 [grid-template-columns:1.5rem_2rem_minmax(0,1.3fr)_repeat(3,minmax(0,0.75fr))_minmax(0,1fr)_minmax(0,1.1fr)_3.5rem]
+                      className={`grid items-center gap-x-2 transition-colors ${INT_TABLE_GRID}
                                  ${checked ? "bg-primary/5" : isEditing ? "bg-primary/8" : "hover:bg-primary/8"}`}
                     >
                       {/* Checkbox */}
@@ -1461,7 +1632,7 @@ function IntelUnitView() {
                       <div
                         className="px-1 py-2 min-w-0 text-left cursor-pointer"
                         onClick={() => {
-                          if (editingReportId) return;
+                          if (editingRowKey) return;
                           if (!fromMap) {
                           // For imported (non-roster) rows that haven't completed setup yet,
                           // open the setup wizard first — but only if they have scan data.
@@ -1469,7 +1640,7 @@ function IntelUnitView() {
                           const isImportedNoEngagement =
                             !row.isZeroImported &&
                             scanOverrides.some(
-                              (o) => `${intUnitSlug}__${o.satelliteName.replace(/\s+/g, "-")}` === row.reportId,
+                              (o) => reportIdForOverride(intUnitSlug, o) === row.reportId,
                             ) &&
                             !buildIntelDrillDownReport(intUnitSlug, row.reportId, linkageCtx, unitEngagements);
                           if (isImportedNoEngagement) {
@@ -1483,7 +1654,7 @@ function IntelUnitView() {
                           setSelectedReportId(row.reportId);
                         }}
                         tabIndex={0}
-                        onKeyDown={(e) => e.key === "Enter" && !editingReportId && setSelectedReportId(row.reportId)}
+                        onKeyDown={(e) => e.key === "Enter" && !editingRowKey && setSelectedReportId(row.reportId)}
                       >
                         <div className="mono text-[12px] font-bold text-foreground uppercase leading-tight">
                           {row.satelliteName}
@@ -1541,14 +1712,7 @@ function IntelUnitView() {
                           </div>
                           <div className="px-1 py-1.5">
                             <Input
-                              value={editDraft.productivity}
-                              onChange={(e) => patchEditDraft({ productivity: e.target.value })}
-                              className={`${compactInputCls} text-center`}
-                              placeholder="N/A"
-                            />
-                          </div>
-                          <div className="px-1 py-1.5">
-                            <Input
+                              type="date"
                               value={editDraft.updatedOn}
                               onChange={(e) => patchEditDraft({ updatedOn: e.target.value })}
                               className={`${compactInputCls} text-center`}
@@ -1565,25 +1729,6 @@ function IntelUnitView() {
                       </div>
                       <div className={`px-1 py-2 mono text-[12px] text-center font-semibold tabular-nums ${row.isZeroImported || !row.scanEligible ? "text-muted-foreground/50" : "text-foreground"}`}>
                         {row.isZeroImported ? "—" : row.pending.toLocaleString()}
-                      </div>
-                      <div className="px-1 py-2 text-center">
-                        {row.isZeroImported ? (
-                          <span className="mono text-[10px] font-bold uppercase text-muted-foreground/50">—</span>
-                        ) : row.productivityScore === null ? (
-                          <span className="mono text-[10px] font-bold uppercase text-muted-foreground">N/A</span>
-                        ) : (
-                          <span
-                            className={`mono text-[12px] font-bold tabular-nums ${
-                              row.productivityScore >= 60
-                                ? "text-emerald-700"
-                                : row.productivityScore >= 35
-                                  ? "text-amber-700"
-                                  : "text-foreground"
-                            }`}
-                          >
-                            {row.productivityScore}%
-                          </span>
-                        )}
                       </div>
                       <div className={`px-1 py-2 mono text-[11px] tabular-nums text-center ${row.isZeroImported ? "text-muted-foreground/50" : "text-muted-foreground"}`}>
                         {row.reportTimestamp && !row.isZeroImported ? formatIntelCompactDate(row.reportTimestamp) : "—"}
@@ -1618,7 +1763,7 @@ function IntelUnitView() {
                               <button
                                 type="button"
                                 title="Edit scan report row"
-                                disabled={!!editingReportId}
+                                disabled={!!editingRowKey}
                                 onClick={() => startRowEdit(row)}
                                 className="p-1 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors disabled:opacity-40 disabled:pointer-events-none"
                               >
@@ -1627,7 +1772,7 @@ function IntelUnitView() {
                               <button
                                 type="button"
                                 title="Clear intel records for this satellite"
-                                disabled={!!editingReportId}
+                                disabled={!!editingRowKey}
                                 onClick={() => setDeleteTargetId(row.reportId)}
                                 className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors disabled:opacity-40 disabled:pointer-events-none"
                               >
@@ -1662,7 +1807,7 @@ function IntelUnitView() {
           reportId={setupSatellite.reportId}
           override={
             scanOverrides.find(
-              (o) => `${intUnitSlug}__${o.satelliteName.replace(/\s+/g, "-")}` === setupSatellite.reportId,
+              (o) => reportIdForOverride(intUnitSlug, o) === setupSatellite.reportId,
             ) ?? null
           }
           onClose={() => setSetupSatellite(null)}

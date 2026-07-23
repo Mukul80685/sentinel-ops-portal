@@ -30,8 +30,8 @@ export function readIntelLocalJson<T>(canonicalKey: string, legacyUnitId?: strin
   try {
     const raw = localStorage.getItem(canonicalKey);
     if (raw) return JSON.parse(raw) as T;
-    if (legacyUnitId && legacyUnitId !== canonicalKey.replace(/^intel-(?:scan-overrides|suppressed-sats|repo-imports)-/, "")) {
-      const legacyPrefixes = ["intel-scan-overrides-", "intel-suppressed-sats-", "intel-repo-imports-"];
+    if (legacyUnitId && legacyUnitId !== canonicalKey.replace(/^intel-(?:scan-overrides|suppressed-sats|suppressed-rows|repo-imports)-/, "")) {
+      const legacyPrefixes = ["intel-scan-overrides-", "intel-suppressed-sats-", "intel-suppressed-rows-", "intel-repo-imports-"];
       for (const prefix of legacyPrefixes) {
         if (canonicalKey.startsWith(prefix)) {
           const legacyKey = prefix + legacyUnitId;

@@ -1,7 +1,7 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, Database } from "lucide-react";
+import { AlertCircle, ChevronRight, Database } from "lucide-react";
 import { loadScanOverrides } from "@/lib/intelScanStorage";
 import { intelStorageSlug } from "@/lib/intelStorageKeys";
 import { listAllIntelRecords, listAllEquipment, INTEL_RECORDS_ALL_KEY } from "@/lib/queries";
@@ -10,11 +10,10 @@ import {
   buildIntelLinkageContext,
   buildIntelLinkageVisibilityRows,
   buildIntelSatelliteTable,
-  formatIntelCompactDate,
   hasIntelData,
   summarizeIntelSatelliteRows,
+  type UnitIntelSummary,
 } from "@/lib/intelAnalysisData";
-import { unitDisplayLabel, unitDisplayLocation } from "@/lib/operationalDataset";
 import { resolveIntUnitSlug, resolveOperationalUnitId } from "@/lib/operationalSync";
 import { ENGAGEMENTS_ALL_KEY, fetchAllEngagements } from "@/lib/engagementEngine";
 import { UnitAdvancedFeatures } from "@/components/UnitAdvancedFeatures";
@@ -33,36 +32,41 @@ function loadSuppressedSatSet(unitSlug: string): Set<string> {
 }
 
 /** Summary for units whose only data comes from imported scan reports (new units). */
-function summarizeScanOverrides(
-  unitSlug: string,
-): ReturnType<typeof summarizeIntelSatelliteRows> | null {
+function summarizeScanOverrides(unitSlug: string): UnitIntelSummary | null {
   const slug = intelStorageSlug(unitSlug);
   const overrides = loadScanOverrides(slug);
   if (overrides.length === 0) return null;
   const totalScanned = overrides.reduce((s, o) => s + (o.totalScanned || 0), 0);
-  const productive = overrides.reduce(
-    (s, o) => s + Math.floor((o.analyzed || 0) * ((o.productivityScore ?? 0) / 100)),
-    0,
-  );
-  let lastReportIso: string | null = null;
-  let maxTs = -Infinity;
-  for (const o of overrides) {
-    const t = new Date(o.updatedOn).getTime();
-    if (!isNaN(t) && t > maxTs) {
-      maxTs = t;
-      lastReportIso = o.updatedOn;
-    }
-  }
-  return { hasData: true, satellites: overrides.length, totalScanned, productive, lastReportIso };
+  const totalAnalyzed = overrides.reduce((s, o) => s + (o.analyzed || 0), 0);
+  const totalPending = overrides.reduce((s, o) => s + (o.pending || 0), 0);
+  const metricsMismatch =
+    totalAnalyzed + totalPending !== totalScanned ||
+    overrides.some((o) => o.totalScanned !== o.analyzed + o.pending);
+  return {
+    hasData: true,
+    satellites: overrides.length,
+    totalScanned,
+    totalAnalyzed,
+    totalPending,
+    metricsMismatch,
+  };
 }
 
-function StatRow({ label, value, color }: { label: string; value: string; color?: "emerald" }) {
+function StatRow({
+  label,
+  value,
+  error,
+}: {
+  label: string;
+  value: string;
+  error?: boolean;
+}) {
   return (
     <div className="flex items-baseline justify-between gap-2 min-w-0">
       <span className="mono text-[11px] font-medium text-foreground shrink-0">{label}</span>
       <span
         className={`mono text-[12px] font-bold tabular-nums truncate text-right max-w-[58%] ${
-          color === "emerald" ? "text-emerald-600" : "text-foreground"
+          error ? "text-destructive" : "text-foreground"
         }`}
         title={value}
       >
@@ -113,7 +117,7 @@ export function IntelRepositoryView() {
   );
 
   const unitStatsMap = useMemo(() => {
-    const map = new Map<string, ReturnType<typeof summarizeIntelSatelliteRows>>();
+    const map = new Map<string, UnitIntelSummary>();
 
     for (const unit of intelUnits) {
       try {
@@ -154,9 +158,10 @@ export function IntelRepositoryView() {
           {intelUnits.map((unit) => {
             const stats = unitStatsMap.get(unit.id);
             const hasData = stats?.hasData ?? false;
+            const metricsMismatch = stats?.metricsMismatch ?? false;
             const pct =
               stats && stats.totalScanned > 0
-                ? Math.round((stats.productive / stats.totalScanned) * 100)
+                ? Math.round((stats.totalAnalyzed / stats.totalScanned) * 100)
                 : 0;
 
             return (
@@ -182,9 +187,19 @@ export function IntelRepositoryView() {
                   {hasData ? (
                     <div
                       className={`h-2.5 w-2.5 rounded-full mt-0.5 shrink-0 ${
-                        pct >= 60 ? "bg-emerald-500" : pct >= 30 ? "bg-amber-400" : "bg-destructive/70"
+                        metricsMismatch
+                          ? "bg-destructive"
+                          : pct >= 100
+                            ? "bg-emerald-500"
+                            : pct >= 50
+                              ? "bg-amber-400"
+                              : "bg-destructive/70"
                       }`}
-                      title={`${pct}% productive estimate`}
+                      title={
+                        metricsMismatch
+                          ? "Frequency totals mismatch — analyzed + pending ≠ scanned"
+                          : `${pct}% analyzed`
+                      }
                     />
                   ) : (
                     <Database className="h-4 w-4 text-foreground mt-0.5 shrink-0" />
@@ -198,11 +213,27 @@ export function IntelRepositoryView() {
                     <div className="space-y-1.5">
                       <StatRow label="Satellites" value={String(stats.satellites)} />
                       <StatRow label="Freq. Scanned" value={stats.totalScanned.toLocaleString()} />
-                      <StatRow label="Productive Est." value={stats.productive.toLocaleString()} color="emerald" />
-                      <StatRow
-                        label="Last Report"
-                        value={stats.lastReportIso ? formatIntelCompactDate(stats.lastReportIso) : "—"}
-                      />
+                      <div className="grid grid-cols-[1fr_auto] gap-x-1.5 items-center">
+                        <div className="space-y-1.5 min-w-0">
+                          <StatRow
+                            label="Freq. Analyzed"
+                            value={stats.totalAnalyzed.toLocaleString()}
+                            error={metricsMismatch}
+                          />
+                          <StatRow
+                            label="Pending"
+                            value={stats.totalPending.toLocaleString()}
+                            error={metricsMismatch}
+                          />
+                        </div>
+                        {metricsMismatch && (
+                          <AlertCircle
+                            className="h-4 w-4 text-destructive shrink-0 self-center"
+                            aria-label="Frequency totals mismatch"
+                            title="Analyzed + Pending does not equal Scanned — check satellite rows inside this unit"
+                          />
+                        )}
+                      </div>
                     </div>
                   ) : (
                     <p className="mono text-[11px] font-semibold uppercase tracking-wider text-foreground text-center py-3 leading-snug">

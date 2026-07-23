@@ -72,16 +72,33 @@ export function mergeRegionsWithOverlay(
 export function flattenSatelliteCatalog(
   regions: GeoRegion[] = mergeRegionsWithOverlay(),
 ): FlatSatelliteRow[] {
-  return regions.flatMap((region) =>
-    region.satellites.map((sat) => ({
-      id: sat.id,
-      name: sat.name,
-      countryOfOrigin: region.label,
-      launchDate: sat.launchDate,
-      regionId: region.id,
-      satellite: sat,
-    })),
+  return dedupeFlatSatelliteRows(
+    regions.flatMap((region) =>
+      region.satellites.map((sat) => ({
+        id: sat.id,
+        name: sat.name,
+        countryOfOrigin: region.label,
+        launchDate: sat.launchDate,
+        regionId: region.id,
+        satellite: sat,
+      })),
+    ),
   );
+}
+
+/** One row per satellite identity — dedupe by id and canonical name (offline overlay imports). */
+function dedupeFlatSatelliteRows(rows: FlatSatelliteRow[]): FlatSatelliteRow[] {
+  const seenIds = new Set<string>();
+  const seenNames = new Set<string>();
+  const out: FlatSatelliteRow[] = [];
+  for (const row of rows) {
+    const nameKey = canonicalSatelliteKey(row.name);
+    if (seenIds.has(row.id) || seenNames.has(nameKey)) continue;
+    seenIds.add(row.id);
+    seenNames.add(nameKey);
+    out.push(row);
+  }
+  return out;
 }
 
 /** Resolve overlay edits — global, unit-scoped, or any unit edit for this satellite id. */
@@ -123,14 +140,18 @@ export function flattenGlobalSatelliteCatalog(): FlatSatelliteRow[] {
   const deleted = new Set(overlay.deletedSatIds ?? []);
   const regionById = new Map(GEO_REGIONS.map((r) => [r.id, r]));
 
-  const seen = new Set<string>();
+  const seenIds = new Set<string>();
+  const seenNames = new Set<string>();
   const rows: FlatSatelliteRow[] = [];
 
   function addRow(sat: GeoSatellite, regionId: string, unitId?: string) {
-    if (deleted.has(sat.id) || seen.has(sat.id)) return;
-    seen.add(sat.id);
-    const region = regionById.get(regionId);
     const resolved = resolveEditedSatellite(sat, overlay, unitId);
+    if (deleted.has(resolved.id) || deleted.has(sat.id)) return;
+    const nameKey = canonicalSatelliteKey(resolved.name);
+    if (seenIds.has(resolved.id) || seenNames.has(nameKey)) return;
+    seenIds.add(resolved.id);
+    seenNames.add(nameKey);
+    const region = regionById.get(regionId);
     rows.push({
       id: resolved.id,
       name: resolved.name,
@@ -141,7 +162,7 @@ export function flattenGlobalSatelliteCatalog(): FlatSatelliteRow[] {
     });
   }
 
-  // 1. Base catalog
+  // 1. Base catalog (preferred when the same name was re-imported under a new id)
   for (const region of GEO_REGIONS) {
     for (const sat of region.satellites) addRow(sat, region.id);
   }
@@ -158,7 +179,36 @@ export function flattenGlobalSatelliteCatalog(): FlatSatelliteRow[] {
     }
   }
 
-  return rows.sort((a, b) => a.name.localeCompare(b.name));
+  return rows.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+}
+
+/** Satellites this unit can see in the Visibility Matrix (≥1 visible beam). */
+export function listVisibleSatelliteCatalogForUnit(intUnitSlug: string): FlatSatelliteRow[] {
+  const regions = mergeRegionsWithOverlay(getVisibilityOverlay(), intUnitSlug);
+  const rows: FlatSatelliteRow[] = [];
+  const seen = new Set<string>();
+
+  for (const region of regions) {
+    for (const sat of region.satellites) {
+      if (seen.has(sat.id)) continue;
+      if (getVisibleBeams(intUnitSlug, sat.id, region.id).length === 0) continue;
+      seen.add(sat.id);
+      rows.push({
+        id: sat.id,
+        name: sat.name,
+        countryOfOrigin: region.label,
+        launchDate: sat.launchDate,
+        regionId: region.id,
+        satellite: sat,
+      });
+    }
+  }
+
+  return rows.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+}
+
+export function getVisibleSatelliteCatalogIdsForUnit(intUnitSlug: string): Set<string> {
+  return new Set(listVisibleSatelliteCatalogForUnit(intUnitSlug).map((r) => r.id));
 }
 
 function satelliteNamesMatch(a: string, b: string): boolean {
@@ -179,6 +229,28 @@ export function findSatelliteInCatalog(
   const regions = mergeRegionsWithOverlay(getVisibilityOverlay(), unitId);
   const rows = flattenSatelliteCatalog(regions);
   return rows.find((r) => satelliteNamesMatch(r.name, satelliteName)) ?? null;
+}
+
+/** Look up a catalog row by satellite id (unit-scoped overlay when unitId is set). */
+export function findSatelliteCatalogRowById(
+  satelliteId: string,
+  unitId?: string,
+): FlatSatelliteRow | null {
+  const regions = mergeRegionsWithOverlay(getVisibilityOverlay(), unitId);
+  for (const region of regions) {
+    const sat = region.satellites.find((s) => s.id === satelliteId);
+    if (sat) {
+      return {
+        id: sat.id,
+        name: sat.name,
+        countryOfOrigin: region.label,
+        launchDate: sat.launchDate,
+        regionId: region.id,
+        satellite: sat,
+      };
+    }
+  }
+  return null;
 }
 
 /**

@@ -19,6 +19,10 @@ import { UNIT_SLOTS, type UnitSlot } from "@/lib/priorityAllocation";
 import { rebindUnitEngagementHardware } from "@/lib/engagementEngine";
 import { deleteStoredFile } from "@/lib/storage";
 import {
+  mergeIntelReportIntoRemarks,
+  parseIntelReportIdFromRemarks,
+} from "@/lib/engagementTableStore";
+import {
   antennaEquipmentLimitMessage,
   canAddAntennaEquipment,
 } from "@/lib/inventoryAntennaLimits";
@@ -166,6 +170,82 @@ export function resetOperationalDataset(): OperationalDataset {
 
 export function ensureOperationalDataset(): OperationalDataset {
   return getOperationalDataset();
+}
+
+/**
+ * True when localStorage contains user-entered module data (scan overrides, cell edits, etc.).
+ * Used to avoid auto-regenerating seeded demo data on EXE startup when the operational
+ * store version matches but the user has already configured modules offline.
+ */
+export function hasPersistedUserWorkbenchData(): boolean {
+  if (typeof window === "undefined") return false;
+
+  try {
+    const raw = localStorage.getItem(OPERATIONAL_STORE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as { userManaged?: boolean };
+      if (parsed.userManaged) return true;
+    }
+  } catch {
+    /* ignore */
+  }
+
+  const jsonHasEntries = (raw: string | null, empty: string): boolean => {
+    if (!raw || raw === empty) return false;
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (Array.isArray(parsed)) return parsed.length > 0;
+      if (parsed && typeof parsed === "object") return Object.keys(parsed as object).length > 0;
+    } catch {
+      return raw.trim().length > 2;
+    }
+    return false;
+  };
+
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key) continue;
+
+    if (key === "ssacc_intel_cell_edits" || key === "ssacc_priority_user_allocations") {
+      if (jsonHasEntries(localStorage.getItem(key), "{}")) return true;
+      continue;
+    }
+
+    if (key === "ssacc_visibility_overlay") {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      try {
+        const parsed = JSON.parse(raw) as {
+          addedSats?: Record<string, unknown>;
+          editedSats?: Record<string, unknown>;
+          deletedSatIds?: unknown[];
+        };
+        if (
+          Object.keys(parsed.addedSats ?? {}).length > 0 ||
+          Object.keys(parsed.editedSats ?? {}).length > 0 ||
+          (parsed.deletedSatIds ?? []).length > 0
+        ) {
+          return true;
+        }
+      } catch {
+        /* ignore */
+      }
+      continue;
+    }
+
+    if (
+      key.startsWith("intel-scan-overrides-") ||
+      key.startsWith("intel-suppressed-rows-") ||
+      key.startsWith("intel-suppressed-sats-") ||
+      key.startsWith("intel-repo-imports-") ||
+      key.startsWith("intel-setup-") ||
+      key.startsWith("intel-sat-meta-")
+    ) {
+      if (jsonHasEntries(localStorage.getItem(key), "[]")) return true;
+    }
+  }
+
+  return false;
 }
 
 export function isUsingOperationalStore(): boolean {
@@ -744,6 +824,64 @@ export function renameUnitEngagementSatelliteName(
     if (!sat || !operationalSatelliteNamesMatch(sat.name, oldName)) continue;
     row.satellite_id = newSat.id;
     changed++;
+  }
+
+  if (changed > 0) persistUserMutation(ds);
+  return changed;
+}
+
+/** Rename satellite linkage for engagements tagged to one INT report row only. */
+export function renameUnitEngagementForIntelReport(
+  unitDbId: string,
+  oldReportId: string,
+  newReportId: string,
+  newSatelliteName: string,
+): number {
+  const ds = getOperationalDataset();
+  const newSat = ensureOperationalSatelliteByName(newSatelliteName);
+  let changed = 0;
+
+  for (const eng of ds.engagements) {
+    if (eng.unit_id !== unitDbId) continue;
+    if (parseIntelReportIdFromRemarks(eng.remarks) !== oldReportId) continue;
+    eng.satellite_id = newSat.id;
+    eng.satellites = { name: newSat.name };
+    eng.remarks = mergeIntelReportIntoRemarks(eng.remarks, newReportId);
+    changed++;
+  }
+
+  if (changed > 0) persistUserMutation(ds);
+  return changed;
+}
+
+/** Tag legacy engagements with INT_REPORT ids when one INT row exists per satellite name. */
+export function backfillEngagementIntelReportTags(
+  unitDbId: string,
+  intelRows: { reportId?: string; satelliteName: string }[],
+): number {
+  if (typeof window === "undefined" || intelRows.length === 0) return 0;
+
+  let changed = 0;
+  const ds = getOperationalDataset();
+
+  for (const intelRow of intelRows) {
+    const reportId = intelRow.reportId?.trim();
+    if (!reportId) continue;
+
+    const satLower = intelRow.satelliteName.trim().toLowerCase();
+    const sameNameCount = intelRows.filter(
+      (r) => r.satelliteName.trim().toLowerCase() === satLower,
+    ).length;
+    if (sameNameCount !== 1) continue;
+
+    for (const eng of ds.engagements) {
+      if (eng.unit_id !== unitDbId) continue;
+      if (parseIntelReportIdFromRemarks(eng.remarks)) continue;
+      const satName = eng.satellites?.name ?? "";
+      if (!operationalSatelliteNamesMatch(satName, intelRow.satelliteName)) continue;
+      eng.remarks = mergeIntelReportIntoRemarks(eng.remarks, reportId);
+      changed++;
+    }
   }
 
   if (changed > 0) persistUserMutation(ds);

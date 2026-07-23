@@ -22,6 +22,7 @@ const CONFIG: LocalStorageModuleSnapshotConfig = {
       addedSats: {},
       editedSats: {},
       deletedSatIds: [],
+      hiddenUnitRegions: {},
     }),
     "ssacc_visibility_hidden_units": "[]",
   },

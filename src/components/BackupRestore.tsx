@@ -69,30 +69,41 @@ export function BackupRestore({ module }: { module: ModuleSnapshotId }) {
       return;
     }
 
-    try {
-      const { package: snapshot, filename } = exportModuleSnapshot(module);
-      const blob = new Blob([JSON.stringify(snapshot, null, 2)], {
-        type: "application/json",
-      });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = filename;
-      anchor.click();
-      URL.revokeObjectURL(url);
+    void (async () => {
+      try {
+        const { package: snapshot, filename } = exportModuleSnapshot(module);
+        const blob = new Blob([JSON.stringify(snapshot, null, 2)], {
+          type: "application/json",
+        });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = filename;
+        anchor.click();
+        URL.revokeObjectURL(url);
 
-      const unitCount = Array.isArray(snapshot.operational.units)
-        ? snapshot.operational.units.length
-        : 0;
-      const storageTables = Object.keys(snapshot.storage).length;
+        const unitCount = Array.isArray(snapshot.operational.units)
+          ? snapshot.operational.units.length
+          : 0;
+        const storageTables = Object.keys(snapshot.storage).length;
 
-      toast.success(
-        `${adapter.title} snapshot exported (${unitCount} unit${unitCount !== 1 ? "s" : ""}, ${storageTables} data table${storageTables !== 1 ? "s" : ""}).`,
-      );
-      void flushElectronStorage();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to export snapshot.");
-    }
+        const flushed = await flushElectronStorage()
+          .then(() => true)
+          .catch(() => false);
+
+        if (flushed) {
+          toast.success(
+            `${adapter.title} snapshot exported (${unitCount} unit${unitCount !== 1 ? "s" : ""}, ${storageTables} data table${storageTables !== 1 ? "s" : ""}).`,
+          );
+        } else {
+          toast.warning(
+            `${adapter.title} snapshot downloaded (${unitCount} unit${unitCount !== 1 ? "s" : ""}, ${storageTables} table${storageTables !== 1 ? "s" : ""}), but offline disk sync failed. Keep the JSON file safe before closing the app.`,
+          );
+        }
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Failed to export snapshot.");
+      }
+    })();
   }
 
   function handleImportClick() {
@@ -135,14 +146,15 @@ export function BackupRestore({ module }: { module: ModuleSnapshotId }) {
         restoreModuleSnapshot(module, pending.package);
         const timestampLabel = formatSnapshotTimestamp(pending.package.exported_at);
         setPendingRestore(null);
+        await finalizeSnapshotRestore();
         setRestoreNotice(
           `${adapter.title} restored to snapshot captured on:\n\n${timestampLabel}`,
         );
-        await finalizeSnapshotRestore();
         window.setTimeout(() => {
           window.location.reload();
         }, 1500);
       } catch (error) {
+        setPendingRestore(null);
         toast.error(error instanceof Error ? error.message : "Failed to restore snapshot.");
       }
     })();

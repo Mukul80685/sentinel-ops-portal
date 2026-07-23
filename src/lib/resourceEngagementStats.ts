@@ -4,7 +4,11 @@
  */
 
 import { NON_OPERATIONAL } from "@/lib/engagementEngine";
-import { filterEngagementVisibleIntelRows } from "@/lib/engagementTableStore";
+import {
+  engagementTableRowKey,
+  filterEngagementVisibleIntelRows,
+  parseIntelReportIdFromRemarks,
+} from "@/lib/engagementTableStore";
 import { canonicalSatelliteKey, normalizeSatelliteName } from "@/lib/visibilityMatrix";
 
 export type ResourceRingStat = {
@@ -226,43 +230,79 @@ export function buildInventoryAllocatedIds(activeEngagements: any[], equipment: 
   return collectEngagementAllocatedIds(activeEngagements, equipment);
 }
 
-/** Engaged Resources table rows — one row per engagement for each INT-monitored satellite. */
+function countIntelRowsForSatellite(
+  intelMonitoringRows: { satelliteName: string }[],
+  satelliteName: string,
+): number {
+  const key = engagementKeyForSatelliteName(satelliteName);
+  return intelMonitoringRows.filter(
+    (row) => engagementKeyForSatelliteName(row.satelliteName) === key,
+  ).length;
+}
+
+function findOperationalEngagementForIntelRow(
+  satRow: {
+    reportId?: string;
+    satelliteName: string;
+    polarization?: string | null;
+  },
+  unitEngagements: any[],
+  intelMonitoringRows: { satelliteName: string; reportId?: string }[],
+): any | null {
+  if (satRow.reportId) {
+    const byReport = unitEngagements.find(
+      (eng) => parseIntelReportIdFromRemarks(eng.remarks) === satRow.reportId,
+    );
+    if (byReport) return byReport;
+  }
+
+  if (countIntelRowsForSatellite(intelMonitoringRows, satRow.satelliteName) === 1) {
+    const satKey = engagementKeyForSatelliteName(satRow.satelliteName);
+    return (
+      unitEngagements.find((eng) => {
+        const name = eng.satellites?.name as string | undefined;
+        return name && engagementKeyForSatelliteName(name) === satKey;
+      }) ?? null
+    );
+  }
+
+  return null;
+}
+
+/** Engaged Resources table rows — one row per INT scan report (satellite + polarization). */
 export function buildIntelMonitoringEngagementRows(
   unitDbId: string,
-  intelMonitoringRows: { satelliteName: string; engagementStatus?: string | null }[],
+  intelMonitoringRows: {
+    satelliteName: string;
+    polarization?: string | null;
+    engagementStatus?: string | null;
+    reportId?: string;
+  }[],
   engagements: any[],
 ): any[] {
   const unitEngagements = engagements.filter((e) => e.unit_id === unitDbId);
-
-  const engagementsBySatellite = new Map<string, any[]>();
-  for (const eng of unitEngagements) {
-    const name = eng.satellites?.name as string | undefined;
-    if (!name) continue;
-    const key = engagementKeyForSatelliteName(name);
-    const bucket = engagementsBySatellite.get(key) ?? [];
-    bucket.push(eng);
-    engagementsBySatellite.set(key, bucket);
-  }
-
   const result: any[] = [];
 
   for (const satRow of intelMonitoringRows) {
-    const satKey = engagementKeyForSatelliteName(satRow.satelliteName);
-    const matchedEngagements = engagementsBySatellite.get(satKey) ?? [];
+    const rowId = engagementTableRowKey(satRow);
+    const matched = findOperationalEngagementForIntelRow(
+      satRow,
+      unitEngagements,
+      intelMonitoringRows,
+    );
 
-    if (matchedEngagements.length > 0) {
-      for (const eng of matchedEngagements) {
-        result.push({
-          ...eng,
-          satellites: { name: satRow.satelliteName },
-          _intelRow: satRow,
-        });
-      }
+    if (matched) {
+      result.push({
+        ...matched,
+        id: rowId,
+        satellites: { name: satRow.satelliteName },
+        _intelRow: satRow,
+      });
       continue;
     }
 
     result.push({
-      id: `intel-${unitDbId}-${satRow.satelliteName.replace(/\s+/g, "-")}`,
+      id: rowId,
       satellites: { name: satRow.satelliteName },
       remarks: null,
       antenna_id: null,

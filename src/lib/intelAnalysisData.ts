@@ -25,6 +25,7 @@ import {
 import { bandToPolarizations } from "@/lib/intelRepository";
 import { findSatelliteInCatalog } from "@/lib/satelliteCatalog";
 import { getOperationalDataset } from "@/lib/operationalStore";
+import { buildIntelReportId } from "@/lib/intelScanStorage";
 import { getUnitDisplayName } from "@/lib/unitDisplay";
 import { loadScanOverrides } from "@/lib/intelScanStorage";
 import { loadImportedRecords } from "@/lib/intelRepository";
@@ -313,15 +314,31 @@ export function hasIntVisibilityCrossLink(unitId: string, satelliteName: string)
   return isSatelliteVisibleToUnitInMatrix(unitId, satelliteName);
 }
 
+/** Pending frequencies = scanned minus analyzed (never stored independently). */
+export function deriveIntPendingFrequencies(totalScanned: number, analyzed: number): number {
+  const scanned = Math.max(0, totalScanned);
+  const done = Math.max(0, Math.min(analyzed, scanned));
+  return Math.max(0, scanned - done);
+}
+
+export function normalizeIntelScanMetrics(totalScanned: number, analyzed: number) {
+  const scanned = Math.max(0, totalScanned);
+  const done = Math.max(0, Math.min(analyzed, scanned));
+  return {
+    totalScanned: scanned,
+    analyzed: done,
+    pending: deriveIntPendingFrequencies(scanned, done),
+  };
+}
+
 /** Scan phase from frequency metrics — pending zero means fully analyzed. */
 export function deriveIntScanPhaseStatus(
   scanned: number,
   analyzed: number,
-  pending: number,
+  _pending?: number,
 ): "Completed" | "In Progress" | null {
   if (scanned <= 0) return null;
-  if (pending <= 0) return "Completed";
-  return "In Progress";
+  return deriveIntPendingFrequencies(scanned, analyzed) <= 0 ? "Completed" : "In Progress";
 }
 
 export type IntScanLookupEntry = {
@@ -358,9 +375,9 @@ export function buildIntScanLookupForUnit(
   for (const row of rows) {
     if (!row.scanEligible || row.totalScanned <= 0) continue;
     map.set(normalizeSatelliteName(row.satelliteName), {
-      pending: row.pending,
+      pending: deriveIntPendingFrequencies(row.totalScanned, row.analyzed),
       scanned: row.totalScanned,
-      activelyScanning: row.pending > 0,
+      activelyScanning: deriveIntPendingFrequencies(row.totalScanned, row.analyzed) > 0,
     });
   }
 
@@ -369,8 +386,12 @@ export function buildIntScanLookupForUnit(
 
 export { buildVisibilityDeepLinkSearch };
 
-export function intelReportIdForSatellite(unitId: string, satelliteName: string): string {
-  return `${unitId}__${satelliteName.replace(/\s+/g, "-")}`;
+export function intelReportIdForSatellite(
+  unitId: string,
+  satelliteName: string,
+  polarization = "—",
+): string {
+  return buildIntelReportId(unitId, satelliteName, polarization);
 }
 
 /** Resolve unit identity from operational SSOT (seed + user-created units). */
@@ -654,12 +675,21 @@ function buildScanCounts(
   const eng = ctx.engagementBySatName.get(satName);
 
   if (eng && ctx.resourcesServiceable) {
-    const complete = isIntGenerationComplete(eng.scanned, eng.analyzed, eng.pending);
-    const scanPhase = deriveIntScanPhaseStatus(eng.scanned, eng.analyzed, eng.pending);
+    const metrics = normalizeIntelScanMetrics(eng.scanned, eng.analyzed);
+    const complete = isIntGenerationComplete(
+      metrics.totalScanned,
+      metrics.analyzed,
+      metrics.pending,
+    );
+    const scanPhase = deriveIntScanPhaseStatus(
+      metrics.totalScanned,
+      metrics.analyzed,
+      metrics.pending,
+    );
     return {
-      totalScanned: eng.scanned,
-      analyzed: eng.analyzed,
-      pending: eng.pending,
+      totalScanned: metrics.totalScanned,
+      analyzed: metrics.analyzed,
+      pending: metrics.pending,
       processingStatus: complete
         ? "Analysis Complete"
         : eng.pending > 0
@@ -706,17 +736,7 @@ export function buildIntelSatelliteTable(
   const roster = UNIT_SATELLITE_ROSTER[unitId];
   if (!roster) return [];
 
-  const rosterSet = new Set(roster.map((s) => s.toLowerCase()));
-  const extraFromEngagements: string[] = [];
-  for (const eng of engagements) {
-    const name = eng.satellites?.name as string | undefined;
-    if (!name || rosterSet.has(name.toLowerCase())) continue;
-    if (canUnitScanSatellite(name, unitId, ctx)) {
-      extraFromEngagements.push(name);
-    }
-  }
-
-  const allSatellites = [...roster, ...extraFromEngagements];
+  const allSatellites = [...roster];
   const now = INTEL_MOCK_EPOCH_MS;
 
   return allSatellites.map((satName, idx) => {
@@ -724,8 +744,9 @@ export function buildIntelSatelliteTable(
     const counts = buildScanCounts(unitId, satName, ctx);
 
     if (!eligible) {
+      const polarization = resolvePolarization(satName, ctx);
       return {
-        reportId: `${unitId}__${satName.replace(/\s+/g, "-")}`,
+        reportId: buildIntelReportId(unitId, satName, polarization),
         satelliteName: satName,
         scanEligible: false,
         totalScanned: 0,
@@ -743,17 +764,20 @@ export function buildIntelSatelliteTable(
     const productiveEst = Math.floor(counts.analyzed * (0.35 + rand() * 0.25));
     const daysAgo = Math.floor(rand() * 14);
     const ts = new Date(now - daysAgo * 86400000 - idx * 3600000);
+    const polarization = resolveScanPolarizationFromEngagement(satName, unitId, ctx, engagements);
+
+    const metrics = normalizeIntelScanMetrics(counts.totalScanned, counts.analyzed);
 
     return {
-      reportId: `${unitId}__${satName.replace(/\s+/g, "-")}`,
+      reportId: buildIntelReportId(unitId, satName, polarization),
       satelliteName: satName,
       scanEligible: true,
-      totalScanned: counts.totalScanned,
-      analyzed: counts.analyzed,
-      pending: counts.pending,
+      totalScanned: metrics.totalScanned,
+      analyzed: metrics.analyzed,
+      pending: metrics.pending,
       productivityScore: productivityScore(counts.analyzed, productiveEst),
       reportTimestamp: ts.toISOString(),
-      polarization: resolveScanPolarizationFromEngagement(satName, unitId, ctx, engagements),
+      polarization,
       processingStatus: counts.processingStatus,
       engagementStatus: counts.engagementStatus,
     };
@@ -817,54 +841,8 @@ export function buildIntelDrillDownReport(
 
   const pol = scanPol !== "—" ? scanPol : (ctx.visibilityBySatName.get(row.satelliteName)?.[0] ?? profile.defaultPolarization);
 
-  const rand = seedRand(`${reportId}-drill`);
-  const baseFreq = pol.toUpperCase().startsWith("C") ? 3750 : 11750;
-
-  const score = row.productivityScore ?? 0;
-  const productiveCount =
-    row.analyzed > 0 ? Math.min(row.analyzed, Math.max(1, Math.floor(row.analyzed * (score / 100)))) : 0;
-  const nonProdCount = Math.max(0, row.analyzed - productiveCount);
-
-  const productive: ProductiveFrequency[] = Array.from({ length: Math.min(productiveCount, 15) }, (_, i) => {
-    const fid = freqId(baseFreq, pol, i);
-    const hasProtocol = rand() > 0.55;
-    return {
-      id: `${reportId}-prod-${i}`,
-      frequencyId: fid,
-      outputType: pick(OUTPUT_TYPES, rand),
-      detailsOfInterception: pick(DETAILS_OF_INTERCEPTION, rand),
-      ...(hasProtocol ? { protocolEncountered: pick(KNOWN_PROTOCOLS, rand) } : {}),
-    };
-  });
-
-  const nonProductive: NonProductiveFrequency[] = Array.from({ length: Math.min(nonProdCount, 12) }, (_, i) => {
-    const level = pick(NON_PRODUCTIVE_LEVELS, rand);
-    const hasProtocol = level !== "Modulation" && rand() > 0.45;
-    const remarksPool = NON_PRODUCTIVE_REMARKS[level as keyof typeof NON_PRODUCTIVE_REMARKS];
-    const fid = freqId(baseFreq + 200, pol, i + productiveCount);
-    return {
-      id: `${reportId}-non-${i}`,
-      frequencyId: fid,
-      level,
-      remarks: pick(remarksPool, rand),
-      ...(hasProtocol ? { protocolEncountered: pick(KNOWN_PROTOCOLS, rand) } : {}),
-    };
-  });
-
-  const novelCount = rand() > 0.55 ? 1 + Math.floor(rand() * 2) : 0;
-  const NOVEL_NAMES = ["DVB-S2X-Ext", "SCPC-ACM-Variant", "TDM-OFDM-Hybrid", "Proprietary-XLink"];
-  const novelProtocols: NovelProtocol[] = Array.from({ length: novelCount }, (_, i) => ({
-    frequency: freqId(baseFreq + 400, pol, i),
-    protocol: `${pick(NOVEL_NAMES, rand)}-${String.fromCharCode(65 + i)}`,
-    remarks: rand() > 0.5
-      ? "No prior corpus match in regional protocol library"
-      : "First observation in unit scan archive — pending validation",
-  }));
-
-  const scanDays = 1 + Math.floor(rand() * 10);
-  const scanStart = row.reportTimestamp
-    ? new Date(new Date(row.reportTimestamp).getTime() - scanDays * 86400000)
-    : null;
+  // Frequency tables are populated only via user spreadsheet import — never synthesized.
+  const scanStart = row.reportTimestamp ? new Date(row.reportTimestamp) : null;
 
   return {
     reportId: row.reportId,
@@ -882,11 +860,11 @@ export function buildIntelDrillDownReport(
       totalScanned: row.totalScanned,
       analyzed: row.analyzed,
       pending: row.pending,
-      scanStartDate: scanStart ? scanStart.toISOString().slice(0, 10) : "—",
+      scanStartDate: scanStart && !isNaN(scanStart.getTime()) ? scanStart.toISOString().slice(0, 10) : "—",
     },
-    productive,
-    nonProductive,
-    novelProtocols,
+    productive: [],
+    nonProductive: [],
+    novelProtocols: [],
   };
 }
 
@@ -896,12 +874,19 @@ const INTEL_MOCK_EPOCH_MS = Date.parse("2026-06-19T12:00:00Z");
 const MONTH_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"] as const;
 
 export function formatIntelCompactDate(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "—";
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  const mon = MONTH_SHORT[d.getUTCMonth()];
-  const yyyy = d.getUTCFullYear();
+  if (!iso?.trim()) return "—";
+  const trimmed = iso.trim();
+  const isoDate = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoDate) {
+    const [, y, m, d] = isoDate;
+    const mon = MONTH_SHORT[+m - 1];
+    if (mon) return `${d} ${mon} ${y}`;
+  }
+  const parsed = new Date(trimmed);
+  if (isNaN(parsed.getTime())) return trimmed;
+  const dd = String(parsed.getUTCDate()).padStart(2, "0");
+  const mon = MONTH_SHORT[parsed.getUTCMonth()];
+  const yyyy = parsed.getUTCFullYear();
   return `${dd} ${mon} ${yyyy}`;
 }
 
@@ -914,37 +899,45 @@ export type UnitIntelSummary = {
   hasData: boolean;
   satellites: number;
   totalScanned: number;
-  productive: number;
-  lastReportIso: string | null;
+  totalAnalyzed: number;
+  totalPending: number;
+  /** True when analyzed + pending ≠ scanned (unit or any satellite row). */
+  metricsMismatch: boolean;
 };
+
+function intelRowMetricsMismatch(
+  row: Pick<IntelSatelliteReportRow, "totalScanned" | "analyzed" | "pending">,
+): boolean {
+  return row.totalScanned !== row.analyzed + row.pending;
+}
 
 /** Derive unit-level stats from satellite table rows — single source of truth. */
 export function summarizeIntelSatelliteRows(rows: IntelSatelliteReportRow[]): UnitIntelSummary {
   if (rows.length === 0) {
-    return { hasData: false, satellites: 0, totalScanned: 0, productive: 0, lastReportIso: null };
+    return {
+      hasData: false,
+      satellites: 0,
+      totalScanned: 0,
+      totalAnalyzed: 0,
+      totalPending: 0,
+      metricsMismatch: false,
+    };
   }
   const eligible = rows.filter((r) => r.scanEligible);
   const totalScanned = eligible.reduce((s, r) => s + r.totalScanned, 0);
-  const productive = eligible.reduce(
-    (s, r) => s + Math.floor(r.analyzed * ((r.productivityScore ?? 0) / 100)),
-    0,
-  );
-  let maxTs = -Infinity;
-  let lastReportIso: string | null = null;
-  for (const r of eligible) {
-    if (!r.reportTimestamp) continue;
-    const t = new Date(r.reportTimestamp).getTime();
-    if (!isNaN(t) && t > maxTs) {
-      maxTs = t;
-      lastReportIso = r.reportTimestamp;
-    }
-  }
+  const totalAnalyzed = eligible.reduce((s, r) => s + r.analyzed, 0);
+  const totalPending = eligible.reduce((s, r) => s + r.pending, 0);
+  const metricsMismatch =
+    totalAnalyzed + totalPending !== totalScanned ||
+    eligible.some(intelRowMetricsMismatch);
+
   return {
     hasData: rows.length > 0,
     satellites: rows.length,
     totalScanned,
-    productive,
-    lastReportIso,
+    totalAnalyzed,
+    totalPending,
+    metricsMismatch,
   };
 }
 
@@ -961,8 +954,8 @@ export function buildSyntheticDrillDownReport(
   unitId: string,
   ctx?: IntelLinkageContext,
   scanSeed?: ScanSummarySeed,
+  reportId?: string,
 ): IntelDrillDownReport {
-  const reportId = `${unitId}__${satelliteName.replace(/\s+/g, "-")}`;
   const profile = resolveSatelliteProfile(satelliteName, unitId);
 
   let totalBeamsAvailable: string[] = [];
@@ -991,8 +984,10 @@ export function buildSyntheticDrillDownReport(
         ? profile.defaultPolarization
         : "—";
 
+  const resolvedReportId = reportId ?? buildIntelReportId(unitId, satelliteName, pol);
+
   return {
-    reportId,
+    reportId: resolvedReportId,
     satelliteName,
     unitId,
     baseProfile: profile,

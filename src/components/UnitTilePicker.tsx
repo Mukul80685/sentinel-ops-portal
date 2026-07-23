@@ -5,16 +5,24 @@ import { useModuleUnits } from "@/hooks/useModuleUnits";
 import { unitDisplayLabel, unitDisplayLocation } from "@/lib/operationalDataset";
 import {
   allocationSlotForUnit,
+  getVisibleAllocationCap,
+  getRemainingAllocationSlots,
   UNIT_LOCATIONS,
   useAllocationCounts,
 } from "@/lib/priorityAllocation";
+import { useVisibleSatelliteCounts } from "@/lib/satelliteCatalog";
+import { resolveIntUnitSlug } from "@/lib/operationalSync";
 
 function UnitTileGrid({ basePath, fill }: { basePath: string; fill?: boolean }) {
   const navigate = useNavigate();
   const { units } = useModuleUnits("priority");
 
   const unitSlots = units.map((u) => allocationSlotForUnit(u));
+  const intSlugs = units.map(
+    (u) => resolveIntUnitSlug(u.id, u.code) ?? allocationSlotForUnit(u),
+  );
   const counts = useAllocationCounts(unitSlots);
+  const visibleCaps = useVisibleSatelliteCounts(intSlugs);
 
   return (
     <div className="flex flex-col flex-1 min-h-0 h-full">
@@ -27,9 +35,12 @@ function UnitTileGrid({ basePath, fill }: { basePath: string; fill?: boolean }) 
       >
         {units.map((unit, idx) => {
           const slot = unitSlots[idx];
+          const intSlug = intSlugs[idx];
           const title = unitDisplayLabel(unit);
           const location = unitDisplayLocation(unit, UNIT_LOCATIONS[slot]);
           const count = counts[slot] ?? 0;
+          const visibleCap = visibleCaps[intSlug] ?? 0;
+          const overCap = visibleCap > 0 && count > visibleCap;
 
           return (
             <button
@@ -48,11 +59,18 @@ function UnitTileGrid({ basePath, fill }: { basePath: string; fill?: boolean }) 
               </div>
 
               <div className="flex flex-col items-center justify-center flex-1 py-2 min-h-[3rem]">
-                <span className="mono text-[26px] sm:text-[32px] font-bold text-primary leading-none tabular-nums">
+                <span
+                  className={`mono text-[26px] sm:text-[32px] font-bold leading-none tabular-nums ${
+                    overCap ? "text-destructive" : "text-primary"
+                  }`}
+                >
                   {count}
+                  <span className="text-[16px] sm:text-[18px] text-muted-foreground font-semibold">
+                    /{visibleCap}
+                  </span>
                 </span>
                 <span className="mono text-[10px] sm:text-[11px] text-muted-foreground mt-1 uppercase tracking-wider">
-                  Satellite{count !== 1 ? "s" : ""}
+                  Allocated / Visible
                 </span>
               </div>
             </button>

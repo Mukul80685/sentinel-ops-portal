@@ -212,6 +212,7 @@ function purgeVisibilityModuleData(slot: string, unitId: string): void {
       const overlay = JSON.parse(raw) as {
         addedSats?: Record<string, unknown>;
         editedSats?: Record<string, unknown>;
+        hiddenUnitRegions?: Record<string, string[]>;
       };
       let changed = false;
       for (const bucket of [overlay.addedSats, overlay.editedSats]) {
@@ -219,6 +220,14 @@ function purgeVisibilityModuleData(slot: string, unitId: string): void {
         for (const k of Object.keys(bucket)) {
           if (k.startsWith(`${slot}::`) || k.startsWith(`${unitId}::`)) {
             delete bucket[k];
+            changed = true;
+          }
+        }
+      }
+      if (overlay.hiddenUnitRegions) {
+        for (const key of [slot, unitId]) {
+          if (key in overlay.hiddenUnitRegions) {
+            delete overlay.hiddenUnitRegions[key];
             changed = true;
           }
         }

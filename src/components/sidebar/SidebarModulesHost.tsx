@@ -17,13 +17,6 @@ export function SidebarModulesHost() {
         title="Recent Discussions"
         accept=".pdf,.xlsx,.xls,.csv,application/pdf"
       />
-      <DocumentModuleModal
-        module="reports"
-        open={activeModule === "reports"}
-        onClose={closeModule}
-        title="Reports and Returns"
-        accept=".xlsx,.xls,.csv"
-      />
       <SettingsModal />
       <UserProfileModal />
     </>

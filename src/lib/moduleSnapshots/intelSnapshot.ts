@@ -15,7 +15,8 @@ import { filterUnitsForModule, unhideUnitInModule } from "@/lib/moduleUnitRegist
 import { MODULE_UNITS_EVENT } from "@/lib/moduleUnitRegistry";
 import { INTEL_CELL_EDITS_EVENT } from "@/lib/intelCellStore";
 import { INTEL_FREQ_EVENT } from "@/lib/intelFrequencyActions";
-import { OPERATIONAL_STORE_EVENT } from "@/lib/operationalConstants";
+import { SCAN_HISTORY_KEY } from "@/lib/scanHistoryStore";
+import { UNIT_IDENTITY_OVERRIDES_KEY } from "@/lib/operationalConstants";
 import {
   SNAPSHOT_FORMAT_VERSION,
   type ModuleSnapshotPackage,
@@ -42,6 +43,8 @@ const INTEL_FIXED_STORAGE_KEYS = [
   "ssacc_intel_allocations",
   "ssacc_intel_integrity_overrides",
   "ssacc_intel_hidden_units",
+  SCAN_HISTORY_KEY,
+  UNIT_IDENTITY_OVERRIDES_KEY,
 ] as const;
 
 const INTEL_DYNAMIC_PREFIXES = [
@@ -50,6 +53,7 @@ const INTEL_DYNAMIC_PREFIXES = [
   "intel-scan-overrides-",
   "intel-setup-",
   "intel-suppressed-sats-",
+  "intel-suppressed-rows-",
 ] as const;
 
 const REQUIRED_STORAGE_KEYS = [
@@ -72,23 +76,33 @@ type IntelOperationalSlice = {
 function collectIntelOperationalSlice(): IntelOperationalSlice {
   const ds = getOperationalDataset();
   const visibleUnits = filterUnitsForModule(ds.units, "intel");
-  const unitIds = new Set(visibleUnits.map((unit) => unit.id));
+  const visibleUnitIds = new Set(visibleUnits.map((unit) => unit.id));
 
-  const intelRows = (ds.intelRows ?? []).filter((row) => unitIds.has(row.unit_id));
+  // Backup all intel rows — including units hidden from the module UI.
+  const intelRows = ds.intelRows ?? [];
+  const affectedUnitIds = new Set([
+    ...visibleUnitIds,
+    ...intelRows.map((row) => row.unit_id),
+  ]);
+
+  const units = ds.units.filter((unit) => affectedUnitIds.has(unit.id));
+  const unitIds = new Set(units.map((unit) => unit.id));
+
+  const scopedIntelRows = intelRows.filter((row) => unitIds.has(row.unit_id));
   const engagements = ds.engagements.filter((engagement) => unitIds.has(engagement.unit_id));
   const equipment = ds.equipment.filter((item) => unitIds.has(item.unit_id));
 
   const satelliteIds = new Set<string>();
-  for (const row of intelRows) satelliteIds.add(row.satellite_id);
+  for (const row of scopedIntelRows) satelliteIds.add(row.satellite_id);
   for (const engagement of engagements) satelliteIds.add(engagement.satellite_id);
 
   const satellites = ds.satellites.filter((satellite) => satelliteIds.has(satellite.id));
 
   return {
-    intelRows,
+    intelRows: scopedIntelRows,
     engagements,
     satellites,
-    units: visibleUnits,
+    units,
     equipment,
   };
 }
@@ -102,6 +116,8 @@ const INTEL_STORAGE_DEFAULTS: Record<string, string> = {
   "ssacc_intel_allocations": "[]",
   "ssacc_intel_integrity_overrides": "{}",
   "ssacc_intel_hidden_units": "[]",
+  [SCAN_HISTORY_KEY]: "{}",
+  [UNIT_IDENTITY_OVERRIDES_KEY]: "{}",
 };
 
 function collectIntelStorage(): Record<string, string> {
@@ -156,7 +172,10 @@ function applyIntelOperationalSlice(slice: IntelOperationalSlice): void {
 
   const next: OperationalDataset = {
     ...ds,
-    intelRows: slice.intelRows,
+    intelRows: [
+      ...ds.intelRows.filter((row) => !unitIds.has(row.unit_id)),
+      ...slice.intelRows,
+    ],
     units: mergeById(ds.units, slice.units),
     satellites: mergeById(ds.satellites, slice.satellites),
     equipment:

@@ -11,6 +11,7 @@ import {
   insertOperationalEngagement,
   removeOperationalEngagement,
   updateOperationalEngagement,
+  backfillEngagementIntelReportTags,
 } from "@/lib/operationalStore";
 import { canonicalSatelliteKey, normalizeSatelliteName } from "@/lib/visibilityMatrix";
 import { useCanEdit } from "@/lib/auth";
@@ -28,7 +29,6 @@ import {
 import {
   computeSatelliteAnalysis,
   ENGAGEMENTS_ALL_KEY,
-  fetchAllEngagements,
   ACTIVE_SCAN_STATUSES,
 } from "@/lib/engagementEngine";
 import {
@@ -36,7 +36,7 @@ import {
 } from "@/lib/liveEngagementModel";
 import {
   intelRowToAnalysis,
-  listIntelMonitoringSatellites,
+  listActiveIntelMonitoringSatellites,
 } from "@/lib/intelLiveBridge";
 import { INT_UNITS } from "@/lib/intelRepository";
 import { unitDisplayLabel, unitDisplayLocation } from "@/lib/operationalDataset";
@@ -52,21 +52,29 @@ import {
   parseEquipmentIdFromRemarks,
 } from "@/lib/resourceEngagementStats";
 import {
+  engagementTableRowKey,
   filterEngagementVisibleIntelRows,
   hideEngagementTableRow,
+  mergeIntelReportIntoRemarks,
+  parseIntelReportIdFromRemarks,
+  pruneLegacyHiddenEngagementKeys,
   restoreEngagementTableRow,
   ENGAGEMENT_TABLE_HIDDEN_EVENT,
 } from "@/lib/engagementTableStore";
+import { scanRowKey } from "@/lib/intelScanStorage";
 import { notifyOperationalDerivedRefresh } from "@/lib/operationalRefresh";
+import { useOperationalDerivedRevision } from "@/hooks/OperationalDerivedRevisionContext";
 import {
-  getPlannedSatellites,
-  newPlannedSatelliteRow,
-  setPlannedSatellites,
-  type PlannedSatelliteRow,
-} from "@/lib/plannedSatelliteStore";
-import { ArrowDownToLine, Download, Pencil, Plus, Trash2 } from "lucide-react";
+  downloadEngagementImportTemplate,
+  formatEngagementImportSkipLog,
+  parseEngagementImportGrid,
+  readEngagementImportSpreadsheet,
+  summarizeEngagementImportResult,
+} from "@/lib/engagementSpreadsheetImport";
+import { ACCEPTED_SPREADSHEET_ACCEPT } from "@/lib/dataTableUtils";
+import { flushElectronStorage, isElectronPersistAvailable } from "@/lib/electronPersist";
+import { ArrowDownToLine, Download, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import * as XLSX from "xlsx";
 
 const DEMOD_BAND_OPTIONS = ["Narrowband", "Wideband", "DVB"] as const;
 type DemodBand = (typeof DEMOD_BAND_OPTIONS)[number];
@@ -90,9 +98,74 @@ function satelliteNamesMatch(a: string, b: string): boolean {
   );
 }
 
-function isSyntheticEngagementId(id: string): boolean {
+function isIntBackedEngagementRow(row: any): boolean {
+  return Boolean(row?._intelRow?.reportId) || /^[\w-]+__/.test(String(row?.id ?? ""));
+}
+
+function isSyntheticEngagementId(id: string, row?: any): boolean {
+  if (row && isIntBackedEngagementRow(row)) return true;
   return id.startsWith("intel-");
 }
+
+function intelReportIdFromRow(row: any): string | null {
+  const fromIntel = row._intelRow?.reportId as string | undefined;
+  if (fromIntel?.trim()) return fromIntel.trim();
+  return parseIntelReportIdFromRemarks(row.remarks);
+}
+
+function engagementRowStorageKey(row: any): string {
+  if (row._intelRow) return engagementTableRowKey(row._intelRow);
+  const reportFromRemarks = parseIntelReportIdFromRemarks(row.remarks);
+  if (reportFromRemarks) return reportFromRemarks;
+  if (row.id && (isIntBackedEngagementRow(row) || String(row.id).includes("__"))) {
+    return String(row.id);
+  }
+  const satName = row.satellites?.name as string | undefined;
+  if (satName?.trim()) {
+    return scanRowKey(satName, row._intelRow?.polarization ?? "—");
+  }
+  return String(row.id ?? "");
+}
+
+function isProcessorEquipment(e: { category?: { name?: string } | null }): boolean {
+  const cat = (e.category?.name ?? "").toLowerCase();
+  return cat.includes("processing") || cat.includes("processor");
+}
+
+function isProcessorEquipmentId(id: string, equipment: any[]): boolean {
+  const eq = equipment.find((e) => e.id === id);
+  return eq ? isProcessorEquipment(eq) : false;
+}
+
+function resolveOperationalEngagementForTableRow(row: any, unitEngagements: any[]): any | null {
+  const reportId = intelReportIdFromRow(row);
+  if (reportId) {
+    const byReport = unitEngagements.find(
+      (eng) => parseIntelReportIdFromRemarks(eng.remarks) === reportId,
+    );
+    if (byReport) return byReport;
+  }
+  if (!isSyntheticEngagementId(row.id, row)) {
+    return unitEngagements.find((eng) => eng.id === row.id) ?? null;
+  }
+  const satName = row.satellites?.name as string | undefined;
+  if (!satName) return null;
+  return (
+    unitEngagements.find((eng) => {
+      const name = (eng.satellites?.name ?? eng.satellite_name) as string | undefined;
+      return name && satelliteNamesMatch(name, satName);
+    }) ?? null
+  );
+}
+
+function collectExclusiveAllocatedIds(activeRows: any[], equipment: any[]): Set<string> {
+  const ids = collectEngagementAllocatedIds(activeRows, equipment);
+  for (const id of [...ids]) {
+    if (isProcessorEquipmentId(id, equipment)) ids.delete(id);
+  }
+  return ids;
+}
+
 
 /** Parse comma-separated equipment ids embedded in engagement remarks. */
 function parseRemarkIdList(remarks: string | null | undefined, key: string): string[] {
@@ -162,18 +235,43 @@ function resolveChainEquipmentDisplay(row: any, equipment: any[]) {
   };
 }
 
+/** Equal % widths on `<col>` — reliable in packaged Electron (Chromium table-layout: fixed). */
+const ENGAGED_RESOURCES_DATA_COL_WIDTH = "11%";
+const ENGAGED_RESOURCES_ACTIONS_COL_WIDTH = "12%";
+const ENGAGED_RESOURCES_COLGROUP = [
+  ENGAGED_RESOURCES_DATA_COL_WIDTH,
+  ENGAGED_RESOURCES_DATA_COL_WIDTH,
+  ENGAGED_RESOURCES_DATA_COL_WIDTH,
+  ENGAGED_RESOURCES_DATA_COL_WIDTH,
+  ENGAGED_RESOURCES_DATA_COL_WIDTH,
+  ENGAGED_RESOURCES_DATA_COL_WIDTH,
+  ENGAGED_RESOURCES_DATA_COL_WIDTH,
+  ENGAGED_RESOURCES_DATA_COL_WIDTH,
+  ENGAGED_RESOURCES_ACTIONS_COL_WIDTH,
+] as const;
+
+const ENGAGED_RESOURCE_HEAD_CELL =
+  "text-left px-2 py-2 text-[9.5px] uppercase tracking-wider text-foreground font-bold border-r border-border/50 last:border-r-0 min-w-0 max-w-0 overflow-hidden";
+const ENGAGED_RESOURCE_CELL = "px-2 py-2.5 align-top min-w-0 max-w-0 overflow-hidden";
+
 function ChainEquipmentCell({ value }: { value: string }) {
   if (value === "—") {
-    return <span className="text-[12.5px] text-foreground/60">—</span>;
+    return <span className="block text-[12.5px] text-foreground/60 truncate">—</span>;
   }
   const names = value.split(", ");
   if (names.length === 1) {
-    return <span className="text-[12.5px] text-foreground">{names[0]}</span>;
+    return (
+      <span className="block text-[12.5px] text-foreground truncate" title={names[0]}>
+        {names[0]}
+      </span>
+    );
   }
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className="flex min-w-0 flex-col gap-0.5">
       {names.map((name) => (
-        <span key={name} className="text-[12.5px] text-foreground">{name}</span>
+        <span key={name} className="block text-[12.5px] text-foreground truncate" title={name}>
+          {name}
+        </span>
       ))}
     </div>
   );
@@ -265,6 +363,7 @@ function toDatetimeLocalValue(iso: string | null | undefined): string {
 
 function stripChainMetaFromRemarks(remarks: string | null | undefined): string {
   return (remarks ?? "")
+    .replace(/INT_REPORT:[^|]+\s*\|\s*/g, "")
     .replace(/LNA\/LNB:[^|]+\s*\|\s*/g, "")
     .replace(/LNA_IDS:[^|]+\s*\|\s*/g, "")
     .replace(/LNB_IDS:[^|]+\s*\|\s*/g, "")
@@ -439,179 +538,14 @@ function parseDemodType(remarks: string | null): string {
   return legacy ? legacy[1] : "—";
 }
 
-const ENGAGEMENT_IMPORT_COMMENT =
-  "# Fill resource columns with exact names from Resource Inventory. Names that do not match will be highlighted in red.";
-
-const ENGAGEMENT_IMPORT_RESOURCE_COLUMNS = [
-  "Antenna",
-  "LNA",
-  "LNB",
-  "Demodulator",
-  "Processor",
-  "Other Resources",
-] as const;
-
-type EngagementImportResourceColumn = (typeof ENGAGEMENT_IMPORT_RESOURCE_COLUMNS)[number];
-
-const ENGAGEMENT_TEMPLATE_COLUMNS = ["Satellite", ...ENGAGEMENT_IMPORT_RESOURCE_COLUMNS];
-
-function escapeCsvField(value: string): string {
-  if (/[",\r\n]/.test(value)) {
-    return `"${value.replace(/"/g, '""')}"`;
-  }
-  return value;
-}
-
-function parseCsvLine(line: string): string[] {
-  const out: string[] = [];
-  let cur = "";
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (inQuotes) {
-      if (ch === '"') {
-        if (line[i + 1] === '"') {
-          cur += '"';
-          i++;
-        } else {
-          inQuotes = false;
-        }
-      } else {
-        cur += ch;
-      }
-    } else if (ch === '"') {
-      inQuotes = true;
-    } else if (ch === ",") {
-      out.push(cur);
-      cur = "";
-    } else {
-      cur += ch;
-    }
-  }
-  out.push(cur);
-  return out;
-}
-
-function parseCsvText(text: string): string[][] {
-  const normalized = text.replace(/^\uFEFF/, "");
-  return normalized
-    .split(/\r?\n/)
-    .filter((line) => line.trim() !== "")
-    .map(parseCsvLine);
-}
-
-async function parseSpreadsheetFile(file: File): Promise<string[][]> {
-  const name = file.name.toLowerCase();
-  if (name.endsWith(".xlsx")) {
-    const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: "array" });
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" }) as unknown[][];
-    return rows.map((row) => row.map((cell) => String(cell ?? "").trim()));
-  }
-  return parseCsvText(await file.text());
-}
-
-function findImportHeaderIndex(rows: string[][]): number {
-  for (let i = 0; i < rows.length; i++) {
-    const first = (rows[i][0] ?? "").trim();
-    if (first.startsWith("#")) continue;
-    if (rows[i].some((cell) => cell.trim().toLowerCase() === "satellite")) return i;
-  }
-  return -1;
-}
-
-function getImportCell(record: Record<string, string>, column: string): string {
-  const key = Object.keys(record).find((k) => k.trim().toLowerCase() === column.toLowerCase());
-  return key ? record[key].trim() : "";
-}
-
-function equipmentMatchesImportColumn(
-  e: { category?: { name?: string } | null },
-  column: EngagementImportResourceColumn,
-): boolean {
-  const cat = (e.category?.name ?? "").toLowerCase();
-  switch (column) {
-    case "Antenna":
-      return cat.includes("antenna");
-    case "LNA":
-      return cat.includes("lna") && !cat.includes("lnb");
-    case "LNB":
-      return cat.includes("lnb");
-    case "Demodulator":
-      return cat.includes("demodulat");
-    case "Processor":
-      return cat.includes("processing");
-    case "Other Resources":
-      return isOtherResourcesEquipment(e);
-    default:
-      return false;
-  }
-}
-
-function resolveImportEquipmentNames(
-  rawValue: string,
-  column: EngagementImportResourceColumn,
-  equipment: any[],
-  unitId: string,
-): { ids: string[]; hasUnmatched: boolean } {
-  const names = rawValue.split(",").map((s) => s.trim()).filter(Boolean);
-  if (!names.length) return { ids: [], hasUnmatched: false };
-
-  const ids: string[] = [];
-  let hasUnmatched = false;
-  for (const name of names) {
-    const eq = equipment.find(
-      (e) =>
-        e.unit_id === unitId &&
-        e.serviceability === "Operational" &&
-        equipmentMatchesImportColumn(e, column) &&
-        (e.name ?? "").trim().toLowerCase() === name.toLowerCase(),
-    );
-    if (eq) ids.push(eq.id as string);
-    else hasUnmatched = true;
-  }
-  return { ids, hasUnmatched };
-}
-
-function downloadEngagementTemplate(
-  unitCode: string,
-  monitoringRows: { satelliteName: string }[],
-) {
-  const date = new Date().toISOString().slice(0, 10);
-  const filename = `SSACC-Engagement-Template-${unitCode}-${date}.csv`;
-  const lines = [
-    ENGAGEMENT_IMPORT_COMMENT,
-    ENGAGEMENT_TEMPLATE_COLUMNS.join(","),
-    ...monitoringRows.map((row) =>
-      [
-        escapeCsvField(row.satelliteName),
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-      ].join(","),
-    ),
-  ];
-  const blob = new Blob([lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.click();
-  URL.revokeObjectURL(url);
-}
-
 function withImportWarning(
-  satName: string | undefined,
+  rowKey: string | undefined,
   column: string,
   content: ReactNode,
   isEmpty: boolean,
   warnings: Map<string, Set<string>>,
 ): ReactNode {
-  if (!satName || !warnings.get(satName)?.has(column)) return content;
+  if (!rowKey || !warnings.get(rowKey)?.has(column)) return content;
   if (isEmpty) {
     return <span className="text-red-400 font-semibold">Unmatched ⚠</span>;
   }
@@ -789,16 +723,18 @@ function EngagementUnit() {
   const { unitId } = Route.useParams();
   const canEdit    = useCanEdit();
   const qc         = useQueryClient();
+  const operationalRevision = useOperationalDerivedRevision();
   const [hiddenRevision, setHiddenRevision] = useState(0);
   const [importWarnings, setImportWarnings] = useState<Map<string, Set<string>>>(() => new Map());
   const importFileRef = useRef<HTMLInputElement>(null);
   const importBatchRef = useRef(false);
 
   useEffect(() => {
+    pruneLegacyHiddenEngagementKeys(unitId);
     const handler = () => setHiddenRevision((n) => n + 1);
     window.addEventListener(ENGAGEMENT_TABLE_HIDDEN_EVENT, handler);
     return () => window.removeEventListener(ENGAGEMENT_TABLE_HIDDEN_EVENT, handler);
-  }, []);
+  }, [unitId]);
 
   const { data: unit } = useQuery({
     queryKey: ["unit", unitId],
@@ -822,11 +758,10 @@ function EngagementUnit() {
     queryFn: () => listEquipmentForUnit(unitId),
   });
 
-  const { data: allEngagements = [] } = useQuery({
-    queryKey: ENGAGEMENTS_ALL_KEY,
-    queryFn: fetchAllEngagements,
-    staleTime: 30 * 1000,
-  });
+  const liveEngagements = useMemo(() => {
+    void operationalRevision;
+    return getOperationalEngagements();
+  }, [operationalRevision]);
 
   const enrichedRows = useMemo(
     () => attachEquipmentToEngagements(rows, equipmentRaw),
@@ -844,60 +779,78 @@ function EngagementUnit() {
       computeUnitCapability(
         unitId,
         unit?.code,
-        allEngagements.length > 0 ? allEngagements : rows,
+        liveEngagements.length > 0 ? liveEngagements : rows,
         equipmentRaw,
         intelRows,
       ),
-    [unitId, unit?.code, allEngagements, rows, equipmentRaw, intelRows],
+    [unitId, unit?.code, liveEngagements, rows, equipmentRaw, intelRows],
   );
 
-  /** Active monitoring rows — full INT Repository satellite list with scan data. */
+  /** Active monitoring rows — INT scan reports with real metrics (matches pre-migration engagement table). */
   const intelMonitoringRows = useMemo(
     () =>
-      listIntelMonitoringSatellites(
+      listActiveIntelMonitoringSatellites(
         unitId,
         unit?.code,
-        allEngagements.length > 0 ? allEngagements : rows,
+        liveEngagements,
         equipmentRaw,
         intelRows,
       ),
-    [unitId, unit?.code, allEngagements, rows, equipmentRaw, intelRows],
+    [unitId, unit?.code, liveEngagements, equipmentRaw, intelRows, operationalRevision],
   );
+
+  useEffect(() => {
+    if (!unitId || intelMonitoringRows.length === 0) return;
+    if (backfillEngagementIntelReportTags(unitId, intelMonitoringRows) > 0) {
+      notifyOperationalDerivedRefresh();
+    }
+  }, [unitId, intelMonitoringRows, operationalRevision]);
 
   const visibleIntelMonitoringRows = useMemo(() => {
     void hiddenRevision;
     return filterEngagementVisibleIntelRows(unitId, intelMonitoringRows);
   }, [unitId, intelMonitoringRows, hiddenRevision]);
 
-  const engagementSource = allEngagements.length > 0 ? allEngagements : rows;
-
   const enrichedEngagementSource = useMemo(() => {
+    void operationalRevision;
     const ds = getOperationalDataset();
-    return engagementSource.map((e: any) => {
+    return liveEngagements.map((e: any) => {
       if (e.satellites?.name) return e;
       const sat = ds.satellites.find((s) => s.id === e.satellite_id);
       return sat ? { ...e, satellites: { name: sat.name } } : e;
     });
-  }, [engagementSource]);
+  }, [liveEngagements, operationalRevision]);
 
   const intelActiveRows = useMemo(() => {
     return attachEquipmentToEngagements(
       buildIntelMonitoringEngagementRows(unitId, visibleIntelMonitoringRows, enrichedEngagementSource),
       equipmentRaw,
     );
-  }, [unitId, visibleIntelMonitoringRows, enrichedEngagementSource, equipmentRaw]);
+  }, [unitId, visibleIntelMonitoringRows, enrichedEngagementSource, equipmentRaw, operationalRevision]);
 
   const getAllocatedIdsForRow = useCallback(
     (row: any) => {
+      void operationalRevision;
       const ids = new Set<string>();
-      const unitEngagements = enrichedEngagementSource.filter((e: any) => e.unit_id === unitId);
-      for (const eng of unitEngagements) {
-        if (eng.id === row.id) continue;
-        collectEngagementAllocatedIds([eng], equipmentRaw).forEach((id) => ids.add(id));
+      const ownKey = engagementRowStorageKey(row).toLowerCase();
+      const unitEngagements = getOperationalEngagements().filter((e: any) => e.unit_id === unitId);
+
+      for (const intelRow of visibleIntelMonitoringRows) {
+        const rowKey = engagementTableRowKey(intelRow).toLowerCase();
+        if (rowKey === ownKey) continue;
+
+        const peerRow = {
+          id: engagementTableRowKey(intelRow),
+          _intelRow: intelRow,
+          satellites: { name: intelRow.satelliteName },
+        };
+        const eng = resolveOperationalEngagementForTableRow(peerRow, unitEngagements);
+        if (!eng) continue;
+        collectExclusiveAllocatedIds([eng], equipmentRaw).forEach((id) => ids.add(id));
       }
       return ids;
     },
-    [enrichedEngagementSource, unitId, equipmentRaw],
+    [unitId, visibleIntelMonitoringRows, equipmentRaw, operationalRevision],
   );
 
   const resourceStats = useMemo(
@@ -927,17 +880,22 @@ function EngagementUnit() {
   }
 
   async function saveEngagementRecord(row: any, patch: any): Promise<boolean> {
-    const freshRows = getOperationalEngagements().filter((e) => e.unit_id === unitId);
+    const importBatch = importBatchRef.current;
+    const reportSaveError = (message: string) => {
+      if (!importBatch) toast.error(message);
+    };
+
     const satDisplayName =
       (row.satellites?.name as string | undefined) ??
       (patch.satellite_id
         ? getOperationalDataset().satellites.find((s) => s.id === patch.satellite_id)?.name
         : undefined);
 
-    if (!importBatchRef.current && satDisplayName) {
+    if (!importBatchRef.current) {
+      const rowStorageKey = engagementRowStorageKey(row);
       setImportWarnings((prev) => {
         const next = new Map(prev);
-        next.delete(satDisplayName);
+        next.delete(rowStorageKey);
         return next;
       });
     }
@@ -951,7 +909,7 @@ function EngagementUnit() {
     } else if (satelliteId) {
       const match = getOperationalDataset().satellites.find((s) => s.id === satelliteId);
       if (!match) {
-        toast.error("Could not resolve satellite for this row.");
+        reportSaveError("Could not resolve satellite for this row.");
         return false;
       }
     }
@@ -960,47 +918,109 @@ function EngagementUnit() {
       ...patch,
       satellite_id: satelliteId,
       satellite_name: satDisplayName,
+      remarks: intelReportIdFromRow(row)
+        ? mergeIntelReportIntoRemarks(patch.remarks, intelReportIdFromRow(row)!)
+        : patch.remarks,
     };
+    const rowStorageKey = engagementRowStorageKey(row);
+    const intelReportId = intelReportIdFromRow(row);
+    const allUnitEngagements = getOperationalEngagements().filter((e) => e.unit_id === unitId);
 
-    if (!isSyntheticEngagementId(row.id) && updateOperationalEngagement(row.id, patchWithSat)) {
-      if (satDisplayName) restoreEngagementTableRow(unitId, satDisplayName);
+    if (!isSyntheticEngagementId(row.id, row) && updateOperationalEngagement(row.id, patchWithSat)) {
+      restoreEngagementTableRow(unitId, rowStorageKey);
+      notifyOperationalDerivedRefresh();
       if (!importBatchRef.current) await invalidateEngagementQueries();
       return true;
+    }
+
+    if (intelReportId) {
+      const existingByReport = allUnitEngagements.find(
+        (r) => parseIntelReportIdFromRemarks(r.remarks) === intelReportId,
+      );
+      if (existingByReport && updateOperationalEngagement(existingByReport.id, patchWithSat)) {
+        restoreEngagementTableRow(unitId, rowStorageKey);
+        notifyOperationalDerivedRefresh();
+        if (!importBatchRef.current) await invalidateEngagementQueries();
+        return true;
+      }
     }
 
     const sat = satelliteId
       ? getOperationalDataset().satellites.find((s) => s.id === satelliteId)
       : undefined;
-    const allUnitEngagements = getOperationalEngagements().filter((e) => e.unit_id === unitId);
-    const existingBySatellite = sat
-      ? allUnitEngagements.find((r) => {
-          const name = (r.satellites?.name ?? r.satellite_name) as string | undefined;
-          return name && satelliteNamesMatch(name, sat.name);
-        })
-      : undefined;
+    const sameNameIntelRowCount = satDisplayName
+      ? visibleIntelMonitoringRows.filter((r) => satelliteNamesMatch(r.satelliteName, satDisplayName)).length
+      : 0;
+    const existingBySatellite =
+      sat && (!intelReportId || sameNameIntelRowCount === 1)
+        ? allUnitEngagements.find((r) => {
+            const name = (r.satellites?.name ?? r.satellite_name) as string | undefined;
+            return name && satelliteNamesMatch(name, sat.name);
+          })
+        : undefined;
 
     if (existingBySatellite && updateOperationalEngagement(existingBySatellite.id, patchWithSat)) {
-      if (satDisplayName) restoreEngagementTableRow(unitId, satDisplayName);
+      restoreEngagementTableRow(unitId, rowStorageKey);
+      notifyOperationalDerivedRefresh();
       if (!importBatchRef.current) await invalidateEngagementQueries();
       return true;
     }
 
-    if (!isSyntheticEngagementId(row.id)) {
-      toast.error("Engagement not found.");
+    if (!isSyntheticEngagementId(row.id, row)) {
+      reportSaveError("Engagement not found.");
       return false;
     }
 
     if (!satelliteId) {
-      toast.error("Could not resolve satellite for this row.");
+      reportSaveError("Could not resolve satellite for this row.");
       return false;
     }
 
-    const alreadyExists = allUnitEngagements.some((r) => {
-      const name = (r.satellites?.name ?? r.satellite_name) as string | undefined;
-      return name && satDisplayName && satelliteNamesMatch(name, satDisplayName);
-    });
+    const alreadyExists = intelReportId
+      ? allUnitEngagements.some(
+          (r) => parseIntelReportIdFromRemarks(r.remarks) === intelReportId,
+        )
+      : allUnitEngagements.some((r) => {
+          const name = (r.satellites?.name ?? r.satellite_name) as string | undefined;
+          return name && satDisplayName && satelliteNamesMatch(name, satDisplayName);
+        });
     if (alreadyExists) {
-      toast.error("An engagement for this satellite already exists.");
+      if (intelReportId) {
+        const existingByReportId = allUnitEngagements.find(
+          (r) => parseIntelReportIdFromRemarks(r.remarks) === intelReportId,
+        );
+        if (existingByReportId && updateOperationalEngagement(existingByReportId.id, patchWithSat)) {
+          restoreEngagementTableRow(unitId, rowStorageKey);
+          notifyOperationalDerivedRefresh();
+          if (!importBatch) await invalidateEngagementQueries();
+          return true;
+        }
+      }
+
+      const legacyMatch =
+        intelReportId && sameNameIntelRowCount === 1
+          ? allUnitEngagements.find((r) => {
+              const name = (r.satellites?.name ?? r.satellite_name) as string | undefined;
+              return (
+                name &&
+                satDisplayName &&
+                satelliteNamesMatch(name, satDisplayName) &&
+                parseIntelReportIdFromRemarks(r.remarks) !== intelReportId
+              );
+            })
+          : undefined;
+      if (legacyMatch && updateOperationalEngagement(legacyMatch.id, patchWithSat)) {
+        restoreEngagementTableRow(unitId, rowStorageKey);
+        notifyOperationalDerivedRefresh();
+        if (!importBatch) await invalidateEngagementQueries();
+        return true;
+      }
+
+      reportSaveError(
+        intelReportId
+          ? "Resource data for this satellite scan row already exists."
+          : "An engagement for this satellite already exists.",
+      );
       return false;
     }
 
@@ -1019,142 +1039,118 @@ function EngagementUnit() {
       remarks: patchWithSat.remarks ?? null,
     });
     if (!created) {
-      toast.error("Could not save engagement for this satellite.");
+      reportSaveError("Could not save engagement for this satellite.");
       return false;
     }
-    if (satDisplayName) restoreEngagementTableRow(unitId, satDisplayName);
+    restoreEngagementTableRow(unitId, rowStorageKey);
+    notifyOperationalDerivedRefresh();
     if (!importBatchRef.current) await invalidateEngagementQueries();
     return true;
   }
 
   async function removeEngagementForRow(row: any) {
     const satName = row.satellites?.name as string | undefined;
-    const label = satName ?? "this satellite";
+    const pol = row._intelRow?.polarization ?? "—";
+    const label = pol && pol !== "—" ? `${satName ?? "this satellite"} (${pol})` : (satName ?? "this satellite");
     if (!confirm(`Remove this engagement row for ${label}?`)) return;
 
-    if (satName) {
-      setImportWarnings((prev) => {
-        const next = new Map(prev);
-        next.delete(satName);
-        return next;
-      });
-    }
+    const rowStorageKey = engagementRowStorageKey(row);
 
-    if (!isSyntheticEngagementId(row.id)) {
+    setImportWarnings((prev) => {
+      const next = new Map(prev);
+      next.delete(rowStorageKey);
+      return next;
+    });
+
+    const intelReportId = intelReportIdFromRow(row);
+    const unitEngagements = getOperationalEngagements().filter((e) => e.unit_id === unitId);
+
+    if (!isSyntheticEngagementId(row.id, row)) {
       removeOperationalEngagement(row.id);
-    } else {
-      const existing = getOperationalEngagements().find((r) => {
-        if (r.unit_id !== unitId) return false;
-        const name = r.satellites?.name as string | undefined;
-        return name && satName && satelliteNamesMatch(name, satName);
-      });
+    } else if (intelReportId) {
+      const existing = unitEngagements.find(
+        (r) => parseIntelReportIdFromRemarks(r.remarks) === intelReportId,
+      );
       if (existing) removeOperationalEngagement(existing.id);
+    } else {
+      const sameNameRows = visibleIntelMonitoringRows.filter(
+        (r) => satName && satelliteNamesMatch(r.satelliteName, satName),
+      );
+      if (sameNameRows.length === 1) {
+        const existing = unitEngagements.find((r) => {
+          const name = r.satellites?.name as string | undefined;
+          return name && satName && satelliteNamesMatch(name, satName);
+        });
+        if (existing) removeOperationalEngagement(existing.id);
+      }
     }
 
     await invalidateEngagementQueries();
-    if (satName) hideEngagementTableRow(unitId, satName);
+    hideEngagementTableRow(unitId, rowStorageKey);
     toast.success("Engagement row removed.");
   }
 
   async function importEngagementCSV(file: File) {
     importBatchRef.current = true;
     try {
-      const rows = await parseSpreadsheetFile(file);
-      const headerIndex = findImportHeaderIndex(rows);
-      if (headerIndex < 0) {
-        toast.error("Could not find a header row with a Satellite column.");
+      const grid = await readEngagementImportSpreadsheet(file);
+      const parseResult = parseEngagementImportGrid(
+        grid,
+        visibleIntelMonitoringRows,
+        equipmentRaw,
+        unitId,
+      );
+
+      if (!parseResult.ok) {
+        toast.error(parseResult.error ?? "Could not parse engagement import file.");
         return;
       }
 
-      const headers = rows[headerIndex].map((cell) => cell.trim());
-      const nextWarnings = new Map<string, Set<string>>();
       let importedRows = 0;
-      let unmatchedCells = 0;
+      let saveFailures = 0;
 
-      for (let i = headerIndex + 1; i < rows.length; i++) {
-        const values = rows[i];
-        const firstCell = (values[0] ?? "").trim();
-        if (!firstCell || firstCell.startsWith("#")) continue;
+      for (const entry of parseResult.parsed) {
+        const tableRow =
+          intelActiveRows.find((row: any) => row.id === entry.rowKey) ??
+          {
+            id: entry.rowKey,
+            satellites: { name: entry.monitoringRow.satelliteName },
+            _intelRow: entry.monitoringRow,
+            status: entry.monitoringRow.engagementStatus ?? "In Progress",
+            remarks: null,
+            antenna_id: null,
+            demodulator_id: null,
+            processing_server_id: null,
+          };
 
-        const record: Record<string, string> = {};
-        headers.forEach((header, colIdx) => {
-          record[header] = (values[colIdx] ?? "").trim();
-        });
-
-        const satelliteRaw = getImportCell(record, "Satellite");
-        if (!satelliteRaw) continue;
-
-        const monitoringRow = visibleIntelMonitoringRows.find((row) =>
-          satelliteNamesMatch(row.satelliteName, satelliteRaw),
-        );
-        if (!monitoringRow) continue;
-
-        const satName = monitoringRow.satelliteName;
-        const tableRow = intelActiveRows.find((row: any) =>
-          row.satellites?.name && satelliteNamesMatch(row.satellites.name, satName),
-        );
-        if (!tableRow) continue;
-
-        const antennaRaw = getImportCell(record, "Antenna");
-        const lnaRaw = getImportCell(record, "LNA");
-        const lnbRaw = getImportCell(record, "LNB");
-        const demodRaw = getImportCell(record, "Demodulator");
-        const procRaw = getImportCell(record, "Processor");
-        const otherRaw = getImportCell(record, "Other Resources");
-
-        const antenna = resolveImportEquipmentNames(antennaRaw, "Antenna", equipmentRaw, unitId);
-        const lna = resolveImportEquipmentNames(lnaRaw, "LNA", equipmentRaw, unitId);
-        const lnb = resolveImportEquipmentNames(lnbRaw, "LNB", equipmentRaw, unitId);
-        const demod = resolveImportEquipmentNames(demodRaw, "Demodulator", equipmentRaw, unitId);
-        const proc = resolveImportEquipmentNames(procRaw, "Processor", equipmentRaw, unitId);
-        const other = resolveImportEquipmentNames(otherRaw, "Other Resources", equipmentRaw, unitId);
-
-        const columnResults: { column: EngagementImportResourceColumn; hasUnmatched: boolean; ids: string[] }[] = [
-          { column: "Antenna", hasUnmatched: antenna.hasUnmatched, ids: antenna.ids.slice(0, 1) },
-          { column: "LNA", hasUnmatched: lna.hasUnmatched, ids: lna.ids },
-          { column: "LNB", hasUnmatched: lnb.hasUnmatched, ids: lnb.ids },
-          { column: "Demodulator", hasUnmatched: demod.hasUnmatched, ids: demod.ids },
-          { column: "Processor", hasUnmatched: proc.hasUnmatched, ids: proc.ids },
-          { column: "Other Resources", hasUnmatched: other.hasUnmatched, ids: other.ids },
-        ];
-
-        for (const { column, hasUnmatched } of columnResults) {
-          if (hasUnmatched) {
-            if (!nextWarnings.has(satName)) nextWarnings.set(satName, new Set());
-            nextWarnings.get(satName)!.add(column);
-            unmatchedCells++;
-          }
-        }
-
-        const validResourceCount = columnResults.reduce((sum, item) => sum + item.ids.length, 0);
-        if (validResourceCount === 0) continue;
-
+        const { resources } = entry;
         let frontEndType: FrontEndType = "";
         let lnaIds: string[] = [];
         let lnbIds: string[] = [];
-        if (lna.ids.length > 0) {
+        if (resources.lnaIds.length > 0) {
           frontEndType = "LNA";
-          lnaIds = lna.ids;
-        } else if (lnb.ids.length > 0) {
+          lnaIds = resources.lnaIds;
+        } else if (resources.lnbIds.length > 0) {
           frontEndType = "LNB";
-          lnbIds = lnb.ids;
+          lnbIds = resources.lnbIds;
         }
 
         const form: EngagementChainForm = {
           satellite_id: resolveSatelliteIdFromRow(tableRow),
-          antenna_id: antenna.ids[0] ?? "",
+          antenna_id: resources.antennaIds[0] ?? "",
           front_end_type: frontEndType,
           lna_ids: lnaIds,
           lnb_ids: lnbIds,
-          demod_bands: inferDemodBandsFromIds(demod.ids, equipmentRaw),
-          demodulator_ids: demod.ids,
-          processing_server_ids: proc.ids,
+          demod_bands: inferDemodBandsFromIds(resources.demodIds, equipmentRaw),
+          demodulator_ids: resources.demodIds,
+          processing_server_ids: resources.procIds,
           observation_start: "",
           remarks: "",
-          other_resource_ids: other.ids,
+          other_resource_ids: resources.otherIds,
         };
 
         const remarks = buildRemarksFromForm(form, equipmentRaw);
+        const intelReportId = intelReportIdFromRow(tableRow);
         const saved = await saveEngagementRecord(tableRow, {
           satellite_id: form.satellite_id || undefined,
           antenna_id: form.antenna_id || null,
@@ -1162,17 +1158,46 @@ function EngagementUnit() {
           processing_server_id: form.processing_server_ids[0] ?? null,
           observation_start: null,
           status: tableRow.status,
-          remarks: remarks || null,
+          remarks: intelReportId
+            ? mergeIntelReportIntoRemarks(remarks || null, intelReportId)
+            : remarks || null,
         });
-        if (saved) importedRows++;
+
+        if (saved) {
+          importedRows++;
+        } else {
+          saveFailures++;
+        }
       }
 
-      setImportWarnings(nextWarnings);
+      setImportWarnings(parseResult.warnings);
       await invalidateEngagementQueries();
-      toast.success(`${importedRows} rows imported, ${unmatchedCells} cells had unmatched resource names`);
+      if (isElectronPersistAvailable()) {
+        await flushElectronStorage();
+      }
+
+      const summary = summarizeEngagementImportResult(importedRows, saveFailures, parseResult);
+      const skipLog = formatEngagementImportSkipLog(parseResult.skipped);
+      const skipPreview = parseResult.skipped
+        .slice(0, 3)
+        .map((row) => row.detail ?? row.reason)
+        .filter(Boolean)
+        .join("\n");
+
+      if (summary.variant === "success") {
+        toast.success(summary.message, skipPreview ? { description: skipPreview } : undefined);
+      } else if (summary.variant === "error") {
+        toast.error(summary.message);
+      } else {
+        toast.warning(summary.message, skipPreview ? { description: skipPreview, duration: 9000 } : undefined);
+      }
+
+      if (skipLog && parseResult.skipped.length > 3) {
+        console.info("[engagement import skipped rows]\n" + skipLog);
+      }
     } catch (error) {
       console.error("[importEngagementCSV]", error);
-      toast.error("Could not import engagement file.");
+      toast.error(error instanceof Error ? error.message : "Could not import engagement file.");
     } finally {
       importBatchRef.current = false;
     }
@@ -1186,7 +1211,6 @@ function EngagementUnit() {
   const RESOURCE_HEADERS = [
     "#",
     "Satellite",
-    "Polarization",
     "Antenna",
     "LNA",
     "LNB",
@@ -1226,7 +1250,7 @@ function EngagementUnit() {
                   size="sm"
                   className="h-7 px-2 mono text-[10.5px] uppercase tracking-wider gap-1 cursor-pointer"
                   onClick={() =>
-                    downloadEngagementTemplate(
+                    downloadEngagementImportTemplate(
                       unit ? unitDisplayCode(unit.code) : unitId,
                       visibleIntelMonitoringRows,
                     )
@@ -1246,7 +1270,7 @@ function EngagementUnit() {
                 <input
                   ref={importFileRef}
                   type="file"
-                  accept=".csv,.xlsx"
+                  accept={ACCEPTED_SPREADSHEET_ACCEPT}
                   className="hidden"
                   onChange={(event) => {
                     const selected = event.target.files?.[0];
@@ -1265,15 +1289,16 @@ function EngagementUnit() {
           </div>
         ) : (
           <div className="overflow-auto" style={{ maxHeight: 320 }}>
-            <table className="w-full mono text-[12.5px]">
+            <table className="w-full table-fixed border-collapse mono text-[12.5px]">
+              <colgroup>
+                {ENGAGED_RESOURCES_COLGROUP.map((width, index) => (
+                  <col key={index} style={{ width }} />
+                ))}
+              </colgroup>
               <thead className="sticky top-0 z-10 bg-card border-b border-border">
                 <tr>
                   {RESOURCE_HEADERS.map((h) => (
-                    <th
-                      key={h || "actions"}
-                      className="text-left px-3 py-2 text-[9.5px] uppercase tracking-wider text-foreground
-                                 font-bold whitespace-nowrap border-r border-border/50 last:border-r-0"
-                    >
+                    <th key={h || "actions"} className={ENGAGED_RESOURCE_HEAD_CELL}>
                       {h}
                     </th>
                   ))}
@@ -1287,42 +1312,50 @@ function EngagementUnit() {
                   const chain = resolveChainEquipmentDisplay(r, equipmentRaw);
                   const satName = r.satellites?.name as string | undefined;
                   const otherResources = otherResourceNamesFromRow(r, equipmentRaw);
+                  const rowWarningKey = engagementRowStorageKey(r);
 
                   return (
                     <tr key={r.id} className="hover:bg-secondary/20 transition-colors">
-                      <td className="px-3 py-2.5 text-[12.5px] text-foreground/70">{idx + 1}</td>
+                      <td className={`${ENGAGED_RESOURCE_CELL} text-[12.5px] text-foreground/70`}>{idx + 1}</td>
 
-                      <td className="px-3 py-2.5 text-[12.5px] font-bold text-foreground whitespace-nowrap">
-                        {satName ?? "—"}
-                      </td>
-
-                      <td className="px-3 py-2.5 whitespace-nowrap">
-                        {analysis.polarization !== "—" ? (
-                          <span className="mono text-[10.5px] font-semibold text-primary bg-primary/5 border border-primary/15 px-1.5 py-0.5 rounded-sm">
-                            {analysis.polarization}
+                      <td className={ENGAGED_RESOURCE_CELL}>
+                        <div className="flex min-w-0 flex-col gap-0.5">
+                          <span
+                            className="block text-[12.5px] font-bold text-foreground truncate"
+                            title={satName ?? undefined}
+                          >
+                            {satName ?? "—"}
                           </span>
-                        ) : (
-                          <span className="text-[12.5px] text-foreground/60">—</span>
-                        )}
+                          {analysis.polarization !== "—" ? (
+                            <span className="mono block truncate text-[11px] text-muted-foreground">
+                              {analysis.polarization}
+                            </span>
+                          ) : null}
+                        </div>
                       </td>
 
-                      <td className="px-3 py-2.5 whitespace-nowrap">
+                      <td className={ENGAGED_RESOURCE_CELL}>
                         {withImportWarning(
-                          satName,
+                          rowWarningKey,
                           "Antenna",
                           r.antenna?.name ? (
-                            <span className="text-[12.5px] text-foreground">{r.antenna.name}</span>
+                            <span
+                              className="block text-[12.5px] text-foreground truncate"
+                              title={r.antenna.name}
+                            >
+                              {r.antenna.name}
+                            </span>
                           ) : (
-                            <span className="text-[12.5px] text-foreground/60">—</span>
+                            <span className="block text-[12.5px] text-foreground/60 truncate">—</span>
                           ),
                           !r.antenna?.name,
                           importWarnings,
                         )}
                       </td>
 
-                      <td className="px-3 py-2.5 text-foreground">
+                      <td className={ENGAGED_RESOURCE_CELL}>
                         {withImportWarning(
-                          satName,
+                          rowWarningKey,
                           "LNA",
                           <ChainEquipmentCell value={chain.lna} />,
                           chain.lna === "—",
@@ -1330,9 +1363,9 @@ function EngagementUnit() {
                         )}
                       </td>
 
-                      <td className="px-3 py-2.5 text-foreground">
+                      <td className={ENGAGED_RESOURCE_CELL}>
                         {withImportWarning(
-                          satName,
+                          rowWarningKey,
                           "LNB",
                           <ChainEquipmentCell value={chain.lnb} />,
                           chain.lnb === "—",
@@ -1340,30 +1373,30 @@ function EngagementUnit() {
                         )}
                       </td>
 
-                      <td className="px-3 py-2.5">
+                      <td className={ENGAGED_RESOURCE_CELL}>
                         {withImportWarning(
-                          satName,
+                          rowWarningKey,
                           "Demodulator",
                           chain.demodulators !== "—" ? (
-                            <div className="flex flex-col gap-0.5">
+                            <div className="flex min-w-0 flex-col gap-0.5">
                               <ChainEquipmentCell value={chain.demodulators} />
                               {parseDemodType(r.remarks) !== "—" && (
-                                <span className="text-[9.5px] text-foreground/70 uppercase">
+                                <span className="block truncate text-[9.5px] uppercase text-foreground/70">
                                   {parseDemodType(r.remarks)}
                                 </span>
                               )}
                             </div>
                           ) : (
-                            <span className="text-foreground/60">—</span>
+                            <span className="block truncate text-foreground/60">—</span>
                           ),
                           chain.demodulators === "—",
                           importWarnings,
                         )}
                       </td>
 
-                      <td className="px-3 py-2.5 text-foreground">
+                      <td className={ENGAGED_RESOURCE_CELL}>
                         {withImportWarning(
-                          satName,
+                          rowWarningKey,
                           "Processor",
                           <ChainEquipmentCell value={chain.processors} />,
                           chain.processors === "—",
@@ -1371,9 +1404,9 @@ function EngagementUnit() {
                         )}
                       </td>
 
-                      <td className="px-3 py-2.5 text-foreground whitespace-nowrap">
+                      <td className={ENGAGED_RESOURCE_CELL}>
                         {withImportWarning(
-                          satName,
+                          rowWarningKey,
                           "Other Resources",
                           <ChainEquipmentCell value={otherResources} />,
                           otherResources === "—",
@@ -1381,7 +1414,7 @@ function EngagementUnit() {
                         )}
                       </td>
 
-                      <td className="px-2 py-2.5">
+                      <td className={`${ENGAGED_RESOURCE_CELL} px-1`}>
                         {canEdit && (
                           <div className="flex items-center gap-1">
                             <EditEngagement
@@ -1413,8 +1446,6 @@ function EngagementUnit() {
         )}
       </div>
 
-      <PlannedSatellitesTable unitId={unitId} canEdit={canEdit} />
-
       {engError && (
         <div className="panel mb-3 px-3 py-2 mono text-[10px] text-amber-800 border border-amber-400/30 bg-amber-400/10">
           Engagement records could not be loaded — showing available unit data only.
@@ -1423,195 +1454,6 @@ function EngagementUnit() {
 
       {enrichedRows.length === 0 && !engError && <Empty title="No engagements recorded" />}
     </AppShell>
-  );
-}
-
-function PlannedSatellitesTable({ unitId, canEdit }: { unitId: string; canEdit: boolean }) {
-  const [rows, setRows] = useState<PlannedSatelliteRow[]>(() => getPlannedSatellites(unitId));
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<PlannedSatelliteRow | null>(null);
-
-  useEffect(() => {
-    setRows(getPlannedSatellites(unitId));
-  }, [unitId]);
-
-  function persist(next: PlannedSatelliteRow[]) {
-    setRows(next);
-    setPlannedSatellites(unitId, next);
-    notifyOperationalDerivedRefresh();
-  }
-
-  function startEdit(row: PlannedSatelliteRow) {
-    setEditingId(row.id);
-    setDraft({ ...row });
-  }
-
-  function saveEdit() {
-    if (!draft) return;
-    persist(rows.map((r) => (r.id === draft.id ? draft : r)));
-    setEditingId(null);
-    setDraft(null);
-    toast.success("Planned satellite row saved.");
-  }
-
-  function addRow() {
-    const row = newPlannedSatelliteRow();
-    persist([...rows, row]);
-    startEdit(row);
-  }
-
-  function removeRow(id: string) {
-    persist(rows.filter((r) => r.id !== id));
-    if (editingId === id) {
-      setEditingId(null);
-      setDraft(null);
-    }
-  }
-
-  return (
-    <div className="panel overflow-hidden mb-3">
-      <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-secondary/20">
-        <span className="mono text-[10.5px] font-bold uppercase tracking-wider text-foreground">
-          Planned Satellite — Next Three Months
-        </span>
-        {canEdit && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="mono text-[9px] uppercase tracking-wider h-7"
-            onClick={addRow}
-          >
-            <Plus className="h-3 w-3 mr-1" /> Add Row
-          </Button>
-        )}
-      </div>
-
-      {rows.length === 0 ? (
-        <div className="px-4 py-5 text-center mono text-[9px] text-foreground/70 uppercase tracking-wider">
-          No planned satellites — use Add Row to enter upcoming missions
-        </div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full mono text-[11px]">
-            <thead className="bg-card border-b border-border">
-              <tr>
-                {["Serial Number", "Satellite", "Date of Launch", "Last Scanned Date", ""].map((h) => (
-                  <th
-                    key={h || "actions"}
-                    className="text-left px-3 py-2 text-[8.5px] uppercase tracking-wider text-foreground
-                               font-bold whitespace-nowrap border-r border-border/50 last:border-r-0"
-                  >
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {rows.map((row) => {
-                const isEditing = editingId === row.id && draft != null;
-                const data = isEditing ? draft : row;
-
-                return (
-                  <tr key={row.id} className="hover:bg-secondary/20 transition-colors">
-                    <td className="px-3 py-2">
-                      {isEditing ? (
-                        <Input
-                          value={data.serialNumber}
-                          onChange={(e) =>
-                            setDraft((d) => (d ? { ...d, serialNumber: e.target.value } : d))
-                          }
-                          className="h-8 mono text-[11px]"
-                        />
-                      ) : (
-                        <span className="text-foreground">{row.serialNumber || "—"}</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2">
-                      {isEditing ? (
-                        <Input
-                          value={data.satellite}
-                          onChange={(e) =>
-                            setDraft((d) => (d ? { ...d, satellite: e.target.value } : d))
-                          }
-                          className="h-8 mono text-[11px]"
-                        />
-                      ) : (
-                        <span className="font-bold text-foreground">{row.satellite || "—"}</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2">
-                      {isEditing ? (
-                        <Input
-                          type="date"
-                          value={data.launchDate}
-                          onChange={(e) =>
-                            setDraft((d) => (d ? { ...d, launchDate: e.target.value } : d))
-                          }
-                          className="h-8 mono text-[11px]"
-                        />
-                      ) : (
-                        <span className="text-foreground">{row.launchDate || "—"}</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2">
-                      {isEditing ? (
-                        <Input
-                          type="date"
-                          value={data.lastScannedDate}
-                          onChange={(e) =>
-                            setDraft((d) => (d ? { ...d, lastScannedDate: e.target.value } : d))
-                          }
-                          className="h-8 mono text-[11px]"
-                        />
-                      ) : (
-                        <span className="text-foreground">{row.lastScannedDate || "—"}</span>
-                      )}
-                    </td>
-                    <td className="px-2 py-2 whitespace-nowrap">
-                      {canEdit && (
-                        <div className="flex items-center gap-1">
-                          {isEditing ? (
-                            <Button
-                              type="button"
-                              variant="default"
-                              size="sm"
-                              className="h-7 px-2 mono text-[9px] uppercase tracking-wider"
-                              onClick={saveEdit}
-                            >
-                              OK
-                            </Button>
-                          ) : (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 px-2 mono text-[9px] uppercase tracking-wider gap-1"
-                              onClick={() => startEdit(row)}
-                            >
-                              <Pencil className="h-3 w-3" /> Edit
-                            </Button>
-                          )}
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 px-2 text-destructive hover:text-destructive"
-                            onClick={() => removeRow(row.id)}
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -1646,16 +1488,17 @@ function EngagementResourceFields({
     <>
       <F label={`Antenna — ${availableAntennas.length} available`}>
         <Select
-          value={form.antenna_id}
-          onValueChange={(v) => setField("antenna_id", v)}
+          value={form.antenna_id || "__none__"}
+          onValueChange={(v) => setField("antenna_id", v === "__none__" ? "" : v)}
           disabled={noAntenna}
         >
           <SelectTrigger>
             <SelectValue placeholder={noAntenna ? "None available" : "Select antenna"} />
           </SelectTrigger>
           <SelectContent>
+            <SelectItem value="__none__">— None —</SelectItem>
             {availableAntennas.length === 0 ? (
-              <SelectItem value="_none" disabled>No serviceable antennas</SelectItem>
+              <SelectItem value="_empty" disabled>No serviceable antennas</SelectItem>
             ) : (
               availableAntennas.map((e) => (
                 <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>
@@ -1666,28 +1509,41 @@ function EngagementResourceFields({
       </F>
 
       <F label="Select LNA or LNB">
-        <RadioGroup
-          value={form.front_end_type || ""}
-          onValueChange={(v) => {
-            if (v === "LNA" || v === "LNB") setFrontEndType(v);
-          }}
-          className="flex flex-col gap-2"
-        >
-          <div className="flex items-center gap-6">
-            <div className="flex items-center gap-2">
-              <RadioGroupItem value="LNA" id="eng-fe-lna" />
-              <Label htmlFor="eng-fe-lna" className="mono text-[10px] font-normal cursor-pointer">
-                LNA
-              </Label>
+        <div className="space-y-2">
+          <RadioGroup
+            value={form.front_end_type || ""}
+            onValueChange={(v) => {
+              if (v === "LNA" || v === "LNB") setFrontEndType(v);
+            }}
+            className="flex flex-col gap-2"
+          >
+            <div className="flex items-center gap-6">
+              <div className="flex items-center gap-2">
+                <RadioGroupItem value="LNA" id="eng-fe-lna" />
+                <Label htmlFor="eng-fe-lna" className="mono text-[10px] font-normal cursor-pointer">
+                  LNA
+                </Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <RadioGroupItem value="LNB" id="eng-fe-lnb" />
+                <Label htmlFor="eng-fe-lnb" className="mono text-[10px] font-normal cursor-pointer">
+                  LNB
+                </Label>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <RadioGroupItem value="LNB" id="eng-fe-lnb" />
-              <Label htmlFor="eng-fe-lnb" className="mono text-[10px] font-normal cursor-pointer">
-                LNB
-              </Label>
-            </div>
-          </div>
-        </RadioGroup>
+          </RadioGroup>
+          {form.front_end_type ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 mono text-[9px] uppercase tracking-wider"
+              onClick={() => setFrontEndType("")}
+            >
+              Clear LNA/LNB
+            </Button>
+          ) : null}
+        </div>
       </F>
 
       {form.front_end_type === "LNA" && (
@@ -1883,7 +1739,9 @@ function EditEngagement({
   const lnaPool = serviceable("lna", true);
   const lnbPool = serviceable("lnb");
   const demodPool = serviceable("demodulat");
-  const serverPool = serviceable("processing");
+  const serverPool = equipment.filter(
+    (e: any) => e.serviceability === "Operational" && isProcessorEquipment(e),
+  );
   const otherPool = equipment.filter(
     (e: any) => e.serviceability === "Operational" && isOtherResourcesEquipment(e),
   );
@@ -1895,7 +1753,7 @@ function EditEngagement({
     equipmentAvailableForEdit(demodPool, allocatedOthers, form.demodulator_ids),
     equipment,
   );
-  const availableServers = equipmentAvailableForEdit(serverPool, allocatedOthers, form.processing_server_ids);
+  const availableServers = serverPool;
   const availableOther = equipmentAvailableForEdit(otherPool, allocatedOthers, form.other_resource_ids);
 
   function toggleDemodBand(band: DemodBand, enabled: boolean) {
@@ -1905,12 +1763,14 @@ function EditEngagement({
   async function submit(e: React.FormEvent) {
     e.preventDefault();
 
-    const selectedIds = collectFormAllocatedIds(form);
-    const conflicts = [...selectedIds].filter((id) => allocatedOthers.has(id));
+    const processorIds = new Set(form.processing_server_ids);
+    const exclusiveSelected = [...collectFormAllocatedIds(form)].filter((id) => !processorIds.has(id));
+    const allocatedNow = getAllocatedIdsForRow(row);
+    const conflicts = exclusiveSelected.filter((id) => allocatedNow.has(id));
     if (conflicts.length > 0) {
       const byId = new Map(equipment.map((item: any) => [item.id as string, item.name as string]));
       const names = conflicts.map((id) => byId.get(id) ?? id).join(", ");
-      toast.error(`Resource(s) already committed elsewhere: ${names}`);
+      toast.error(`Resource(s) already committed on another row: ${names}`);
       return;
     }
 
@@ -1939,8 +1799,13 @@ function EditEngagement({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="ghost" size="sm" className="h-7 px-2 mono text-[10.5px] uppercase tracking-wider gap-1">
-          <Pencil className="h-3 w-3" /> Edit
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2 mono text-[10.5px] uppercase tracking-wider gap-1"
+          title="Edit"
+        >
+          <Pencil className="h-3 w-3" />
         </Button>
       </DialogTrigger>
       <DialogContent className="max-h-[90vh] overflow-y-auto max-w-lg">
@@ -1952,7 +1817,8 @@ function EditEngagement({
 
         <div className="mono text-[8.5px] text-foreground/75 border border-border/50 rounded-sm px-2 py-1.5 bg-secondary/10">
           Assign resources used for <span className="font-bold">{row.satellites?.name ?? "this satellite"}</span>.
-          Each field is optional — unassigned resources show as — in the table.
+          Resources selected on other rows are locked — deselect here and save to free them for another row.
+          Processors may be shared across multiple rows.
         </div>
 
         <form onSubmit={submit} className="space-y-3 mt-1">
