@@ -311,7 +311,7 @@ function PriorityUnit() {
   return (
     <AppShell
       title="Satellite Priority & Allocation"
-      pageTitle={`Priority of Satellites Allocated to ${shortLabel}`}
+      subtitle={shortLabel}
       headerIcon={<HomeNavIconBadge icon={ListOrdered} theme="priority" size="md" />}
       showBack
       backLink={ccModuleBackLink("priority")}

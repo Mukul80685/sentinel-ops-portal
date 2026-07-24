@@ -4,6 +4,7 @@
  */
 
 import { NON_OPERATIONAL } from "@/lib/engagementEngine";
+import { RESOURCE_RING_CATEGORIES } from "@/lib/equipmentCategories";
 import {
   engagementTableRowKey,
   filterEngagementVisibleIntelRows,
@@ -19,29 +20,7 @@ export type ResourceRingStat = {
   pct: number;
 };
 
-/** Six inventory categories shown as engagement rings (Resource Inventory SSOT). */
-export const RESOURCE_RING_CATEGORIES = [
-  {
-    label: "Antennas",
-    matches: (name: string) => name.includes("antenna"),
-  },
-  {
-    label: "LNA",
-    matches: (name: string) => name === "lna" || (name.includes("lna") && !name.includes("lnb")),
-  },
-  {
-    label: "LNB",
-    matches: (name: string) => name.includes("lnb"),
-  },
-  {
-    label: "Demodulators",
-    matches: (name: string) => name.includes("demodulat"),
-  },
-  {
-    label: "Processors",
-    matches: (name: string) => name.includes("processing"),
-  },
-] as const;
+export { RESOURCE_RING_CATEGORIES };
 
 function parseEquipmentIdFromRemarks(remarks: string | null | undefined, key: string): string | null {
   if (!remarks) return null;
@@ -73,12 +52,8 @@ function engagementRowRichness(r: any): number {
   let score = 0;
   if (r.antenna_id) score += 2;
   if (r.demodulator_id) score += 2;
-  if (r.processing_server_id) score += 2;
   if (r.remarks) {
-    score += parseRemarkIdList(r.remarks, "LNA_IDS").length;
-    score += parseRemarkIdList(r.remarks, "LNB_IDS").length;
     score += parseRemarkIdList(r.remarks, "DEMOD_IDS").length;
-    score += parseRemarkIdList(r.remarks, "PROC_IDS").length;
     score += parseRemarkIdList(r.remarks, "OTHER_RESOURCE_IDS").length;
   }
   return score;
@@ -125,30 +100,6 @@ function equipmentIdsFromRow(
   return [];
 }
 
-function legacyFrontEndIdsFromRow(row: any, equipment: any[]): { lnaIds: string[]; lnbIds: string[] } {
-  const typeMatch = row.remarks?.match(/LNA\/LNB:(LNA|LNB)/);
-  if (typeMatch?.[1] === "LNA") {
-    const lnaEq = equipment.find(
-      (e: any) => {
-        const cat = (e.category?.name ?? "").toLowerCase();
-        return (
-          e.serviceability === "Operational" &&
-          (cat === "lna" || (cat.includes("lna") && !cat.includes("lnb")))
-        );
-      },
-    );
-    return { lnaIds: lnaEq ? [lnaEq.id as string] : [], lnbIds: [] };
-  }
-  if (typeMatch?.[1] === "LNB") {
-    const lnbEq = equipment.find(
-      (e: any) =>
-        e.serviceability === "Operational" &&
-        (e.category?.name ?? "").toLowerCase().includes("lnb"),
-    );
-    return { lnaIds: [], lnbIds: lnbEq ? [lnbEq.id as string] : [] };
-  }
-  return { lnaIds: [], lnbIds: [] };
-}
 
 function otherResourceIdsFromRow(row: any, equipment: any[]): string[] {
   const fromRemarks = parseRemarkIdList(row.remarks, "OTHER_RESOURCE_IDS");
@@ -177,20 +128,11 @@ export function collectCategoryAllocatedIds(
 
   for (const row of activeRows) {
     const antennaIds = row.antenna_id ? [row.antenna_id as string] : [];
-    const lnaIds = equipmentIdsFromRow(row, "LNA_IDS", "LNA_ID");
-    const lnbIds = equipmentIdsFromRow(row, "LNB_IDS", "LNB_ID");
-    const legacyFrontEnd = legacyFrontEndIdsFromRow(row, equipment);
-    const resolvedLnaIds = lnaIds.length ? lnaIds : legacyFrontEnd.lnaIds;
-    const resolvedLnbIds = lnbIds.length ? lnbIds : legacyFrontEnd.lnbIds;
     const demodIds = equipmentIdsFromRow(row, "DEMOD_IDS", "DEMOD_ID", row.demodulator_id);
-    const procIds = equipmentIdsFromRow(row, "PROC_IDS", "PROC_ID", row.processing_server_id);
     const otherIds = otherResourceIdsFromRow(row, equipment);
 
     for (const id of antennaIds) byLabel.get("Antennas")!.add(id);
-    for (const id of resolvedLnaIds) byLabel.get("LNA")!.add(id);
-    for (const id of resolvedLnbIds) byLabel.get("LNB")!.add(id);
     for (const id of demodIds) byLabel.get("Demodulators")!.add(id);
-    for (const id of procIds) byLabel.get("Processors")!.add(id);
     for (const id of otherIds) byLabel.get("Other Resources")!.add(id);
   }
 
@@ -209,18 +151,12 @@ export function collectEngagementAllocatedIds(activeRows: any[], equipment: any[
 /** Equipment ids selected in an engagement edit form (all resource columns). */
 export function collectFormAllocatedIds(form: {
   antenna_id?: string;
-  lna_ids?: string[];
-  lnb_ids?: string[];
   demodulator_ids?: string[];
-  processing_server_ids?: string[];
   other_resource_ids?: string[];
 }): Set<string> {
   const ids = new Set<string>();
   if (form.antenna_id) ids.add(form.antenna_id);
-  for (const id of form.lna_ids ?? []) ids.add(id);
-  for (const id of form.lnb_ids ?? []) ids.add(id);
   for (const id of form.demodulator_ids ?? []) ids.add(id);
-  for (const id of form.processing_server_ids ?? []) ids.add(id);
   for (const id of form.other_resource_ids ?? []) ids.add(id);
   return ids;
 }
@@ -335,7 +271,8 @@ export function buildResourceRingStats(
 ): ResourceRingStat[] {
   const categoryAllocated = collectCategoryAllocatedIds(activeRows, equipment);
   const claimed = new Set<string>();
-  const named: ResourceRingStat[] = RESOURCE_RING_CATEGORIES.map(({ label, matches }) => {
+
+  return RESOURCE_RING_CATEGORIES.map(({ label, matches }) => {
     const catEq = equipment.filter((e: any) => {
       if (claimed.has(e.id)) return false;
       const catName = (e.category?.name ?? "").toLowerCase();
@@ -349,37 +286,13 @@ export function buildResourceRingStats(
     const activeAllocated = catEq.filter(
       (e: any) => e.serviceability === "Operational" && allocatedInCategory.has(e.id),
     ).length;
-    // Unserviceable inventory is always engaged; table rows supply operational allocations.
     const engaged = faulty + activeAllocated;
     const pct = total === 0 ? 0 : Math.min(100, Math.round((engaged / total) * 100));
     return { label, total, faulty, engaged, pct };
   });
-
-  const otherEq = equipment.filter(
-    (e: any) => (e.category?.name ?? "").trim().toLowerCase() === "other resources",
-  );
-  const otherTotal = otherEq.length;
-  const otherFaulty = otherEq.filter((e: any) => NON_OPERATIONAL.has(e.serviceability)).length;
-  const otherAllocated = categoryAllocated.get("Other Resources") ?? new Set<string>();
-  const otherActiveAllocated = otherEq.filter(
-    (e: any) => e.serviceability === "Operational" && otherAllocated.has(e.id),
-  ).length;
-  const otherEngaged = otherFaulty + otherActiveAllocated;
-  const otherPct =
-    otherTotal === 0 ? 0 : Math.min(100, Math.round((otherEngaged / otherTotal) * 100));
-
-  named.push({
-    label: "Other Resources",
-    total: otherTotal,
-    faulty: otherFaulty,
-    engaged: otherEngaged,
-    pct: otherPct,
-  });
-
-  return named;
 }
 
-/** Large engagement ring = average of all six category rings (always ÷6). */
+/** Large engagement ring = average of all three category rings. */
 export function averageResourceEngagementPct(stats: ResourceRingStat[]): number {
   if (stats.length === 0) return 0;
   return Math.round(stats.reduce((sum, s) => sum + s.pct, 0) / stats.length);
@@ -404,59 +317,6 @@ export function equipmentNameById(equipment: any[], id: string | null | undefine
   if (!id) return "—";
   const eq = equipment.find((e) => e.id === id);
   return eq?.name ?? "—";
-}
-
-export function resolveLnaLnbFromRow(
-  row: any,
-  equipment: any[],
-): { lna: string; lnb: string } {
-  const lnaId = parseEquipmentIdFromRemarks(row.remarks, "LNA_ID");
-  const lnbId = parseEquipmentIdFromRemarks(row.remarks, "LNB_ID");
-
-  if (lnaId || lnbId) {
-    return {
-      lna: equipmentNameById(equipment, lnaId),
-      lnb: equipmentNameById(equipment, lnbId),
-    };
-  }
-
-  const typeMatch = row.remarks?.match(/LNA\/LNB:(LNA|LNB)/);
-  const type = typeMatch?.[1];
-  if (type === "LNA") {
-    const lnaEq = equipment.find(
-      (e: any) =>
-        (e.category?.name ?? "").toLowerCase() === "lna" &&
-        e.serviceability === "Operational",
-    );
-    return { lna: lnaEq?.name ?? "LNA", lnb: "—" };
-  }
-  if (type === "LNB") {
-    const lnbEq = equipment.find(
-      (e: any) =>
-        (e.category?.name ?? "").toLowerCase().includes("lnb") &&
-        e.serviceability === "Operational",
-    );
-    return { lna: "—", lnb: lnbEq?.name ?? "LNB" };
-  }
-
-  return { lna: "—", lnb: "—" };
-}
-
-export function appendEquipmentMetaToRemarks(
-  baseRemarks: string,
-  lnaType: "LNA" | "LNB",
-  demodType: string,
-  lnaId?: string,
-  lnbId?: string,
-): string {
-  const parts = [
-    `LNA/LNB:${lnaType}`,
-    lnaId ? `LNA_ID:${lnaId}` : null,
-    lnbId ? `LNB_ID:${lnbId}` : null,
-    `DEMOD_TYPE:${demodType}`,
-    baseRemarks.trim(),
-  ].filter(Boolean);
-  return parts.join(" | ");
 }
 
 export { parseEquipmentIdFromRemarks };

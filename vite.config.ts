@@ -11,5 +11,7 @@ export default defineConfig({
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
     // nitro/vite builds from this
     server: { entry: "server" },
+    // Offline Electron: prerender a static shell at build time — no runtime SSR in the EXE.
+    spa: { enabled: true },
   },
 });

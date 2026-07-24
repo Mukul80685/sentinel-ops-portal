@@ -30,10 +30,7 @@ import {
   ArrowLeft,
   Shield,
   Satellite as SatelliteIcon,
-  Zap,
-  Radio,
   Cpu,
-  Server,
   Package,
   CheckCircle2,
   AlertTriangle,
@@ -85,10 +82,7 @@ function pctColor(pct: number): string {
 
 const CATEGORY_ICONS: Record<string, typeof SatelliteIcon> = {
   Antenna: SatelliteIcon,
-  LNA: Zap,
-  LNB: Radio,
   Demodulators: Cpu,
-  "Processing Servers": Server,
   "Other Resources": Package,
 };
 
@@ -218,9 +212,12 @@ function ServiceabilityPage() {
   const selectedUnit  = units.find((u) => u.id === selectedUnitId) ?? null;
   const unitEquipment = equipment.filter((e: any) => e.unit_id === selectedUnitId);
 
+  const unitSubtitle = selectedUnit ? unitDisplayLabel(selectedUnit) : undefined;
+
   return (
     <AppShell
       title="Serviceability State"
+      subtitle={unitSubtitle}
       headerIcon={<HomeNavIconBadge icon={Shield} theme="serviceability" size="md" />}
     >
       {selectedUnitId ? (

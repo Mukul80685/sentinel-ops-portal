@@ -1,7 +1,10 @@
-import type { ModuleScope } from "@/lib/moduleUnitRegistry";
-
 /** Modules that support point-in-time snapshot backup/restore. */
-export type ModuleSnapshotId = ModuleScope;
+export type ModuleSnapshotId =
+  | "intel"
+  | "priority"
+  | "visibility"
+  | "inventory"
+  | "serviceability";
 
 export const SNAPSHOT_FORMAT_VERSION = "1.0";
 

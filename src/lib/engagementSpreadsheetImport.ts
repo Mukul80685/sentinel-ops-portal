@@ -21,10 +21,7 @@ export const ENGAGEMENT_IMPORT_COMMENT =
 
 export const ENGAGEMENT_IMPORT_RESOURCE_COLUMNS = [
   "Antenna",
-  "LNA",
-  "LNB",
   "Demodulator",
-  "Processor",
   "Other Resources",
 ] as const;
 
@@ -51,10 +48,7 @@ export type EngagementImportEquipment = {
 
 export type ResolvedImportResources = {
   antennaIds: string[];
-  lnaIds: string[];
-  lnbIds: string[];
   demodIds: string[];
-  procIds: string[];
   otherIds: string[];
   unmatchedColumns: EngagementImportResourceColumn[];
 };
@@ -132,14 +126,8 @@ export function equipmentMatchesImportColumn(
   switch (column) {
     case "Antenna":
       return cat.includes("antenna");
-    case "LNA":
-      return cat.includes("lna") && !cat.includes("lnb");
-    case "LNB":
-      return cat.includes("lnb");
     case "Demodulator":
       return cat.includes("demodulat");
-    case "Processor":
-      return cat.includes("processing") || cat.includes("processor");
     case "Other Resources":
       return isOtherResourcesCategory(e.category?.name ?? "");
     default:
@@ -283,20 +271,14 @@ export function resolveImportResourcesFromRecord(
 ): ResolvedImportResources {
   const columnValues: { column: EngagementImportResourceColumn; raw: string }[] = [
     { column: "Antenna", raw: getImportCell(record, "Antenna") },
-    { column: "LNA", raw: getImportCell(record, "LNA") },
-    { column: "LNB", raw: getImportCell(record, "LNB") },
     { column: "Demodulator", raw: getImportCell(record, "Demodulator") },
-    { column: "Processor", raw: getImportCell(record, "Processor") },
     { column: "Other Resources", raw: getImportCell(record, "Other Resources") },
   ];
 
   const unmatchedColumns: EngagementImportResourceColumn[] = [];
   const resolved: Record<EngagementImportResourceColumn, string[]> = {
     Antenna: [],
-    LNA: [],
-    LNB: [],
     Demodulator: [],
-    Processor: [],
     "Other Resources": [],
   };
 
@@ -308,10 +290,7 @@ export function resolveImportResourcesFromRecord(
 
   return {
     antennaIds: resolved.Antenna,
-    lnaIds: resolved.LNA,
-    lnbIds: resolved.LNB,
     demodIds: resolved.Demodulator,
-    procIds: resolved.Processor,
     otherIds: resolved["Other Resources"],
     unmatchedColumns,
   };
@@ -378,10 +357,7 @@ export function parseEngagementImportGrid(
 
     const matchedCount =
       resources.antennaIds.length +
-      resources.lnaIds.length +
-      resources.lnbIds.length +
       resources.demodIds.length +
-      resources.procIds.length +
       resources.otherIds.length;
 
     if (resources.unmatchedColumns.length > 0) {

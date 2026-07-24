@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index'
+import { Route as AuthenticatedUnprofiledSatellitesRouteImport } from './routes/_authenticated/unprofiled-satellites'
 import { Route as AuthenticatedReportsRouteImport } from './routes/_authenticated/reports'
 import { Route as AuthenticatedMinutesRouteImport } from './routes/_authenticated/minutes'
 import { Route as AuthenticatedImportantRouteImport } from './routes/_authenticated/important'
@@ -20,11 +21,13 @@ import { Route as AuthenticatedDashboardRouteImport } from './routes/_authentica
 import { Route as AuthenticatedControlCenterRouteImport } from './routes/_authenticated/control-center'
 import { Route as AuthenticatedAdministratorRouteImport } from './routes/_authenticated/administrator'
 import { Route as AuthenticatedVisibilityIndexRouteImport } from './routes/_authenticated/visibility.index'
+import { Route as AuthenticatedThurayaIndexRouteImport } from './routes/_authenticated/thuraya/index'
 import { Route as AuthenticatedServiceabilityIndexRouteImport } from './routes/_authenticated/serviceability.index'
 import { Route as AuthenticatedPriorityIndexRouteImport } from './routes/_authenticated/priority/index'
 import { Route as AuthenticatedInventoryIndexRouteImport } from './routes/_authenticated/inventory/index'
 import { Route as AuthenticatedIntelIndexRouteImport } from './routes/_authenticated/intel.index'
 import { Route as AuthenticatedEngagementIndexRouteImport } from './routes/_authenticated/engagement/index'
+import { Route as AuthenticatedBeidouIndexRouteImport } from './routes/_authenticated/beidou/index'
 import { Route as AuthenticatedPriorityUnitIdRouteImport } from './routes/_authenticated/priority/$unitId'
 import { Route as AuthenticatedIntelUnitIdRouteImport } from './routes/_authenticated/intel.$unitId'
 import { Route as AuthenticatedEngagementUnitIdRouteImport } from './routes/_authenticated/engagement/$unitId'
@@ -32,6 +35,7 @@ import { Route as AuthenticatedAllocateIntelIdRouteImport } from './routes/_auth
 import { Route as AuthenticatedAdminUsersRouteImport } from './routes/_authenticated/admin/users'
 import { Route as AuthenticatedAdminUnitsRouteImport } from './routes/_authenticated/admin/units'
 import { Route as AuthenticatedAdminSatellitesRouteImport } from './routes/_authenticated/admin/satellites'
+import { Route as AuthenticatedThurayaUnitIdIndexRouteImport } from './routes/_authenticated/thuraya/$unitId/index'
 import { Route as AuthenticatedInventoryUnitIdIndexRouteImport } from './routes/_authenticated/inventory/$unitId/index'
 import { Route as AuthenticatedIntelUnitIdSatelliteKeyRouteImport } from './routes/_authenticated/intel.$unitId.$satelliteKey'
 import { Route as AuthenticatedInventoryUnitIdCategoryIdIndexRouteImport } from './routes/_authenticated/inventory/$unitId/$categoryId/index'
@@ -51,6 +55,12 @@ const AuthenticatedIndexRoute = AuthenticatedIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedUnprofiledSatellitesRoute =
+  AuthenticatedUnprofiledSatellitesRouteImport.update({
+    id: '/unprofiled-satellites',
+    path: '/unprofiled-satellites',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedReportsRoute = AuthenticatedReportsRouteImport.update({
   id: '/reports',
   path: '/reports',
@@ -94,6 +104,12 @@ const AuthenticatedVisibilityIndexRoute =
     path: '/visibility/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedThurayaIndexRoute =
+  AuthenticatedThurayaIndexRouteImport.update({
+    id: '/thuraya/',
+    path: '/thuraya/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedServiceabilityIndexRoute =
   AuthenticatedServiceabilityIndexRouteImport.update({
     id: '/serviceability/',
@@ -121,6 +137,12 @@ const AuthenticatedEngagementIndexRoute =
   AuthenticatedEngagementIndexRouteImport.update({
     id: '/engagement/',
     path: '/engagement/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedBeidouIndexRoute =
+  AuthenticatedBeidouIndexRouteImport.update({
+    id: '/beidou/',
+    path: '/beidou/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedPriorityUnitIdRoute =
@@ -163,6 +185,12 @@ const AuthenticatedAdminSatellitesRoute =
     path: '/admin/satellites',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedThurayaUnitIdIndexRoute =
+  AuthenticatedThurayaUnitIdIndexRouteImport.update({
+    id: '/thuraya/$unitId/',
+    path: '/thuraya/$unitId/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedInventoryUnitIdIndexRoute =
   AuthenticatedInventoryUnitIdIndexRouteImport.update({
     id: '/inventory/$unitId/',
@@ -198,6 +226,7 @@ export interface FileRoutesByFullPath {
   '/important': typeof AuthenticatedImportantRoute
   '/minutes': typeof AuthenticatedMinutesRoute
   '/reports': typeof AuthenticatedReportsRoute
+  '/unprofiled-satellites': typeof AuthenticatedUnprofiledSatellitesRoute
   '/admin/satellites': typeof AuthenticatedAdminSatellitesRoute
   '/admin/units': typeof AuthenticatedAdminUnitsRoute
   '/admin/users': typeof AuthenticatedAdminUsersRoute
@@ -205,14 +234,17 @@ export interface FileRoutesByFullPath {
   '/engagement/$unitId': typeof AuthenticatedEngagementUnitIdRoute
   '/intel/$unitId': typeof AuthenticatedIntelUnitIdRouteWithChildren
   '/priority/$unitId': typeof AuthenticatedPriorityUnitIdRoute
+  '/beidou/': typeof AuthenticatedBeidouIndexRoute
   '/engagement/': typeof AuthenticatedEngagementIndexRoute
   '/intel/': typeof AuthenticatedIntelIndexRoute
   '/inventory/': typeof AuthenticatedInventoryIndexRoute
   '/priority/': typeof AuthenticatedPriorityIndexRoute
   '/serviceability/': typeof AuthenticatedServiceabilityIndexRoute
+  '/thuraya/': typeof AuthenticatedThurayaIndexRoute
   '/visibility/': typeof AuthenticatedVisibilityIndexRoute
   '/intel/$unitId/$satelliteKey': typeof AuthenticatedIntelUnitIdSatelliteKeyRoute
   '/inventory/$unitId/': typeof AuthenticatedInventoryUnitIdIndexRoute
+  '/thuraya/$unitId/': typeof AuthenticatedThurayaUnitIdIndexRoute
   '/inventory/$unitId/$categoryId/$equipmentId': typeof AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRoute
   '/inventory/$unitId/$categoryId/': typeof AuthenticatedInventoryUnitIdCategoryIdIndexRoute
 }
@@ -225,6 +257,7 @@ export interface FileRoutesByTo {
   '/important': typeof AuthenticatedImportantRoute
   '/minutes': typeof AuthenticatedMinutesRoute
   '/reports': typeof AuthenticatedReportsRoute
+  '/unprofiled-satellites': typeof AuthenticatedUnprofiledSatellitesRoute
   '/': typeof AuthenticatedIndexRoute
   '/admin/satellites': typeof AuthenticatedAdminSatellitesRoute
   '/admin/units': typeof AuthenticatedAdminUnitsRoute
@@ -233,14 +266,17 @@ export interface FileRoutesByTo {
   '/engagement/$unitId': typeof AuthenticatedEngagementUnitIdRoute
   '/intel/$unitId': typeof AuthenticatedIntelUnitIdRouteWithChildren
   '/priority/$unitId': typeof AuthenticatedPriorityUnitIdRoute
+  '/beidou': typeof AuthenticatedBeidouIndexRoute
   '/engagement': typeof AuthenticatedEngagementIndexRoute
   '/intel': typeof AuthenticatedIntelIndexRoute
   '/inventory': typeof AuthenticatedInventoryIndexRoute
   '/priority': typeof AuthenticatedPriorityIndexRoute
   '/serviceability': typeof AuthenticatedServiceabilityIndexRoute
+  '/thuraya': typeof AuthenticatedThurayaIndexRoute
   '/visibility': typeof AuthenticatedVisibilityIndexRoute
   '/intel/$unitId/$satelliteKey': typeof AuthenticatedIntelUnitIdSatelliteKeyRoute
   '/inventory/$unitId': typeof AuthenticatedInventoryUnitIdIndexRoute
+  '/thuraya/$unitId': typeof AuthenticatedThurayaUnitIdIndexRoute
   '/inventory/$unitId/$categoryId/$equipmentId': typeof AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRoute
   '/inventory/$unitId/$categoryId': typeof AuthenticatedInventoryUnitIdCategoryIdIndexRoute
 }
@@ -255,6 +291,7 @@ export interface FileRoutesById {
   '/_authenticated/important': typeof AuthenticatedImportantRoute
   '/_authenticated/minutes': typeof AuthenticatedMinutesRoute
   '/_authenticated/reports': typeof AuthenticatedReportsRoute
+  '/_authenticated/unprofiled-satellites': typeof AuthenticatedUnprofiledSatellitesRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/_authenticated/admin/satellites': typeof AuthenticatedAdminSatellitesRoute
   '/_authenticated/admin/units': typeof AuthenticatedAdminUnitsRoute
@@ -263,14 +300,17 @@ export interface FileRoutesById {
   '/_authenticated/engagement/$unitId': typeof AuthenticatedEngagementUnitIdRoute
   '/_authenticated/intel/$unitId': typeof AuthenticatedIntelUnitIdRouteWithChildren
   '/_authenticated/priority/$unitId': typeof AuthenticatedPriorityUnitIdRoute
+  '/_authenticated/beidou/': typeof AuthenticatedBeidouIndexRoute
   '/_authenticated/engagement/': typeof AuthenticatedEngagementIndexRoute
   '/_authenticated/intel/': typeof AuthenticatedIntelIndexRoute
   '/_authenticated/inventory/': typeof AuthenticatedInventoryIndexRoute
   '/_authenticated/priority/': typeof AuthenticatedPriorityIndexRoute
   '/_authenticated/serviceability/': typeof AuthenticatedServiceabilityIndexRoute
+  '/_authenticated/thuraya/': typeof AuthenticatedThurayaIndexRoute
   '/_authenticated/visibility/': typeof AuthenticatedVisibilityIndexRoute
   '/_authenticated/intel/$unitId/$satelliteKey': typeof AuthenticatedIntelUnitIdSatelliteKeyRoute
   '/_authenticated/inventory/$unitId/': typeof AuthenticatedInventoryUnitIdIndexRoute
+  '/_authenticated/thuraya/$unitId/': typeof AuthenticatedThurayaUnitIdIndexRoute
   '/_authenticated/inventory/$unitId/$categoryId/$equipmentId': typeof AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRoute
   '/_authenticated/inventory/$unitId/$categoryId/': typeof AuthenticatedInventoryUnitIdCategoryIdIndexRoute
 }
@@ -286,6 +326,7 @@ export interface FileRouteTypes {
     | '/important'
     | '/minutes'
     | '/reports'
+    | '/unprofiled-satellites'
     | '/admin/satellites'
     | '/admin/units'
     | '/admin/users'
@@ -293,14 +334,17 @@ export interface FileRouteTypes {
     | '/engagement/$unitId'
     | '/intel/$unitId'
     | '/priority/$unitId'
+    | '/beidou/'
     | '/engagement/'
     | '/intel/'
     | '/inventory/'
     | '/priority/'
     | '/serviceability/'
+    | '/thuraya/'
     | '/visibility/'
     | '/intel/$unitId/$satelliteKey'
     | '/inventory/$unitId/'
+    | '/thuraya/$unitId/'
     | '/inventory/$unitId/$categoryId/$equipmentId'
     | '/inventory/$unitId/$categoryId/'
   fileRoutesByTo: FileRoutesByTo
@@ -313,6 +357,7 @@ export interface FileRouteTypes {
     | '/important'
     | '/minutes'
     | '/reports'
+    | '/unprofiled-satellites'
     | '/'
     | '/admin/satellites'
     | '/admin/units'
@@ -321,14 +366,17 @@ export interface FileRouteTypes {
     | '/engagement/$unitId'
     | '/intel/$unitId'
     | '/priority/$unitId'
+    | '/beidou'
     | '/engagement'
     | '/intel'
     | '/inventory'
     | '/priority'
     | '/serviceability'
+    | '/thuraya'
     | '/visibility'
     | '/intel/$unitId/$satelliteKey'
     | '/inventory/$unitId'
+    | '/thuraya/$unitId'
     | '/inventory/$unitId/$categoryId/$equipmentId'
     | '/inventory/$unitId/$categoryId'
   id:
@@ -342,6 +390,7 @@ export interface FileRouteTypes {
     | '/_authenticated/important'
     | '/_authenticated/minutes'
     | '/_authenticated/reports'
+    | '/_authenticated/unprofiled-satellites'
     | '/_authenticated/'
     | '/_authenticated/admin/satellites'
     | '/_authenticated/admin/units'
@@ -350,14 +399,17 @@ export interface FileRouteTypes {
     | '/_authenticated/engagement/$unitId'
     | '/_authenticated/intel/$unitId'
     | '/_authenticated/priority/$unitId'
+    | '/_authenticated/beidou/'
     | '/_authenticated/engagement/'
     | '/_authenticated/intel/'
     | '/_authenticated/inventory/'
     | '/_authenticated/priority/'
     | '/_authenticated/serviceability/'
+    | '/_authenticated/thuraya/'
     | '/_authenticated/visibility/'
     | '/_authenticated/intel/$unitId/$satelliteKey'
     | '/_authenticated/inventory/$unitId/'
+    | '/_authenticated/thuraya/$unitId/'
     | '/_authenticated/inventory/$unitId/$categoryId/$equipmentId'
     | '/_authenticated/inventory/$unitId/$categoryId/'
   fileRoutesById: FileRoutesById
@@ -388,6 +440,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof AuthenticatedIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/unprofiled-satellites': {
+      id: '/_authenticated/unprofiled-satellites'
+      path: '/unprofiled-satellites'
+      fullPath: '/unprofiled-satellites'
+      preLoaderRoute: typeof AuthenticatedUnprofiledSatellitesRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/reports': {
@@ -446,6 +505,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedVisibilityIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/thuraya/': {
+      id: '/_authenticated/thuraya/'
+      path: '/thuraya'
+      fullPath: '/thuraya/'
+      preLoaderRoute: typeof AuthenticatedThurayaIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/serviceability/': {
       id: '/_authenticated/serviceability/'
       path: '/serviceability'
@@ -479,6 +545,13 @@ declare module '@tanstack/react-router' {
       path: '/engagement'
       fullPath: '/engagement/'
       preLoaderRoute: typeof AuthenticatedEngagementIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/beidou/': {
+      id: '/_authenticated/beidou/'
+      path: '/beidou'
+      fullPath: '/beidou/'
+      preLoaderRoute: typeof AuthenticatedBeidouIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/priority/$unitId': {
@@ -528,6 +601,13 @@ declare module '@tanstack/react-router' {
       path: '/admin/satellites'
       fullPath: '/admin/satellites'
       preLoaderRoute: typeof AuthenticatedAdminSatellitesRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/thuraya/$unitId/': {
+      id: '/_authenticated/thuraya/$unitId/'
+      path: '/thuraya/$unitId'
+      fullPath: '/thuraya/$unitId/'
+      preLoaderRoute: typeof AuthenticatedThurayaUnitIdIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/inventory/$unitId/': {
@@ -584,6 +664,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedImportantRoute: typeof AuthenticatedImportantRoute
   AuthenticatedMinutesRoute: typeof AuthenticatedMinutesRoute
   AuthenticatedReportsRoute: typeof AuthenticatedReportsRoute
+  AuthenticatedUnprofiledSatellitesRoute: typeof AuthenticatedUnprofiledSatellitesRoute
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
   AuthenticatedAdminSatellitesRoute: typeof AuthenticatedAdminSatellitesRoute
   AuthenticatedAdminUnitsRoute: typeof AuthenticatedAdminUnitsRoute
@@ -592,13 +673,16 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedEngagementUnitIdRoute: typeof AuthenticatedEngagementUnitIdRoute
   AuthenticatedIntelUnitIdRoute: typeof AuthenticatedIntelUnitIdRouteWithChildren
   AuthenticatedPriorityUnitIdRoute: typeof AuthenticatedPriorityUnitIdRoute
+  AuthenticatedBeidouIndexRoute: typeof AuthenticatedBeidouIndexRoute
   AuthenticatedEngagementIndexRoute: typeof AuthenticatedEngagementIndexRoute
   AuthenticatedIntelIndexRoute: typeof AuthenticatedIntelIndexRoute
   AuthenticatedInventoryIndexRoute: typeof AuthenticatedInventoryIndexRoute
   AuthenticatedPriorityIndexRoute: typeof AuthenticatedPriorityIndexRoute
   AuthenticatedServiceabilityIndexRoute: typeof AuthenticatedServiceabilityIndexRoute
+  AuthenticatedThurayaIndexRoute: typeof AuthenticatedThurayaIndexRoute
   AuthenticatedVisibilityIndexRoute: typeof AuthenticatedVisibilityIndexRoute
   AuthenticatedInventoryUnitIdIndexRoute: typeof AuthenticatedInventoryUnitIdIndexRoute
+  AuthenticatedThurayaUnitIdIndexRoute: typeof AuthenticatedThurayaUnitIdIndexRoute
   AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRoute: typeof AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRoute
   AuthenticatedInventoryUnitIdCategoryIdIndexRoute: typeof AuthenticatedInventoryUnitIdCategoryIdIndexRoute
 }
@@ -611,6 +695,8 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedImportantRoute: AuthenticatedImportantRoute,
   AuthenticatedMinutesRoute: AuthenticatedMinutesRoute,
   AuthenticatedReportsRoute: AuthenticatedReportsRoute,
+  AuthenticatedUnprofiledSatellitesRoute:
+    AuthenticatedUnprofiledSatellitesRoute,
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
   AuthenticatedAdminSatellitesRoute: AuthenticatedAdminSatellitesRoute,
   AuthenticatedAdminUnitsRoute: AuthenticatedAdminUnitsRoute,
@@ -619,14 +705,17 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedEngagementUnitIdRoute: AuthenticatedEngagementUnitIdRoute,
   AuthenticatedIntelUnitIdRoute: AuthenticatedIntelUnitIdRouteWithChildren,
   AuthenticatedPriorityUnitIdRoute: AuthenticatedPriorityUnitIdRoute,
+  AuthenticatedBeidouIndexRoute: AuthenticatedBeidouIndexRoute,
   AuthenticatedEngagementIndexRoute: AuthenticatedEngagementIndexRoute,
   AuthenticatedIntelIndexRoute: AuthenticatedIntelIndexRoute,
   AuthenticatedInventoryIndexRoute: AuthenticatedInventoryIndexRoute,
   AuthenticatedPriorityIndexRoute: AuthenticatedPriorityIndexRoute,
   AuthenticatedServiceabilityIndexRoute: AuthenticatedServiceabilityIndexRoute,
+  AuthenticatedThurayaIndexRoute: AuthenticatedThurayaIndexRoute,
   AuthenticatedVisibilityIndexRoute: AuthenticatedVisibilityIndexRoute,
   AuthenticatedInventoryUnitIdIndexRoute:
     AuthenticatedInventoryUnitIdIndexRoute,
+  AuthenticatedThurayaUnitIdIndexRoute: AuthenticatedThurayaUnitIdIndexRoute,
   AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRoute:
     AuthenticatedInventoryUnitIdCategoryIdEquipmentIdRoute,
   AuthenticatedInventoryUnitIdCategoryIdIndexRoute:

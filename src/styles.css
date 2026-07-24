@@ -257,9 +257,9 @@
       0 1px 0 oklch(0 0 0 / 0.07);
   }
 
-  /* Home launcher — opaque white tiles, taller profile, embossed hover */
+  /* Home launcher — opaque white tiles, compact profile for Electron + browser */
   .home-launcher .home-launcher-tile {
-    min-height: 18rem;
+    min-height: 10.5rem;
     background: #ffffff;
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
@@ -277,15 +277,16 @@
   }
   @media (min-width: 640px) {
     .home-launcher .home-launcher-tile {
-      min-height: 21rem;
+      min-height: 11.5rem;
     }
   }
   @media (min-width: 1024px) {
     .home-launcher .home-launcher-tile {
-      min-height: 24rem;
+      min-height: 12.5rem;
     }
   }
-  .home-launcher a.home-launcher-tile:hover {
+  .home-launcher a.home-launcher-tile:hover,
+  .home-launcher-others-slot:not(.home-launcher-others-slot--expanded) .home-launcher-others-parent:hover {
     transform: translateY(-5px) scale(1.035);
     border-color: oklch(0.24 0.08 145);
     background: #ffffff;
@@ -316,6 +317,78 @@
       inset 0 -2px 6px oklch(0 0 0 / 0.05),
       0 4px 0 oklch(0 0 0 / 0.06),
       0 10px 22px oklch(0 0 0 / 0.1);
+  }
+
+  /* Thuraya & Beidou — split into two sub-tiles within the same footprint as VSAT */
+  .home-launcher-others-slot {
+    min-height: 10.5rem;
+  }
+  @media (min-width: 640px) {
+    .home-launcher-others-slot {
+      min-height: 11.5rem;
+    }
+  }
+  @media (min-width: 1024px) {
+    .home-launcher-others-slot {
+      min-height: 12.5rem;
+    }
+  }
+
+  .home-launcher-others-parent {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    cursor: pointer;
+    transition:
+      opacity 0.28s ease,
+      transform 0.38s cubic-bezier(0.34, 1.2, 0.64, 1);
+  }
+  .home-launcher-others-slot--expanded .home-launcher-others-parent {
+    opacity: 0;
+    transform: scale(0.94);
+    pointer-events: none;
+  }
+
+  .home-launcher-others-split {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    transform: scale(0.96);
+    pointer-events: none;
+    transition:
+      opacity 0.32s ease 0.04s,
+      transform 0.4s cubic-bezier(0.34, 1.15, 0.64, 1) 0.04s;
+  }
+  .home-launcher-others-slot--expanded .home-launcher-others-split {
+    opacity: 1;
+    transform: scale(1);
+    pointer-events: auto;
+  }
+
+  .home-launcher-sub-tile {
+    background: #ffffff;
+    border: 2px solid oklch(0.30 0.07 145);
+    border-radius: 0.85rem;
+    box-shadow:
+      inset 0 1px 0 oklch(1 0 0 / 1),
+      inset 0 -2px 6px oklch(0 0 0 / 0.05),
+      0 3px 0 oklch(0 0 0 / 0.07),
+      0 8px 18px oklch(0 0 0 / 0.1);
+    animation: homeSubTileSplitIn 0.42s cubic-bezier(0.34, 1.2, 0.64, 1) both;
+  }
+  @keyframes homeSubTileSplitIn {
+    from {
+      opacity: 0;
+      transform: scale(0.72) translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+  }
+
+  .home-launcher-others-collapse {
+    animation: homeSubTileSplitIn 0.3s ease both;
   }
 
   /* Glassmorphic 3D module icon badges — home dashboard + administrator hub + monitoring dashboard */
@@ -597,6 +670,22 @@
     height: 1.5px;
     border-radius: 1px;
     opacity: 0.55;
+  }
+
+  /* VSAT map unit panel — keep tile shadows + accent line inside clipped panel */
+  .map-unit-summary-tile {
+    overflow: visible;
+    box-shadow:
+      inset 0 2px 0 oklch(1 0 0 / 0.12),
+      inset 0 -2px 0 oklch(0 0 0 / 0.06),
+      0 3px 0 oklch(0 0 0 / 0.08),
+      0 8px 18px oklch(0 0 0 / 0.14);
+  }
+  .map-unit-summary-tile:hover {
+    box-shadow:
+      inset 0 2px 0 oklch(1 0 0 / 0.15),
+      0 2px 0 oklch(0 0 0 / 0.06),
+      0 10px 22px oklch(0 0 0 / 0.18);
   }
 
   /* Faint world-map meridian grid on lower module tiles */

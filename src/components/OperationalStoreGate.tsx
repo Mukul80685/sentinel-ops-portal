@@ -7,6 +7,9 @@ import {
 } from "@/lib/operationalStore";
 import { OPERATIONAL_DATASET_VERSION } from "@/lib/operationalConstants";
 import { whenElectronStorageReady } from "@/lib/electronPersist";
+import { sanitizeIntelCellEditsStorage } from "@/lib/intelCellStore";
+import { sanitizeIntelScanOverridesStorage } from "@/lib/intelScanStorage";
+import { sanitizeVisibilityOverlayDuplicateSatellites } from "@/lib/visibilityOverlay";
 
 /**
  * OperationalStoreGate
@@ -46,8 +49,12 @@ export function OperationalStoreGate() {
         } else {
           ensureOperationalDataset();
         }
+        sanitizeVisibilityOverlayDuplicateSatellites();
+        sanitizeIntelCellEditsStorage();
+        sanitizeIntelScanOverridesStorage();
       } catch {
-        resetOperationalDataset();
+        // Never wipe persisted data on a transient parse failure (common during EXE hydration).
+        ensureOperationalDataset();
       }
     })();
   }, []);

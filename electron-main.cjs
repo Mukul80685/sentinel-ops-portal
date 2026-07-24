@@ -246,96 +246,44 @@ function showStartupError(title, message) {
   app.quit();
 }
 
-function serveStatic(req, res) {
-  const filePath = path.join(CLIENT_DIST, req.url.split('?')[0]);
-  if (!filePath.startsWith(CLIENT_DIST)) {
-    res.writeHead(403);
-    res.end('Forbidden');
-    return true;
-  }
-  if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-    const ext = path.extname(filePath);
-    const mime =
-      ext === '.html'
-        ? 'text/html; charset=utf-8'
-        : MIME_TYPES[ext] || 'application/octet-stream';
-    res.writeHead(200, { 'Content-Type': mime });
-    fs.createReadStream(filePath).pipe(res);
-    return true;
-  }
-  return false;
+function resolveClientFile(urlPath) {
+  const decoded = decodeURIComponent((urlPath || '/').split('?')[0]);
+  const relativePath = decoded.replace(/^\/+/, '');
+  const filePath = path.join(CLIENT_DIST, relativePath);
+  if (!filePath.startsWith(CLIENT_DIST)) return null;
+  if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) return filePath;
+  return null;
 }
 
-async function startServer() {
-  let serverEntry;
-  try {
-    serverEntry = await import('./dist/server/server.js');
-  } catch (err) {
+async function startStaticServer() {
+  const spaShell = path.join(CLIENT_DIST, '_shell.html');
+  if (!fs.existsSync(spaShell)) {
     throw new Error(
-      `Could not load the application server bundle.\n\n` +
-        `Expected file: ${path.join(__dirname, 'dist/server/server.js')}\n\n` +
-        `${err?.message ?? err}`,
+      `Missing SPA shell at ${spaShell}.\n\nRun "npm run build" before launching or packaging the EXE.`,
     );
   }
 
-  const handler = serverEntry.default;
-  if (!handler?.fetch) {
-    throw new Error('The application server bundle is missing its fetch handler.');
-  }
-
-  let activePort = PREFERRED_PORT;
-
-  server = http.createServer(async (req, res) => {
-    // Serve static assets directly from dist/client
-    if (
-      req.url &&
-      (req.url.startsWith('/assets/') ||
-        req.url.startsWith('/home/') ||
-        req.url.startsWith('/flags/'))
-    ) {
-      if (serveStatic(req, res)) return;
+  server = http.createServer((req, res) => {
+    const staticFile = resolveClientFile(req.url);
+    if (staticFile) {
+      const ext = path.extname(staticFile);
+      const mime =
+        ext === '.html'
+          ? 'text/html; charset=utf-8'
+          : MIME_TYPES[ext] || 'application/octet-stream';
+      res.writeHead(200, { 'Content-Type': mime });
+      fs.createReadStream(staticFile).pipe(res);
+      return;
     }
 
-    // Also serve ssacc-logo.png and other root client files
-    if (req.url && !req.url.startsWith('/api')) {
-      if (serveStatic(req, res)) return;
-    }
-
-    // Everything else goes to the SSR handler
-    const url = `http://127.0.0.1:${activePort}${req.url}`;
-    const headers = {};
-    for (const [key, value] of Object.entries(req.headers)) {
-      if (value) headers[key] = Array.isArray(value) ? value.join(',') : value;
-    }
-
-    const chunks = [];
-    req.on('data', chunk => chunks.push(chunk));
-    req.on('end', async () => {
-      try {
-        const body = chunks.length > 0 ? Buffer.concat(chunks) : undefined;
-        const request = new Request(url, {
-          method: req.method,
-          headers,
-          body: body && body.length > 0 ? body : undefined,
-        });
-
-        const response = await handler.fetch(request);
-        res.writeHead(response.status, Object.fromEntries(response.headers.entries()));
-        const buffer = await response.arrayBuffer();
-        res.end(Buffer.from(buffer));
-      } catch (err) {
-        console.error(err);
-        res.writeHead(500);
-        res.end('Server error');
-      }
-    });
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    fs.createReadStream(spaShell).pipe(res);
   });
 
   const port = app.isPackaged
     ? await listenStrictPortWithRetry(server, PREFERRED_PORT)
     : await listenOnAvailablePort(server, PREFERRED_PORT);
-  activePort = port;
-  console.log(`Server listening on port ${port}`);
+  console.log(`Static server listening on port ${port}`);
   return port;
 }
 
@@ -423,7 +371,7 @@ if (!gotSingleInstanceLock) {
   app.on('ready', async () => {
     initUserDataPaths();
     try {
-      const port = await startServer();
+      const port = await startStaticServer();
       createWindow(port);
     } catch (err) {
       const message =

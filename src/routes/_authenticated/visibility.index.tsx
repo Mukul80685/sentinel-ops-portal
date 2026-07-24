@@ -112,6 +112,7 @@ import {
 } from "@/lib/visibilityOverlay";
 import { mergeRegionsWithOverlay, useVisibleSatelliteCounts } from "@/lib/satelliteCatalog";
 import { unitDisplayFromRecord } from "@/lib/unitDisplay";
+import { unitDisplayLabel } from "@/lib/operationalDataset";
 import { resolveIntUnitSlug } from "@/lib/operationalSync";
 import { UnitAdvancedFeatures } from "@/components/UnitAdvancedFeatures";
 import { BackupRestore } from "@/components/BackupRestore";
@@ -483,10 +484,14 @@ function VisibilityPage() {
     }
   }, [searchUnit, searchSatellite, searchRegion, mergedRegions, localUnits]);
 
+  const unitSubtitle = selectedUnit
+    ? unitDisplayLabel(selectedUnit)
+    : "Target Country Satellites";
+
   return (
     <AppShell
       title="Satellite Visibility Matrix"
-      subtitle="Target Country Satellites"
+      subtitle={unitSubtitle}
       headerIcon={<HomeNavIconBadge icon={Radar} theme="visibility" size="md" />}
       horizontalNav={null}
     >

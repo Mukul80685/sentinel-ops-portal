@@ -21,9 +21,6 @@ import {
   whenElectronStorageReady,
 } from "../lib/electronPersist";
 import { installAllocationVisibilityReconciliation } from "../lib/priorityAllocation";
-import { sanitizeIntelCellEditsStorage } from "../lib/intelCellStore";
-import { sanitizeIntelScanOverridesStorage } from "../lib/intelScanStorage";
-import { sanitizeVisibilityOverlayDuplicateSatellites } from "../lib/visibilityOverlay";
 
 /**
  * IMPORTANT:
@@ -117,6 +114,7 @@ function ErrorComponent({
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
 }>()({
+  ssr: false,
   head: () => ({
     meta: [
       { charSet: "utf-8" },
@@ -181,9 +179,6 @@ function RootComponent() {
 
   useEffect(() => {
     if (!storageReady) return;
-    sanitizeVisibilityOverlayDuplicateSatellites();
-    sanitizeIntelCellEditsStorage();
-    sanitizeIntelScanOverridesStorage();
     return installAllocationVisibilityReconciliation();
   }, [storageReady]);
 

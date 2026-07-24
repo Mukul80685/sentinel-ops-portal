@@ -2,7 +2,10 @@
  * Engagement Status – bottleneck utilization engine + satellite analysis helpers.
  */
 
+import { CHAIN_CATEGORIES } from "@/lib/equipmentCategories";
 import { getOperationalEngagements } from "@/lib/operationalStore";
+
+export { CHAIN_CATEGORIES };
 
 /** Shared query key — fleet dashboard and unit pages stay in sync after mutations. */
 export const ENGAGEMENTS_ALL_KEY = ["engagements", "all"] as const;
@@ -16,14 +19,6 @@ export const NON_OPERATIONAL = new Set([
   "Under Repair",
   "Partially Serviceable",
 ]);
-
-export const CHAIN_CATEGORIES = [
-  { label: "Antennas",      match: "antenna",    short: "Antenna"      },
-  { label: "LNA",           match: "lna",        short: "LNA"          },
-  { label: "LNB",           match: "lnb",        short: "LNB"          },
-  { label: "Demodulators",  match: "demodulat",  short: "Demodulator"  },
-  { label: "Processors",    match: "processing", short: "Processor"    },
-] as const;
 
 export interface CategoryUtil {
   label: string;
@@ -157,7 +152,6 @@ export function buildAllocatedIds(activeEngagements: any[]): Set<string> {
     [
       ...activeEngagements.map((e: any) => e.antenna_id),
       ...activeEngagements.map((e: any) => e.demodulator_id),
-      ...activeEngagements.map((e: any) => e.processing_server_id),
     ].filter(Boolean) as string[],
   );
 }
@@ -283,15 +277,13 @@ export function engColor(pct: number) {
 export type OperationalChainIds = {
   antenna_id: string;
   demodulator_id: string;
-  processing_server_id: string;
 };
 
-/** Pick the next free operational antenna → demod → processor chain for a unit. */
+/** Pick the next free operational antenna → demodulator chain for a unit. */
 export function pickAvailableOperationalChain(
   unitEquipment: any[],
   usedAntennas: Set<string>,
   usedDemods: Set<string>,
-  usedProcessors: Set<string>,
 ): OperationalChainIds | null {
   const claimed = new Set<string>();
   const picks: (string | null)[] = [];
@@ -311,7 +303,6 @@ export function pickAvailableOperationalChain(
       const id = e.id as string;
       if (match === "antenna" && usedAntennas.has(id)) continue;
       if (match === "demodulat" && usedDemods.has(id)) continue;
-      if (match === "processing" && usedProcessors.has(id)) continue;
       selected = id;
       claimed.add(id);
       break;
@@ -319,10 +310,10 @@ export function pickAvailableOperationalChain(
     picks.push(selected);
   }
 
-  const [antenna_id, , demodulator_id, processing_server_id] = picks;
-  if (!antenna_id || !demodulator_id || !processing_server_id) return null;
+  const [antenna_id, demodulator_id] = picks;
+  if (!antenna_id || !demodulator_id) return null;
 
-  return { antenna_id, demodulator_id, processing_server_id };
+  return { antenna_id, demodulator_id };
 }
 
 export function engagementChainIsValid(
@@ -332,7 +323,6 @@ export function engagementChainIsValid(
   const checks = [
     { id: eng.antenna_id, label: "Antenna" },
     { id: eng.demodulator_id, label: "Demodulator" },
-    { id: eng.processing_server_id, label: "Processor" },
   ];
   for (const { id } of checks) {
     if (!id) return false;
@@ -349,23 +339,17 @@ export function resolveEngagementWithHardware(
   eqById: Map<string, any>,
   usedAntennas: Set<string>,
   usedDemods: Set<string>,
-  usedProcessors: Set<string>,
 ): any | null {
   if (engagementChainIsValid(eng, eqById)) return eng;
 
-  const chain = pickAvailableOperationalChain(
-    unitEquipment,
-    usedAntennas,
-    usedDemods,
-    usedProcessors,
-  );
+  const chain = pickAvailableOperationalChain(unitEquipment, usedAntennas, usedDemods);
   if (!chain) return null;
 
   return {
     ...eng,
     antenna_id: chain.antenna_id,
     demodulator_id: chain.demodulator_id,
-    processing_server_id: chain.processing_server_id,
+    processing_server_id: null,
   };
 }
 
@@ -382,33 +366,27 @@ export function rebindUnitEngagementHardware(
   const eqById = new Map(unitEq.map((e) => [e.id as string, e]));
   const usedAntennas = new Set<string>();
   const usedDemods = new Set<string>();
-  const usedProcessors = new Set<string>();
   let rebound = 0;
 
   for (const eng of unitEngs) {
+    if (eng.processing_server_id) {
+      eng.processing_server_id = null;
+      rebound++;
+    }
     if (engagementChainIsValid(eng, eqById)) {
       if (eng.antenna_id) usedAntennas.add(eng.antenna_id as string);
       if (eng.demodulator_id) usedDemods.add(eng.demodulator_id as string);
-      if (eng.processing_server_id) usedProcessors.add(eng.processing_server_id as string);
       continue;
     }
 
-    const resolved = resolveEngagementWithHardware(
-      eng,
-      unitEq,
-      eqById,
-      usedAntennas,
-      usedDemods,
-      usedProcessors,
-    );
+    const resolved = resolveEngagementWithHardware(eng, unitEq, eqById, usedAntennas, usedDemods);
     if (!resolved) continue;
 
     eng.antenna_id = resolved.antenna_id;
     eng.demodulator_id = resolved.demodulator_id;
-    eng.processing_server_id = resolved.processing_server_id;
+    eng.processing_server_id = null;
     usedAntennas.add(resolved.antenna_id as string);
     usedDemods.add(resolved.demodulator_id as string);
-    usedProcessors.add(resolved.processing_server_id as string);
     rebound++;
   }
 

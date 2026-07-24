@@ -12,6 +12,7 @@ import {
   PER_UNIT_INVENTORY,
   TARGET_ACTIVE_SCANS,
 } from "@/lib/operationalConstants";
+import { EQUIPMENT_CATEGORY_DEFS } from "@/lib/equipmentCategories";
 import { UNIT_LOCATIONS, type UnitSlot } from "@/lib/priorityAllocation";
 import { flattenGlobalSatelliteCatalog } from "@/lib/satelliteCatalog";
 
@@ -88,21 +89,13 @@ export type OperationalDataset = {
   userManaged?: boolean;
 };
 
-const CATEGORY_DEFS: OpCategory[] = [
-  { id: "op-cat-antenna", name: "Antenna", sort_order: 1 },
-  { id: "op-cat-lna", name: "LNA", sort_order: 2 },
-  { id: "op-cat-lnb", name: "LNB", sort_order: 3 },
-  { id: "op-cat-demod", name: "Demodulators", sort_order: 4 },
-  { id: "op-cat-proc", name: "Processing Servers", sort_order: 5 },
-  { id: "op-cat-other", name: "Other Resources", sort_order: 6 },
-];
+const CATEGORY_DEFS: OpCategory[] = EQUIPMENT_CATEGORY_DEFS.map((c) => ({
+  id: c.id,
+  name: c.name,
+  sort_order: c.sort_order,
+}));
 
-const CHAIN_CATEGORY_NAMES = new Set([
-  "Antenna",
-  "LNA",
-  "Demodulators",
-  "Processing Servers",
-]);
+const CHAIN_CATEGORY_NAMES = new Set(["Antenna", "Demodulators"]);
 
 const UNIT_DEFS: { slot: UnitSlot; code: string; name: string; description: string }[] = [
   { slot: "alpha", code: "GATE-A", name: "GATE Alpha", description: "Primary tracking station — North Sector" },
@@ -119,10 +112,7 @@ const MAKES = ["Hughes", "ViaSat", "Comtech", "Newtec", "Kratos", "Thales"] as c
 
 const CATEGORY_SPECS: Record<string, string> = {
   Antenna: "Tracking antenna — dual-axis motorized dish",
-  LNA: "Low-noise amplifier — Ku/C-band front-end",
-  LNB: "Block downconverter — multi-band RF input",
   Demodulators: "Demodulator rack — DVB-S2 / DVB-S2X capable",
-  "Processing Servers": "Signal processor — real-time demod + decode",
 };
 
 const OTHER_SPECS = [
@@ -287,7 +277,6 @@ export function generateOperationalDataset(): OperationalDataset {
 
     const antennas = pickOp("antenna");
     const demods = pickOp("demodulat");
-    const procs = pickOp("processing");
 
     const visNames = visibleSatNames(u.slot);
     const activeSatNames = activeSatNamesForSlot(u.slot);
@@ -308,7 +297,6 @@ export function generateOperationalDataset(): OperationalDataset {
       activeSatNames.length,
       antennas.length,
       demods.length,
-      procs.length,
     );
 
     for (let i = 0; i < activeTarget; i++) {
@@ -325,7 +313,7 @@ export function generateOperationalDataset(): OperationalDataset {
         updated_at: new Date().toISOString(),
         antenna_id: antennas[i]?.id ?? null,
         demodulator_id: demods[i]?.id ?? null,
-        processing_server_id: procs[i]?.id ?? null,
+        processing_server_id: null,
         remarks: `POL:${polForSat(u.slot, satName)} · Active collection cycle`,
         satellites: { name: satName },
       };

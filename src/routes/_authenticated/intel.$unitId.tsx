@@ -18,7 +18,7 @@ import { listUnits, listIntelRecordsForUnit, listEquipmentForUnit } from "@/lib/
 import { Archive, Radio, Satellite, Trash2, FileInput, FileSpreadsheet, Check, SkipForward, ExternalLink, Pencil, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { ccModuleBackLink } from "@/lib/controlCenter";
-import { VSAT_DASHBOARD_PATH } from "@/lib/dashboardLabels";
+import { DASHBOARD_PANEL_LABELS, VSAT_DASHBOARD_PATH } from "@/lib/dashboardLabels";
 import {
   buildIntelDrillDownReport,
   buildIntelLinkageContext,
@@ -774,7 +774,7 @@ function IntelUnitView() {
   const intelBackLink =
     from === "map" ? { to: VSAT_DASHBOARD_PATH, search: {} } : ccModuleBackLink("intel");
   const fromMap = from === "map";
-  const moduleTitle = fromMap ? "Active Satellite Monitoring" : "Intelligence Repository";
+  const moduleTitle = fromMap ? DASHBOARD_PANEL_LABELS.activity : "Intelligence Repository";
   const allowEdit = canEdit && !fromMap;
   const moduleIcon = fromMap ? Radio : Archive;
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
@@ -1320,7 +1320,7 @@ function IntelUnitView() {
   return (
     <AppShell
       title={moduleTitle}
-      pageTitle={`Satellite Scan Reports — ${unitLabel}`}
+      subtitle={unitLabel}
       showBack
       backLink={intelBackLink}
       hideHome={fromMap}

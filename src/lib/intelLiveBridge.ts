@@ -41,7 +41,6 @@ function engagementHasOperationalChain(
   const checks: { id: string | null | undefined; label: string }[] = [
     { id: eng.antenna_id, label: "Antenna" },
     { id: eng.demodulator_id, label: "Demodulator" },
-    { id: eng.processing_server_id, label: "Processor" },
   ];
 
   for (const { id, label } of checks) {
@@ -59,7 +58,7 @@ function engagementHasOperationalChain(
 function buildSyntheticEngagement(
   satelliteName: string,
   unitDbId: string,
-  chain: { antenna_id: string; demodulator_id: string; processing_server_id: string },
+  chain: { antenna_id: string; demodulator_id: string },
 ): any {
   return {
     id: `synthetic-${unitDbId}-${satelliteName.replace(/\s+/g, "-")}`,
@@ -67,7 +66,7 @@ function buildSyntheticEngagement(
     status: "In Progress",
     antenna_id: chain.antenna_id,
     demodulator_id: chain.demodulator_id,
-    processing_server_id: chain.processing_server_id,
+    processing_server_id: null,
     satellites: { name: satelliteName },
   };
 }
@@ -262,7 +261,6 @@ export function buildIntelBackedAssignments(
 
   const usedAntennas = new Set<string>();
   const usedDemods = new Set<string>();
-  const usedProcessors = new Set<string>();
   const assignments: IntelBackedAssignment[] = [];
   const violations: string[] = [];
 
@@ -270,23 +268,11 @@ export function buildIntelBackedAssignments(
     let eng = engBySatName.get(row.satelliteName) ?? null;
 
     if (eng) {
-      eng = resolveEngagementWithHardware(
-        eng,
-        unitEq,
-        eqById,
-        usedAntennas,
-        usedDemods,
-        usedProcessors,
-      );
+      eng = resolveEngagementWithHardware(eng, unitEq, eqById, usedAntennas, usedDemods);
     }
 
     if (!eng) {
-      const chain = pickAvailableOperationalChain(
-        unitEq,
-        usedAntennas,
-        usedDemods,
-        usedProcessors,
-      );
+      const chain = pickAvailableOperationalChain(unitEq, usedAntennas, usedDemods);
       if (chain) {
         eng = buildSyntheticEngagement(row.satelliteName, unitDbId, chain);
       }
@@ -305,13 +291,8 @@ export function buildIntelBackedAssignments(
 
     const antennaId = eng.antenna_id as string;
     const demodId = eng.demodulator_id as string;
-    const procId = eng.processing_server_id as string;
 
-    if (
-      usedAntennas.has(antennaId) ||
-      usedDemods.has(demodId) ||
-      usedProcessors.has(procId)
-    ) {
+    if (usedAntennas.has(antennaId) || usedDemods.has(demodId)) {
       violations.push(`"${row.satelliteName}" blocked: hardware already allocated to another scan`);
       continue;
     }
@@ -323,7 +304,6 @@ export function buildIntelBackedAssignments(
 
     usedAntennas.add(antennaId);
     usedDemods.add(demodId);
-    usedProcessors.add(procId);
 
     const { productive, nonProductive } = intelRowProductiveCounts(row);
 

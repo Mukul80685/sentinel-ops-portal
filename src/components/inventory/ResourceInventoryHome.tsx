@@ -40,21 +40,20 @@ import {
 // ── Add-Equipment dynamic form types ─────────────────────────────────────────
 type EqDraft = {
   antennaSize: string;
-  lnaType: string;
-  lnbType: string;
   band: string;
   demoMode: string;
-  make: string;
-  model: string;
   specs: string;
   remarks: string;
   otherName: string;
 };
 
 const EMPTY_EQ_DRAFT: EqDraft = {
-  antennaSize: "", lnaType: "", lnbType: "",
-  band: "", demoMode: "", make: "", model: "",
-  specs: "", remarks: "", otherName: "",
+  antennaSize: "",
+  band: "",
+  demoMode: "",
+  specs: "",
+  remarks: "",
+  otherName: "",
 };
 
 const BAND_OPTIONS = ["C", "Ku", "Ka", "Extended C-band"] as const;
@@ -63,10 +62,7 @@ const DEMO_MODES  = ["Narrowband", "Wideband", "DVB-S2", "DVB-S2X"] as const;
 function isEqFormValid(cat: string, d: EqDraft): boolean {
   switch (cat) {
     case "Antenna":            return Boolean(d.antennaSize.trim() && d.band);
-    case "LNA":                return Boolean(d.lnaType.trim()    && d.band);
-    case "LNB":                return Boolean(d.lnbType.trim()    && d.band);
     case "Demodulators":       return Boolean(d.demoMode);
-    case "Processing Servers": return Boolean(d.make.trim()       && d.model.trim());
     case "Other Resources":    return Boolean(d.otherName.trim());
     default:                   return false;
   }
@@ -130,26 +126,10 @@ export function ResourceInventoryHome() {
         specifications = `Band: ${eqDraft.band}`;
         remarks        = eqDraft.remarks.trim() || null;
         break;
-      case "LNA":
-        name           = `LNA — ${eqDraft.lnaType.trim()}`;
-        specifications = `Band: ${eqDraft.band}`;
-        remarks        = eqDraft.remarks.trim() || null;
-        break;
-      case "LNB":
-        name           = `LNB — ${eqDraft.lnbType.trim()}`;
-        specifications = `Band: ${eqDraft.band}`;
-        remarks        = eqDraft.remarks.trim() || null;
-        break;
       case "Demodulators":
         name           = `Demodulator (${eqDraft.demoMode})`;
         specifications = `Mode: ${eqDraft.demoMode}`;
         remarks        = eqDraft.remarks.trim() || null;
-        break;
-      case "Processing Servers":
-        name           = `${eqDraft.make.trim()} ${eqDraft.model.trim()}`;
-        make           = eqDraft.make.trim();
-        model          = eqDraft.model.trim();
-        specifications = eqDraft.specs.trim() || null;
         break;
       case "Other Resources":
         name           = eqDraft.otherName.trim();
@@ -191,7 +171,6 @@ export function ResourceInventoryHome() {
   return (
     <AppShell
       title="Resource Inventory"
-      subtitle="Ground Station Equipment Registry"
       headerIcon={<HomeNavIconBadge icon={Boxes} theme="inventory" size="md" />}
       horizontalNav={null}
       fillMain
@@ -343,66 +322,6 @@ export function ResourceInventoryHome() {
               </>
             )}
 
-            {eqCategory === "LNA" && (
-              <>
-                <div className="space-y-2">
-                  <Label>Type of LNA</Label>
-                  <Input
-                    value={eqDraft.lnaType}
-                    onChange={(e) => setEqDraft((p) => ({ ...p, lnaType: e.target.value }))}
-                    placeholder="e.g. Low Noise, High Gain"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Band</Label>
-                  <Select value={eqDraft.band} onValueChange={(v) => setEqDraft((p) => ({ ...p, band: v }))}>
-                    <SelectTrigger><SelectValue placeholder="Select band" /></SelectTrigger>
-                    <SelectContent>
-                      {BAND_OPTIONS.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Remarks <span className="text-muted-foreground text-xs">(optional)</span></Label>
-                  <Input
-                    value={eqDraft.remarks}
-                    onChange={(e) => setEqDraft((p) => ({ ...p, remarks: e.target.value }))}
-                    placeholder="Optional remarks"
-                  />
-                </div>
-              </>
-            )}
-
-            {eqCategory === "LNB" && (
-              <>
-                <div className="space-y-2">
-                  <Label>Type of LNB</Label>
-                  <Input
-                    value={eqDraft.lnbType}
-                    onChange={(e) => setEqDraft((p) => ({ ...p, lnbType: e.target.value }))}
-                    placeholder="e.g. Universal LNB, Quad LNB"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Band</Label>
-                  <Select value={eqDraft.band} onValueChange={(v) => setEqDraft((p) => ({ ...p, band: v }))}>
-                    <SelectTrigger><SelectValue placeholder="Select band" /></SelectTrigger>
-                    <SelectContent>
-                      {BAND_OPTIONS.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Remarks <span className="text-muted-foreground text-xs">(optional)</span></Label>
-                  <Input
-                    value={eqDraft.remarks}
-                    onChange={(e) => setEqDraft((p) => ({ ...p, remarks: e.target.value }))}
-                    placeholder="Optional remarks"
-                  />
-                </div>
-              </>
-            )}
-
             {eqCategory === "Demodulators" && (
               <>
                 <div className="space-y-2">
@@ -420,36 +339,6 @@ export function ResourceInventoryHome() {
                     value={eqDraft.remarks}
                     onChange={(e) => setEqDraft((p) => ({ ...p, remarks: e.target.value }))}
                     placeholder="Optional remarks"
-                  />
-                </div>
-              </>
-            )}
-
-            {eqCategory === "Processing Servers" && (
-              <>
-                <div className="space-y-2">
-                  <Label>Make</Label>
-                  <Input
-                    value={eqDraft.make}
-                    onChange={(e) => setEqDraft((p) => ({ ...p, make: e.target.value }))}
-                    placeholder="e.g. Dell, HP, Cisco"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Model</Label>
-                  <Input
-                    value={eqDraft.model}
-                    onChange={(e) => setEqDraft((p) => ({ ...p, model: e.target.value }))}
-                    placeholder="e.g. PowerEdge R750"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Basic Technical Specifications <span className="text-muted-foreground text-xs">(optional)</span></Label>
-                  <Textarea
-                    value={eqDraft.specs}
-                    onChange={(e) => setEqDraft((p) => ({ ...p, specs: e.target.value }))}
-                    placeholder="CPU, RAM, storage, NIC specs…"
-                    rows={3}
                   />
                 </div>
               </>

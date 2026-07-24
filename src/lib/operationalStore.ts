@@ -23,12 +23,50 @@ import {
   parseIntelReportIdFromRemarks,
 } from "@/lib/engagementTableStore";
 import {
-  antennaEquipmentLimitMessage,
-  canAddAntennaEquipment,
-} from "@/lib/inventoryAntennaLimits";
+  EQUIPMENT_CATEGORY_DEFS,
+  REMOVED_EQUIPMENT_CATEGORY_IDS,
+  stripLegacyChainRemarkTokens,
+} from "@/lib/equipmentCategories";
 
 /** Minimum fleet equipment rows — stale cached datasets below this are regenerated. */
 const MIN_FLEET_EQUIPMENT = 300;
+
+/** Drop removed categories (LNA/LNB/Processing Servers) and clean engagement references. */
+function migrateOperationalDatasetV10(ds: OperationalDataset): boolean {
+  if (ds.version >= OPERATIONAL_DATASET_VERSION) return false;
+  let changed = false;
+
+  const nextCategories = EQUIPMENT_CATEGORY_DEFS.map((c) => ({
+    id: c.id,
+    name: c.name,
+    sort_order: c.sort_order,
+  }));
+  if (JSON.stringify(ds.categories) !== JSON.stringify(nextCategories)) {
+    ds.categories = nextCategories;
+    changed = true;
+  }
+
+  const beforeEq = ds.equipment.length;
+  ds.equipment = ds.equipment.filter(
+    (eq) => !REMOVED_EQUIPMENT_CATEGORY_IDS.has(eq.category_id),
+  );
+  if (ds.equipment.length !== beforeEq) changed = true;
+
+  for (const eng of ds.engagements) {
+    if (eng.processing_server_id) {
+      eng.processing_server_id = null;
+      changed = true;
+    }
+    const cleaned = stripLegacyChainRemarkTokens(eng.remarks);
+    if (cleaned !== (eng.remarks ?? "").trim()) {
+      eng.remarks = cleaned;
+      changed = true;
+    }
+  }
+
+  ds.version = OPERATIONAL_DATASET_VERSION;
+  return true;
+}
 
 let _cache: OperationalDataset | null = null;
 
@@ -101,6 +139,9 @@ function applyUnitIdentityOverrides(ds: OperationalDataset): boolean {
 function isValidCachedDataset(parsed: OperationalDataset): boolean {
   // User-managed datasets (renames, deletes, etc.) must never be auto-regenerated.
   if (parsed.userManaged && (parsed.units?.length ?? 0) > 0) return true;
+  if (parsed.version !== OPERATIONAL_DATASET_VERSION && parsed.version < OPERATIONAL_DATASET_VERSION) {
+    return parsed.units.length > 0 && (parsed.equipment?.length ?? 0) > 0;
+  }
   if (parsed.version !== OPERATIONAL_DATASET_VERSION) return false;
   return parsed.units.length > 0 && (parsed.equipment?.length ?? 0) >= MIN_FLEET_EQUIPMENT;
 }
@@ -118,7 +159,8 @@ export function getOperationalDataset(): OperationalDataset {
         const parsed = JSON.parse(raw) as OperationalDataset;
         if (isValidCachedDataset(parsed)) {
           let dirty = false;
-          if (parsed.userManaged && parsed.version !== OPERATIONAL_DATASET_VERSION) {
+          if (migrateOperationalDatasetV10(parsed)) dirty = true;
+          else if (parsed.userManaged && parsed.version !== OPERATIONAL_DATASET_VERSION) {
             parsed.version = OPERATIONAL_DATASET_VERSION;
             dirty = true;
           }

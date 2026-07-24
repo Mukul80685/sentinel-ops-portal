@@ -46,7 +46,7 @@ const TILE_CLASS =
   "h-full min-h-[16rem] sm:min-h-[18rem] py-6 sm:py-8 px-4 sm:px-6 text-center no-underline group";
 
 const PANEL_TILE_CLASS =
-  "home-module-tile relative flex flex-col items-center justify-center gap-3 sm:gap-4 py-5 px-3 text-center min-h-[14rem]";
+  "home-module-tile map-unit-summary-tile relative flex flex-col items-center justify-between gap-2 sm:gap-3 py-4 px-3 pb-5 text-center min-h-[14rem]";
 
 const UNIT_LOCATION_FIELD_KEYS = ["location", "base", "station", "place", "description"] as const;
 
@@ -88,7 +88,7 @@ const MARKER_SATELLITE_TYPE_LABELS: Record<MarkerSatelliteType, string> = {
   IRIDIUM: "Iridium",
 };
 
-/** Matches HomeLauncherIcon glyph sizing for readable map markers. */
+/** Map marker view — original logo size with label beneath each icon. */
 const MARKER_SATELLITE_ICON_CLASS = "h-10 w-10 sm:h-11 sm:w-11 lg:h-12 lg:w-12";
 
 type MapMarker = {
@@ -391,13 +391,16 @@ function markerToScreenCoords(
 
 type LabelBox = { x: number; y: number; w: number; h: number };
 
-const VIEW_LABEL_HEIGHT = 24;
+const VIEW_LABEL_HEIGHT = 56;
 const VIEW_PIN_COLLISION_RADIUS = 12;
-const VIEW_LABEL_GAP = 8;
+const VIEW_LABEL_GAP = 6;
 const VIEWPORT_LABEL_MARGIN = 6;
+const VIEW_SAT_CHIP_WIDTH = 52;
 
-function estimateViewLabelWidth(text: string) {
-  return Math.min(220, Math.max(72, text.length * 7.5 + 20));
+function estimateViewLabelWidth(labelText: string, satelliteCount = 0) {
+  const nameW = Math.min(200, Math.max(56, labelText.length * 7.2 + 14));
+  const satellitesW = satelliteCount > 0 ? 8 + satelliteCount * VIEW_SAT_CHIP_WIDTH : 0;
+  return Math.min(480, nameW + satellitesW);
 }
 
 function pinCollisionRect(screenX: number, screenY: number, radius = VIEW_PIN_COLLISION_RADIUS): LabelBox {
@@ -425,11 +428,12 @@ function viewLabelViewportOverflow(box: LabelBox, viewportW: number, viewportH: 
 function computeViewLabelPlacement(
   pinScreen: ScreenCoords,
   labelText: string,
+  satelliteCount: number,
   viewportW: number,
   viewportH: number,
   otherPinScreens: ScreenCoords[],
 ) {
-  const estW = estimateViewLabelWidth(labelText);
+  const estW = estimateViewLabelWidth(labelText, satelliteCount);
   const estH = VIEW_LABEL_HEIGHT;
   const { screenX: px, screenY: py } = pinScreen;
   const pinRects = [pinScreen, ...otherPinScreens].map((pin) =>
@@ -770,6 +774,32 @@ function MarkerSatelliteIcon({
   }
 }
 
+function MarkerSatelliteInlineRow({
+  satellites,
+  className = "",
+  labelClassName = "text-black",
+}: {
+  satellites: MarkerSatelliteType[];
+  className?: string;
+  labelClassName?: string;
+}) {
+  if (!satellites.length) return null;
+  return (
+    <div className={`flex flex-nowrap items-end gap-2 sm:gap-3 ${className}`}>
+      {satellites.map((type) => (
+        <div key={type} className="flex shrink-0 flex-col items-center gap-0.5">
+          <MarkerSatelliteIcon type={type} className={MARKER_SATELLITE_ICON_CLASS} />
+          <span
+            className={`mono text-[8px] sm:text-[9px] font-semibold uppercase tracking-wide leading-none text-center ${labelClassName}`}
+          >
+            {MARKER_SATELLITE_TYPE_LABELS[type]}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function MarkerSatelliteIconsRow({
   satellites,
   className = "",
@@ -783,10 +813,10 @@ function MarkerSatelliteIconsRow({
   return (
     <div className={`flex flex-wrap items-end gap-2 sm:gap-3 ${className}`}>
       {satellites.map((type) => (
-        <div key={type} className="flex flex-col items-center gap-1 shrink-0">
+        <div key={type} className="flex shrink-0 flex-col items-center gap-0.5">
           <MarkerSatelliteIcon type={type} className={MARKER_SATELLITE_ICON_CLASS} />
           <span
-            className={`mono text-[10px] sm:text-xs font-bold uppercase tracking-wide leading-none ${labelClassName}`}
+            className={`mono text-[8px] sm:text-[9px] font-semibold uppercase tracking-wide leading-none text-center ${labelClassName}`}
           >
             {MARKER_SATELLITE_TYPE_LABELS[type]}
           </span>
@@ -818,11 +848,11 @@ function MapUnitSummaryCard({
 }) {
   return (
     <div className={`${PANEL_TILE_CLASS} ${className}`}>
-      <span className="mono text-[10px] font-bold uppercase tracking-[0.12em] text-foreground leading-snug">
+      <span className="mono text-[10px] font-bold uppercase tracking-[0.12em] text-foreground leading-snug shrink-0">
         {DASHBOARD_PANEL_LABELS[panel]}
       </span>
-      {children}
-      <span className={`home-card-accent ${accent}`} aria-hidden="true" />
+      <div className="flex flex-1 min-h-0 w-full flex-col items-center justify-center">{children}</div>
+      <span className={`home-card-accent shrink-0 ${accent}`} aria-hidden="true" />
     </div>
   );
 }
@@ -1143,7 +1173,7 @@ function MapUnitPanel({
         </button>
       </div>
 
-      <div className="px-3 py-3">
+      <div className="px-3 pt-3 pb-5">
         {isLoading ? (
           <p className="mono py-6 text-center text-[11px] font-semibold uppercase tracking-wider text-white/55">
             Loading…
@@ -1153,7 +1183,7 @@ function MapUnitPanel({
             No unit linked — select a unit in edit mode
           </p>
         ) : (
-          <div className="flex flex-row gap-3">
+          <div className="flex flex-row items-stretch gap-3 pb-1">
             <Link
               to="/engagement/$unitId"
               params={{ unitId: marker.unitId! }}
@@ -1211,6 +1241,83 @@ function MapUnitPanel({
             </button>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function MapMarkerEditDock({
+  marker,
+  units,
+  onUpdateUnitId,
+  onUpdateSatellites,
+}: {
+  marker: MapMarker;
+  units: OperationalUnit[];
+  onUpdateUnitId: (id: string, unitId: string | null) => void;
+  onUpdateSatellites: (id: string, satellites: MarkerSatelliteType[]) => void;
+}) {
+  return (
+    <div
+      data-map-marker-edit-dock
+      className="pointer-events-auto absolute bottom-3 left-3 z-[12] w-[min(100%,15rem)] rounded-md border border-white/20 bg-[#0a1628]/94 p-2.5 shadow-xl backdrop-blur-sm"
+      onPointerDown={stopMarkerPointerEvent}
+      onDoubleClick={stopMarkerPointerEvent}
+    >
+      <p className="mono mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-white/70">
+        Location settings
+      </p>
+      <label className="mono mb-1 block text-[9px] font-semibold uppercase tracking-wider text-white/55">
+        Unit
+      </label>
+      <select
+        aria-label="Link operational unit"
+        value={marker.unitId ?? ""}
+        disabled={marker.locked}
+        onChange={(event) =>
+          onUpdateUnitId(marker.id, event.target.value ? event.target.value : null)
+        }
+        className="mono mb-2.5 w-full rounded-sm border border-white/20 bg-white/95 px-2 py-1.5 text-[11px] font-bold tracking-wide text-black outline-none disabled:opacity-70"
+      >
+        <option value="">— Select unit —</option>
+        {units.map((unit) => (
+          <option key={unit.id} value={unit.id}>
+            {unit.name ?? unit.code}
+          </option>
+        ))}
+      </select>
+      <p className="mono mb-1.5 text-[9px] font-semibold uppercase tracking-wider text-white/55">
+        Satellites
+      </p>
+      <div className="flex flex-col gap-1">
+        {MARKER_SATELLITE_TYPES.map((type) => {
+          const selected = marker.satellites.includes(type);
+          return (
+            <button
+              key={type}
+              type="button"
+              aria-pressed={selected}
+              aria-label={`Toggle ${MARKER_SATELLITE_TYPE_LABELS[type]}`}
+              disabled={marker.locked}
+              onClick={(event) => {
+                event.stopPropagation();
+                onUpdateSatellites(
+                  marker.id,
+                  selected
+                    ? marker.satellites.filter((entry) => entry !== type)
+                    : [...marker.satellites, type],
+                );
+              }}
+              className={`mono w-full rounded-sm border px-2 py-1.5 text-left text-[11px] font-bold uppercase tracking-wide transition-colors disabled:opacity-70 ${
+                selected
+                  ? "border-emerald-400/70 bg-emerald-600/90 text-white"
+                  : "border-white/25 bg-white/10 text-white/90 hover:bg-white/15"
+              }`}
+            >
+              {MARKER_SATELLITE_TYPE_LABELS[type]}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -1300,20 +1407,17 @@ function MapMarkerEditToolbar({
 function MapMarker({
   marker,
   pinScreen,
-  labelScreen,
   otherPinScreens,
   viewportWidth,
   viewportHeight,
   isEditMode,
+  isEditFocused,
   isRevealed,
   isPanelOpen,
-  units,
   onPinSelect,
   onNameClick,
-  onUpdateUnitId,
-  onUpdateSatellites,
+  onEditFocus,
   onUpdatePinPosition,
-  onUpdateLabelPosition,
   onDelete,
   onConfirm,
   onDiscard,
@@ -1323,20 +1427,17 @@ function MapMarker({
 }: {
   marker: MapMarker;
   pinScreen: ScreenCoords;
-  labelScreen: ScreenCoords;
   otherPinScreens: ScreenCoords[];
   viewportWidth: number;
   viewportHeight: number;
   isEditMode: boolean;
+  isEditFocused: boolean;
   isRevealed: boolean;
   isPanelOpen: boolean;
-  units: OperationalUnit[];
   onPinSelect: (id: string) => void;
   onNameClick: (id: string) => void;
-  onUpdateUnitId: (id: string, unitId: string | null) => void;
-  onUpdateSatellites: (id: string, satellites: MarkerSatelliteType[]) => void;
+  onEditFocus: (id: string) => void;
   onUpdatePinPosition: (id: string, position: MapMarkerPosition) => void;
-  onUpdateLabelPosition: (id: string, position: MapMarkerPosition) => void;
   onDelete: (id: string) => void;
   onConfirm: (id: string) => void;
   onDiscard: (id: string) => void;
@@ -1345,21 +1446,12 @@ function MapMarker({
   clientToMarkerPercents: (clientX: number, clientY: number) => MapMarkerPosition;
 }) {
   const pinDragRef = useRef(false);
-  const labelDragRef = useRef(false);
 
   const pinDragHandlers = createMarkerPartDragHandlers({
     dragRef: pinDragRef,
-    enabled: isEditMode,
+    enabled: isEditMode && !marker.locked,
     onDragActiveChange,
     onMove: (position) => onUpdatePinPosition(marker.id, position),
-    clientToMarkerPercents,
-  });
-
-  const labelDragHandlers = createMarkerPartDragHandlers({
-    dragRef: labelDragRef,
-    enabled: isEditMode,
-    onDragActiveChange,
-    onMove: (position) => onUpdateLabelPosition(marker.id, position),
     clientToMarkerPercents,
   });
 
@@ -1368,7 +1460,14 @@ function MapMarker({
   const unitName = marker.label.line1.trim() || "Unnamed unit";
   const labelPlacement =
     !isEditMode && isRevealed
-      ? computeViewLabelPlacement(pinScreen, unitName, viewportWidth, viewportHeight, otherPinScreens)
+      ? computeViewLabelPlacement(
+          pinScreen,
+          unitName,
+          marker.satellites.length,
+          viewportWidth,
+          viewportHeight,
+          otherPinScreens,
+        )
       : null;
 
   if (!isEditMode) {
@@ -1410,22 +1509,24 @@ function MapMarker({
             style={{ left: labelPlacement.left, top: labelPlacement.top }}
             onDoubleClick={stopMarkerPointerEvent}
           >
-            <button
-              type="button"
-              data-map-marker-panel-trigger
-              aria-label={`Open ${unitName} panel`}
-              className={`mono min-w-0 max-w-[220px] truncate text-left text-[13px] font-bold uppercase leading-tight tracking-wide whitespace-nowrap text-black cursor-pointer rounded-sm px-1.5 py-0.5 hover:underline ${
-                isPanelOpen ? "underline bg-white/75" : "bg-white/60 hover:bg-white/75"
-              }`}
-              style={{ textShadow: LABEL_TEXT_SHADOW }}
-              onClick={(event) => {
-                event.stopPropagation();
-                onNameClick(marker.id);
-              }}
-            >
-              {unitName}
-            </button>
-            <MarkerSatelliteIconsRow satellites={marker.satellites} className="px-1.5 pt-1" />
+            <div className="flex max-w-[min(480px,calc(100vw-1.5rem))] flex-nowrap items-end gap-2 sm:gap-3">
+              <button
+                type="button"
+                data-map-marker-panel-trigger
+                aria-label={`Open ${unitName} panel`}
+                className={`mono min-w-0 shrink truncate text-left text-[12px] sm:text-[13px] font-bold uppercase leading-none tracking-wide whitespace-nowrap text-black cursor-pointer rounded-sm px-1 py-0.5 hover:underline ${
+                  isPanelOpen ? "underline bg-white/75" : "bg-white/60 hover:bg-white/75"
+                }`}
+                style={{ textShadow: LABEL_TEXT_SHADOW }}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onNameClick(marker.id);
+                }}
+              >
+                {unitName}
+              </button>
+              <MarkerSatelliteInlineRow satellites={marker.satellites} />
+            </div>
           </div>
         ) : null}
       </>
@@ -1437,98 +1538,39 @@ function MapMarker({
       <div
         data-map-marker
         data-map-marker-pin
-        className="absolute z-[6] pointer-events-auto -translate-x-1/2 -translate-y-1/2 touch-none cursor-move"
+        className={`absolute z-[6] pointer-events-auto -translate-x-1/2 -translate-y-1/2 touch-none ${
+          marker.locked ? "cursor-pointer" : "cursor-move"
+        }`}
         style={{ left: pinScreen.screenX, top: pinScreen.screenY }}
         onDoubleClick={stopMarkerPointerEvent}
+        onClick={(event) => {
+          event.stopPropagation();
+          onEditFocus(marker.id);
+        }}
         onPointerDown={pinDragHandlers.onPointerDown}
         onPointerMove={pinDragHandlers.onPointerMove}
         onPointerUp={pinDragHandlers.onPointerUp}
         onPointerCancel={pinDragHandlers.onPointerCancel}
       >
-        <DotSymbol />
-      </div>
-
-      <div
-        data-map-marker
-        className="absolute z-[6] pointer-events-auto min-w-[220px] min-h-[52px]"
-        style={{ left: labelScreen.screenX, top: labelScreen.screenY }}
-        onDoubleClick={stopMarkerPointerEvent}
-      >
-        <div
-          className="flex min-w-[220px] flex-col border border-black/50 bg-transparent"
-          onPointerDown={stopMarkerPointerEvent}
+        <span
+          className={`inline-flex rounded-full ${
+            isEditFocused ? "ring-2 ring-amber-400 ring-offset-1 ring-offset-[#0a1628]/40" : ""
+          }`}
         >
-          <div className="flex min-w-[220px] items-stretch">
-            <button
-              type="button"
-              aria-label="Drag label block"
-              title="Drag label"
-              className="flex w-5 min-w-[20px] shrink-0 cursor-move touch-none items-center justify-center self-stretch border-r border-black/50 bg-transparent px-0.5 text-[14px] leading-none text-black"
-              {...labelDragHandlers}
-            >
-              ⠿
-            </button>
-            <select
-              aria-label="Link operational unit"
-              value={marker.unitId ?? ""}
-              disabled={marker.locked}
-              onChange={(event) =>
-                onUpdateUnitId(marker.id, event.target.value ? event.target.value : null)
-              }
-              className="mono min-w-0 flex-1 border-0 bg-transparent px-1 py-1 text-[11px] font-bold tracking-wide text-black outline-none disabled:opacity-80"
-            >
-              <option value="">— Select unit —</option>
-              {units.map((unit) => (
-                <option key={unit.id} value={unit.id}>
-                  {unit.name ?? unit.code}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="grid grid-cols-2 gap-1.5 border-t border-black/50 p-1.5 sm:grid-cols-4">
-            {MARKER_SATELLITE_TYPES.map((type) => {
-              const selected = marker.satellites.includes(type);
-              return (
-                <button
-                  key={type}
-                  type="button"
-                  aria-pressed={selected}
-                  aria-label={`Toggle ${MARKER_SATELLITE_TYPE_LABELS[type]}`}
-                  disabled={marker.locked}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onUpdateSatellites(
-                      marker.id,
-                      selected
-                        ? marker.satellites.filter((entry) => entry !== type)
-                        : [...marker.satellites, type],
-                    );
-                  }}
-                  className={`flex flex-col items-center gap-1 rounded border px-1 py-1.5 ${
-                    selected
-                      ? "border-black bg-black/90 text-white"
-                      : "border-black/40 bg-white/70 text-black hover:bg-white/90"
-                  } disabled:opacity-80`}
-                >
-                  <MarkerSatelliteIcon type={type} className={MARKER_SATELLITE_ICON_CLASS} />
-                  <span className="mono text-[10px] font-bold uppercase tracking-wide leading-none">
-                    {MARKER_SATELLITE_TYPE_LABELS[type]}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
+          <DotSymbol />
+        </span>
       </div>
 
-      <MapMarkerEditToolbar
-        pinScreen={pinScreen}
-        marker={marker}
-        onConfirm={onConfirm}
-        onDiscard={onDiscard}
-        onUnlock={onUnlock}
-        onDelete={onDelete}
-      />
+      {isEditFocused ? (
+        <MapMarkerEditToolbar
+          pinScreen={pinScreen}
+          marker={marker}
+          onConfirm={onConfirm}
+          onDiscard={onDiscard}
+          onUnlock={onUnlock}
+          onDelete={onDelete}
+        />
+      ) : null}
     </>
   );
 }
@@ -1581,6 +1623,7 @@ function MapZoomPanViewport() {
       if (target.closest("[data-unit-panel]")) return;
       if (target.closest("[data-optimization-overlay]")) return;
       if (target.closest("[data-map-marker]")) return;
+      if (target.closest("[data-map-marker-edit-dock]")) return;
       setRevealedMarkerId(null);
       setOpenMarkerId(null);
       setOptimizationOpen(false);
@@ -1668,6 +1711,10 @@ function MapZoomPanViewport() {
     setRevealedMarkerId(id);
     setOpenMarkerId(null);
     setOptimizationOpen(false);
+  }, []);
+
+  const handleEditFocus = useCallback((id: string) => {
+    setNewMarkerFocusId(id);
   }, []);
 
   const handleNameClick = useCallback((id: string) => {
@@ -1949,6 +1996,7 @@ function MapZoomPanViewport() {
 
       const target = event.target as HTMLElement;
       if (target.closest("[data-map-marker]")) return;
+      if (target.closest("[data-map-marker-edit-dock]")) return;
       if (target.closest("[data-unit-panel]")) return;
       if (target.closest("[data-optimization-overlay]")) return;
 
@@ -2056,6 +2104,11 @@ function MapZoomPanViewport() {
     [units],
   );
 
+  const activeEditMarker =
+    isEditMode && newMarkerFocusId
+      ? markers.find((marker) => marker.id === newMarkerFocusId) ?? null
+      : null;
+
   return (
     <div
       ref={assignViewportRef}
@@ -2092,15 +2145,6 @@ function MapZoomPanViewport() {
             viewportSize.w,
             viewportSize.h,
           );
-          const labelScreen = markerToScreenCoords(
-            marker.label.xPercent,
-            marker.label.yPercent,
-            pan.panX,
-            pan.panY,
-            scale,
-            viewportSize.w,
-            viewportSize.h,
-          );
           const otherPinScreens = markers
             .filter((_, index) => index !== markerIndex)
             .map((otherMarker) =>
@@ -2120,20 +2164,17 @@ function MapZoomPanViewport() {
               key={marker.id}
               marker={marker}
               pinScreen={pinScreen}
-              labelScreen={labelScreen}
               otherPinScreens={otherPinScreens}
               viewportWidth={viewportSize.w}
               viewportHeight={viewportSize.h}
               isEditMode={isEditMode}
+              isEditFocused={newMarkerFocusId === marker.id}
               isRevealed={revealedMarkerId === marker.id}
               isPanelOpen={openMarkerId === marker.id}
-              units={operationalUnits}
               onPinSelect={handlePinSelect}
               onNameClick={handleNameClick}
-              onUpdateUnitId={updateUnitId}
-              onUpdateSatellites={updateMarkerSatellites}
+              onEditFocus={handleEditFocus}
               onUpdatePinPosition={updatePinPosition}
-              onUpdateLabelPosition={updateLabelPosition}
               onDelete={deleteMarker}
               onConfirm={confirmMarker}
               onDiscard={discardMarker}
@@ -2144,6 +2185,15 @@ function MapZoomPanViewport() {
           );
         })}
       </div>
+
+      {isEditMode && activeEditMarker ? (
+        <MapMarkerEditDock
+          marker={activeEditMarker}
+          units={operationalUnits}
+          onUpdateUnitId={updateUnitId}
+          onUpdateSatellites={updateMarkerSatellites}
+        />
+      ) : null}
 
       {viewportNode && openMarker && !optimizationOpen
         ? createPortal(

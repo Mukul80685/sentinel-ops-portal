@@ -8,10 +8,7 @@ import {
   Activity,
   Boxes,
   Package,
-  Radio,
   Satellite,
-  Server,
-  Zap,
   type LucideProps,
 } from "lucide-react";
 import type { ComponentType } from "react";
@@ -22,12 +19,9 @@ export const Route = createFileRoute("/_authenticated/inventory/$unitId/")({
 
 // ── Per-category icon map ─────────────────────────────────────────────────────
 const CATEGORY_ICONS: Record<string, ComponentType<LucideProps>> = {
-  "Antenna":            Satellite,   // parabolic / dish
-  "LNA":                Zap,         // amplifier / signal boost
-  "LNB":                Radio,       // RF block downconverter
-  "Demodulators":       Activity,    // waveform / signal processing
-  "Processing Servers": Server,      // server rack / compute
-  "Other Resources":    Package,     // generic equipment
+  "Antenna":            Satellite,
+  "Demodulators":       Activity,
+  "Other Resources":    Package,
 };
 
 function InventoryCategories() {
@@ -52,12 +46,12 @@ function InventoryCategories() {
   return (
     <AppShell
       title="Resource Inventory"
-      pageTitle={unitLabel ? `${unitLabel} — Equipment Categories` : undefined}
+      subtitle={unitLabel || undefined}
       headerIcon={<HomeNavIconBadge icon={Boxes} theme="inventory" size="md" />}
       showBack
       horizontalNav={null}
     >
-      {/* Square icon tiles — 3 columns × 2 rows for 6 categories */}
+      {/* Square icon tiles — 3 categories */}
       <div className="grid grid-cols-3 gap-4">
         {cats.map((c) => {
           const CatIcon = CATEGORY_ICONS[c.name] ?? Boxes;

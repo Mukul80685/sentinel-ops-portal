@@ -24,10 +24,8 @@ export type FeasibilityStatus = "VALID" | "DEGRADED" | "NON_OPERATIONAL";
 
 export type StageAvailability = {
   antennas: number;
-  lnas: number;
-  lnbs: number;
   demodulators: number;
-  processors: number;
+  otherResources: number;
 };
 
 export type ValidatedSatelliteAssignment = {
@@ -76,7 +74,15 @@ function equipmentByIdMap(equipment: any[]): Map<string, any> {
   return new Map(equipment.map((e) => [e.id as string, e]));
 }
 
-/** Count operational (serviceable) components per mandatory chain stage. */
+function countOtherResources(equipment: any[]): number {
+  return equipment.filter(
+    (e: any) =>
+      (e.category?.name ?? "").trim().toLowerCase() === "other resources" &&
+      e.serviceability === "Operational",
+  ).length;
+}
+
+/** Count operational (serviceable) components per mandatory chain stage (antenna + demodulator). */
 export function countServiceableChainCapacity(equipment: any[]): StageAvailability & { totalChains: number } {
   const claimed = new Set<string>();
   const stageCounts: number[] = [];
@@ -92,11 +98,11 @@ export function countServiceableChainCapacity(equipment: any[]): StageAvailabili
     );
   }
 
-  const [antennas = 0, lnas = 0, lnbs = 0, demodulators = 0, processors = 0] = stageCounts;
-  const totalChains =
-    stageCounts.length === 0 ? 0 : Math.min(...stageCounts);
+  const [antennas = 0, demodulators = 0] = stageCounts;
+  const otherResources = countOtherResources(equipment);
+  const totalChains = stageCounts.length === 0 ? 0 : Math.min(...stageCounts);
 
-    return { antennas, lnas, lnbs, demodulators, processors, totalChains };
+  return { antennas, demodulators, otherResources, totalChains };
 }
 
 function engagementHasOperationalChain(
@@ -106,7 +112,6 @@ function engagementHasOperationalChain(
   const checks: { id: string | null | undefined; label: string }[] = [
     { id: eng.antenna_id, label: "Antenna" },
     { id: eng.demodulator_id, label: "Demodulator" },
-    { id: eng.processing_server_id, label: "Processor" },
   ];
 
   for (const { id, label } of checks) {
@@ -177,6 +182,14 @@ function toSnapshot(assignments: ValidatedSatelliteAssignment[]): UnitScanSnapsh
   };
 }
 
+function stageAvailabilityFromCapacity(capacity: ReturnType<typeof countServiceableChainCapacity>): StageAvailability {
+  return {
+    antennas: capacity.antennas,
+    demodulators: capacity.demodulators,
+    otherResources: capacity.otherResources,
+  };
+}
+
 /**
  * Authoritative per-unit Live Engagement model — tiles and detail expand this object only.
  */
@@ -202,25 +215,14 @@ export function computeUnitCapability(
     maxPossibleScans: capacity.totalChains,
     activeChains: 0,
     occupancyPct: 0,
-    availableByStage: {
-      antennas: capacity.antennas,
-      lnas: capacity.lnas,
-      lnbs: capacity.lnbs,
-      demodulators: capacity.demodulators,
-      processors: capacity.processors,
-    },
+    availableByStage: stageAvailabilityFromCapacity(capacity),
     assignments: [],
     snapshot: { activeCount: 0, satellites: [] },
   };
 
   if (capacity.totalChains === 0) {
     const zeroStages = CHAIN_CATEGORIES.filter((_, i) => {
-      const vals = [
-        capacity.antennas,
-        capacity.lnbs,
-        capacity.demodulators,
-        capacity.processors,
-      ];
+      const vals = [capacity.antennas, capacity.demodulators];
       return vals[i] === 0;
     }).map((c) => c.short);
 
@@ -250,13 +252,7 @@ export function computeUnitCapability(
       maxPossibleScans: capacity.totalChains,
       activeChains: 0,
       occupancyPct: 0,
-      availableByStage: {
-        antennas: capacity.antennas,
-        lnas: capacity.lnas,
-        lnbs: capacity.lnbs,
-        demodulators: capacity.demodulators,
-        processors: capacity.processors,
-      },
+      availableByStage: stageAvailabilityFromCapacity(capacity),
       assignments: [],
       snapshot: { activeCount: 0, satellites: [] },
     };
@@ -302,13 +298,7 @@ export function computeUnitCapability(
       maxPossibleScans: capacity.totalChains,
       activeChains,
       occupancyPct,
-      availableByStage: {
-        antennas: capacity.antennas,
-        lnas: capacity.lnas, 
-        lnbs: capacity.lnbs,
-        demodulators: capacity.demodulators,
-        processors: capacity.processors,
-      },
+      availableByStage: stageAvailabilityFromCapacity(capacity),
       assignments: intelResult.assignments as ValidatedSatelliteAssignment[],
       snapshot: toSnapshot(intelResult.assignments as ValidatedSatelliteAssignment[]),
     };
@@ -316,7 +306,6 @@ export function computeUnitCapability(
 
   const usedAntennas = new Set<string>();
   const usedDemods = new Set<string>();
-  const usedProcessors = new Set<string>();
   const assignments: ValidatedSatelliteAssignment[] = [];
 
   for (const rawEng of sortEngagementCandidates(unitEngs)) {
@@ -348,14 +337,7 @@ export function computeUnitCapability(
 
     const chain = engagementHasOperationalChain(eng, eqById);
     if (!chain.valid) {
-      const rebound = resolveEngagementWithHardware(
-        eng,
-        unitEq,
-        eqById,
-        usedAntennas,
-        usedDemods,
-        usedProcessors,
-      );
+      const rebound = resolveEngagementWithHardware(eng, unitEq, eqById, usedAntennas, usedDemods);
       if (!rebound) {
         if (isActiveScanStatus(eng.status as string)) {
           violations.push(`"${name}": ${chain.reason}`);
@@ -367,13 +349,8 @@ export function computeUnitCapability(
 
     const antennaId = eng.antenna_id as string;
     const demodId = eng.demodulator_id as string;
-    const procId = eng.processing_server_id as string;
 
-    if (
-      usedAntennas.has(antennaId) ||
-      usedDemods.has(demodId) ||
-      usedProcessors.has(procId)
-    ) {
+    if (usedAntennas.has(antennaId) || usedDemods.has(demodId)) {
       violations.push(`"${name}" blocked: hardware already allocated to another scan`);
       continue;
     }
@@ -385,7 +362,6 @@ export function computeUnitCapability(
 
     usedAntennas.add(antennaId);
     usedDemods.add(demodId);
-    usedProcessors.add(procId);
 
     assignments.push({
       engagementId: eng.id as string,
@@ -415,13 +391,7 @@ export function computeUnitCapability(
     maxPossibleScans: capacity.totalChains,
     activeChains,
     occupancyPct,
-    availableByStage: {
-      antennas: capacity.antennas,
-      lnas: capacity.lnas,
-      lnbs: capacity.lnbs,
-      demodulators: capacity.demodulators,
-      processors: capacity.processors,
-    },
+    availableByStage: stageAvailabilityFromCapacity(capacity),
     assignments,
     snapshot: toSnapshot(assignments),
   };

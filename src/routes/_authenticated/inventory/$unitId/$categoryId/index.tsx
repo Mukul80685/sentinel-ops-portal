@@ -142,15 +142,12 @@ function EquipmentList() {
   }
 
   const unitLabel = meta?.unit ? unitDisplayLabel(meta.unit) : "";
-  const headerPageTitle = meta
-    ? `${unitLabel} \u2014 ${meta.cat?.name ?? "Equipment"}`
-    : "Equipment";
   const isAntenna = isAntennaCategory(categoryId, meta?.cat?.name);
 
   return (
     <AppShell
       title="Resource Inventory"
-      pageTitle={headerPageTitle}
+      subtitle={unitLabel || undefined}
       headerIcon={<HomeNavIconBadge icon={Boxes} theme="inventory" size="md" />}
       showBack
       horizontalNav={null}

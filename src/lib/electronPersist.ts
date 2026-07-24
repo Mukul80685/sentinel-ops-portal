@@ -7,6 +7,9 @@ import { OPERATIONAL_STORE_KEY, OPERATIONAL_STORE_EVENT } from "@/lib/operationa
 import { invalidateOperationalStoreCache } from "@/lib/operationalStore";
 import { INTEL_CELL_EDITS_EVENT } from "@/lib/intelCellStore";
 import { PRIORITY_ALLOCATION_EVENT } from "@/lib/priorityAllocation";
+import { UNPROFILED_SATELLITES_EVENT } from "@/lib/unprofiledSatellitesStore";
+import { BEIDOU_DATA_EVENT } from "@/lib/beidouStore";
+import { THURAYA_DATA_EVENT } from "@/lib/thurayaStore";
 
 const DISK_SNAPSHOT_MARKER = "ssacc_disk_snapshot_at";
 const RESTORE_MARKER = "ssacc_snapshot_restored_at";
@@ -182,12 +185,18 @@ export function installElectronPersistenceHooks(): () => void {
   const onOperationalChange = () => scheduleElectronStorageFlush();
   const onIntelCellEdits = () => scheduleElectronStorageFlush();
   const onPriorityChange = () => scheduleElectronStorageFlush();
+  const onUnprofiledSatellites = () => scheduleElectronStorageFlush();
+  const onBeidouData = () => scheduleElectronStorageFlush();
+  const onThurayaData = () => scheduleElectronStorageFlush();
 
   window.addEventListener("beforeunload", onBeforeUnload);
   window.addEventListener("storage", onStorage);
   window.addEventListener(OPERATIONAL_STORE_EVENT, onOperationalChange);
   window.addEventListener(INTEL_CELL_EDITS_EVENT, onIntelCellEdits);
   window.addEventListener(PRIORITY_ALLOCATION_EVENT, onPriorityChange);
+  window.addEventListener(UNPROFILED_SATELLITES_EVENT, onUnprofiledSatellites);
+  window.addEventListener(BEIDOU_DATA_EVENT, onBeidouData);
+  window.addEventListener(THURAYA_DATA_EVENT, onThurayaData);
 
   const interval = window.setInterval(() => scheduleElectronStorageFlush(0), 60_000);
 
@@ -197,6 +206,9 @@ export function installElectronPersistenceHooks(): () => void {
     window.removeEventListener(OPERATIONAL_STORE_EVENT, onOperationalChange);
     window.removeEventListener(INTEL_CELL_EDITS_EVENT, onIntelCellEdits);
     window.removeEventListener(PRIORITY_ALLOCATION_EVENT, onPriorityChange);
+    window.removeEventListener(UNPROFILED_SATELLITES_EVENT, onUnprofiledSatellites);
+    window.removeEventListener(BEIDOU_DATA_EVENT, onBeidouData);
+    window.removeEventListener(THURAYA_DATA_EVENT, onThurayaData);
     window.clearInterval(interval);
     if (flushTimer) clearTimeout(flushTimer);
   };

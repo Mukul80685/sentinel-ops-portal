@@ -2,7 +2,8 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
 import { signedUrl, uploadFile } from "@/lib/storage";
-import { getEquipmentById, statusClass } from "@/lib/queries";
+import { getEquipmentById, getUnitById, statusClass } from "@/lib/queries";
+import { unitDisplayLabel } from "@/lib/operationalDataset";
 import {
   getOperationalEquipmentById,
   insertEquipmentAttachment,
@@ -36,6 +37,13 @@ function EquipmentDetail() {
     queryKey: ["eq-detail", equipmentId],
     queryFn: () => getEquipmentById(equipmentId),
   });
+
+  const { data: unit } = useQuery({
+    queryKey: ["unit", unitId],
+    queryFn: () => getUnitById(unitId),
+  });
+
+  const unitLabel = unit ? unitDisplayLabel(unit) : undefined;
 
   const { data: attachments = [] } = useQuery({
     queryKey: ["att", equipmentId],
@@ -112,7 +120,7 @@ function EquipmentDetail() {
     return (
       <AppShell
         title="Resource Inventory"
-        pageTitle="Loading"
+        subtitle={unitLabel}
         headerIcon={<HomeNavIconBadge icon={Boxes} theme="inventory" size="md" />}
         showBack
         horizontalNav={null}
@@ -124,7 +132,7 @@ function EquipmentDetail() {
   return (
     <AppShell
       title="Resource Inventory"
-      pageTitle={`${form.name} — Equipment Record`}
+      subtitle={unitLabel}
       headerIcon={<HomeNavIconBadge icon={Boxes} theme="inventory" size="md" />}
       showBack
       horizontalNav={null}

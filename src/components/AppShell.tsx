@@ -14,6 +14,7 @@ import {
   Info,
   Activity,
   Shield,
+  Globe2,
 } from "lucide-react";
 import { performSignOut, useAuth, useIsAdmin } from "@/lib/auth";
 import { resolveAppShellHomeLink } from "@/lib/controlCenter";
@@ -51,6 +52,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 const standardNavItems = [
   { key: "units",      label: "Units",               icon: Landmark,  adminTo: "/admin/units",      userTo: "/inventory" },
   { key: "satellites", label: "Satellites",          icon: Satellite, adminTo: "/admin/satellites", userTo: "/visibility" },
+  { key: "unprofiled", label: "Unprofiled Satellites", icon: Globe2, adminTo: "/unprofiled-satellites", userTo: "/unprofiled-satellites" },
   { key: "minutes",    label: "Recent Discussions",  icon: Clock,     adminTo: "/minutes",           userTo: "/minutes" },
 ] as const;
 
@@ -565,6 +567,13 @@ function PrimaryNavSidebar({
             onClick={() => openModule("satellites")}
             iconTheme="satellite"
           />
+          <SidebarLink
+            to="/unprofiled-satellites"
+            label="Unprofiled Satellites"
+            icon={Globe2}
+            active={navActive(pathname, "/unprofiled-satellites")}
+            iconTheme="visibility"
+          />
           <SidebarModalButton
             label="Recent Discussions"
             icon={Megaphone}
@@ -667,6 +676,7 @@ function SecondarySidebar({
   const secondaryIconTheme: Partial<Record<(typeof standardNavItems)[number]["key"], HomeIconTheme>> = {
     units: "inventory",
     satellites: "satellite",
+    unprofiled: "visibility",
     minutes: "discussions",
   };
 
@@ -696,6 +706,18 @@ function SecondarySidebar({
                 icon={item.icon}
                 active={activeModule === "satellites"}
                 onClick={() => openModule("satellites")}
+                iconTheme={iconTheme}
+              />
+            );
+          }
+          if (item.key === "unprofiled") {
+            return (
+              <SidebarLink
+                key={item.key}
+                to="/unprofiled-satellites"
+                label={item.label}
+                icon={item.icon}
+                active={navActive(pathname, "/unprofiled-satellites")}
                 iconTheme={iconTheme}
               />
             );
@@ -936,6 +958,14 @@ export function AppShell({
                 >
                   {title ?? "Module"}
                 </h1>
+                {subtitle ? (
+                  <p
+                    className="mono text-[11px] sm:text-sm font-semibold tracking-[0.08em] uppercase truncate mt-0.5 text-foreground/85"
+                    style={{ textShadow: "0 1px 3px rgba(255,255,255,0.5)" }}
+                  >
+                    {subtitle}
+                  </p>
+                ) : null}
               </div>
 
               <div className="flex items-center justify-end gap-2">

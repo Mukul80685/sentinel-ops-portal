@@ -11,6 +11,7 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
+    "build:electron": "vite build && electron-builder --win",
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
     "electron": "electron electron-main.cjs",
@@ -107,7 +108,6 @@
     "productName": "SSACC",
     "files": [
       "dist/client/**/*",
-      "dist/server/**/*",
       "electron-main.cjs",
       "preload.js",
       "package.json"

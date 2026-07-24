@@ -12,7 +12,8 @@ export type ModuleScope =
   | "priority"
   | "visibility"
   | "inventory"
-  | "serviceability";
+  | "serviceability"
+  | "thuraya";
 
 export const ALL_MODULE_SCOPES: ModuleScope[] = [
   "intel",
@@ -20,6 +21,7 @@ export const ALL_MODULE_SCOPES: ModuleScope[] = [
   "visibility",
   "inventory",
   "serviceability",
+  "thuraya",
 ];
 
 export const MODULE_SCOPE_LABELS: Record<ModuleScope, string> = {
@@ -28,6 +30,7 @@ export const MODULE_SCOPE_LABELS: Record<ModuleScope, string> = {
   visibility: "Satellite Visibility Matrix",
   inventory: "Resource Inventory",
   serviceability: "Serviceability State",
+  thuraya: "Thuraya",
 };
 
 const HIDDEN_KEY: Record<ModuleScope, string> = {
@@ -36,6 +39,7 @@ const HIDDEN_KEY: Record<ModuleScope, string> = {
   visibility: "ssacc_visibility_hidden_units",
   inventory: "ssacc_inventory_hidden_units",
   serviceability: "ssacc_serviceability_hidden_units",
+  thuraya: "ssacc_thuraya_hidden_units",
 };
 
 export const MODULE_UNITS_EVENT = "ssacc_module_units_change";
@@ -260,6 +264,7 @@ export function purgeUnitFromModule(unitId: string, scope: ModuleScope): boolean
       break;
     case "inventory":
     case "serviceability":
+    case "thuraya":
       break;
   }
 

@@ -13,78 +13,21 @@ export const TARGET_ACTIVE_SCANS: Record<UnitSlot, number> = {
 };
 
 /**
- * Per-unit chain inventory — minimum 8–10 items in each RF/processing category.
- * LNA category feeds the engine lnbs stage; LNB is tracked separately in inventory.
- * Profiles differ per unit; Other Resources varies.
+ * Per-unit inventory — Antenna, Demodulators, and Other Resources only.
+ * Profiles differ per unit.
  */
 export const PER_UNIT_INVENTORY: Record<UnitSlot, Record<string, number>> = {
-  alpha: {
-    Antenna: 10,
-    LNA: 10,
-    LNB: 10,
-    Demodulators: 10,
-    "Processing Servers": 10,
-    "Other Resources": 4,
-  },
-  bravo: {
-    Antenna: 9,
-    LNA: 10,
-    LNB: 9,
-    Demodulators: 10,
-    "Processing Servers": 9,
-    "Other Resources": 3,
-  },
-  charlie: {
-    Antenna: 8,
-    LNA: 9,
-    LNB: 10,
-    Demodulators: 9,
-    "Processing Servers": 10,
-    "Other Resources": 2,
-  },
-  delta: {
-    Antenna: 10,
-    LNA: 10,
-    LNB: 9,
-    Demodulators: 10,
-    "Processing Servers": 10,
-    "Other Resources": 5,
-  },
-  echo: {
-    Antenna: 9,
-    LNA: 8,
-    LNB: 9,
-    Demodulators: 10,
-    "Processing Servers": 9,
-    "Other Resources": 3,
-  },
-  foxtrot: {
-    Antenna: 10,
-    LNA: 10,
-    LNB: 10,
-    Demodulators: 9,
-    "Processing Servers": 10,
-    "Other Resources": 4,
-  },
-  golf: {
-    Antenna: 8,
-    LNA: 8,
-    LNB: 9,
-    Demodulators: 8,
-    "Processing Servers": 9,
-    "Other Resources": 2,
-  },
-  hotel: {
-    Antenna: 9,
-    LNA: 10,
-    LNB: 10,
-    Demodulators: 10,
-    "Processing Servers": 8,
-    "Other Resources": 3,
-  },
+  alpha: { Antenna: 12, Demodulators: 18, "Other Resources": 12 },
+  bravo: { Antenna: 11, Demodulators: 17, "Other Resources": 11 },
+  charlie: { Antenna: 10, Demodulators: 16, "Other Resources": 10 },
+  delta: { Antenna: 12, Demodulators: 18, "Other Resources": 12 },
+  echo: { Antenna: 11, Demodulators: 16, "Other Resources": 10 },
+  foxtrot: { Antenna: 12, Demodulators: 17, "Other Resources": 11 },
+  golf: { Antenna: 10, Demodulators: 15, "Other Resources": 9 },
+  hotel: { Antenna: 11, Demodulators: 16, "Other Resources": 10 },
 };
 
-/** Minimum guaranteed operational items per chain category (supports 6–7 simultaneous scans). */
+/** Minimum guaranteed operational items per chain category (supports simultaneous scans). */
 export const CHAIN_OPERATIONAL_RESERVE = 7;
 
 /** Target share of engagements that receive intel seed rows. */
@@ -94,7 +37,7 @@ export const OPERATIONAL_STORE_KEY = "ssacc_operational_store_v2";
 export const OPERATIONAL_STORE_EVENT = "ssacc-operational-store-change";
 /** Dedicated persistence for unit renames — survives store regeneration and SSR hydration. */
 export const UNIT_IDENTITY_OVERRIDES_KEY = "ssacc_unit_identity_v1";
-export const OPERATIONAL_DATASET_VERSION = 9 as const;
+export const OPERATIONAL_DATASET_VERSION = 10 as const;
 
 /** Supabase must exceed these counts to override the local operational SSOT. */
 export const MIN_DB_EQUIPMENT_FOR_OVERRIDE = 300;

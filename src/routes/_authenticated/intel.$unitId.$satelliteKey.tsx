@@ -5,6 +5,7 @@ import { AppShell } from "@/components/AppShell";
 import { HomeNavIconBadge } from "@/components/home/HomeNavIcons";
 import { Empty } from "@/components/Empty";
 import { listUnits, listIntelRecordsForUnit } from "@/lib/queries";
+import { unitDisplayLabel } from "@/lib/operationalDataset";
 import { removeOperationalIntelRows } from "@/lib/operationalStore";
 import { resolveIntUnitSlug, resolveOperationalUnitId } from "@/lib/operationalSync";
 import { useCanEdit } from "@/lib/auth";
@@ -243,7 +244,7 @@ function SatelliteIntelRepository() {
   return (
     <AppShell
       title="Intelligence Repository"
-      pageTitle={`${satelliteName} · ${unit.name} · ${polarization}`}
+      subtitle={unitDisplayLabel(unit)}
       showBack
       backLink={ccModuleBackLink("intel")}
       headerIcon={<HomeNavIconBadge icon={Archive} theme="intel" size="md" />}

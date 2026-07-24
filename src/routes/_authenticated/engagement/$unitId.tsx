@@ -22,7 +22,6 @@ import { Label } from "@/components/ui/label";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
@@ -48,7 +47,6 @@ import {
   collectEngagementAllocatedIds,
   collectFormAllocatedIds,
   averageResourceEngagementPct,
-  resolveLnaLnbFromRow,
   parseEquipmentIdFromRemarks,
 } from "@/lib/resourceEngagementStats";
 import {
@@ -127,15 +125,25 @@ function engagementRowStorageKey(row: any): string {
   return String(row.id ?? "");
 }
 
-function isProcessorEquipment(e: { category?: { name?: string } | null }): boolean {
-  const cat = (e.category?.name ?? "").toLowerCase();
-  return cat.includes("processing") || cat.includes("processor");
+
+function resolveChainEquipmentDisplay(row: any, equipment: any[]) {
+  const demodIds = equipmentIdsFromRow(row, "DEMOD_IDS", "DEMOD_ID", row.demodulator_id);
+  return {
+    demodulators: equipmentNamesFromIds(demodIds, equipment),
+  };
 }
 
-function isProcessorEquipmentId(id: string, equipment: any[]): boolean {
-  const eq = equipment.find((e) => e.id === id);
-  return eq ? isProcessorEquipment(eq) : false;
-}
+/** Equal % widths on `<col>` — reliable in packaged Electron (table-layout: fixed). */
+const ENGAGED_RESOURCES_DATA_COL_WIDTH = "14%";
+const ENGAGED_RESOURCES_ACTIONS_COL_WIDTH = "14%";
+const ENGAGED_RESOURCES_COLGROUP = [
+  ENGAGED_RESOURCES_DATA_COL_WIDTH,
+  ENGAGED_RESOURCES_DATA_COL_WIDTH,
+  ENGAGED_RESOURCES_DATA_COL_WIDTH,
+  ENGAGED_RESOURCES_DATA_COL_WIDTH,
+  ENGAGED_RESOURCES_DATA_COL_WIDTH,
+  ENGAGED_RESOURCES_ACTIONS_COL_WIDTH,
+] as const;
 
 function resolveOperationalEngagementForTableRow(row: any, unitEngagements: any[]): any | null {
   const reportId = intelReportIdFromRow(row);
@@ -159,11 +167,7 @@ function resolveOperationalEngagementForTableRow(row: any, unitEngagements: any[
 }
 
 function collectExclusiveAllocatedIds(activeRows: any[], equipment: any[]): Set<string> {
-  const ids = collectEngagementAllocatedIds(activeRows, equipment);
-  for (const id of [...ids]) {
-    if (isProcessorEquipmentId(id, equipment)) ids.delete(id);
-  }
-  return ids;
+  return collectEngagementAllocatedIds(activeRows, equipment);
 }
 
 
@@ -206,49 +210,6 @@ function equipmentNamesFromIds(ids: string[], equipment: any[]): string {
   const names = ids.map((id) => byId.get(id)?.name).filter(Boolean) as string[];
   return names.length ? names.join(", ") : "—";
 }
-
-function resolveChainEquipmentDisplay(row: any, equipment: any[]) {
-  const lnaIds = equipmentIdsFromRow(row, "LNA_IDS", "LNA_ID");
-  const lnbIds = equipmentIdsFromRow(row, "LNB_IDS", "LNB_ID");
-  const demodIds = equipmentIdsFromRow(row, "DEMOD_IDS", "DEMOD_ID", row.demodulator_id);
-  const procIds = equipmentIdsFromRow(row, "PROC_IDS", "PROC_ID", row.processing_server_id);
-
-  let lna = equipmentNamesFromIds(lnaIds, equipment);
-  let lnb = equipmentNamesFromIds(lnbIds, equipment);
-
-  const frontEndMatch = row.remarks?.match(/LNA\/LNB:(LNA|LNB|—)/);
-  if (frontEndMatch?.[1] === "LNA") {
-    lnb = "—";
-  } else if (frontEndMatch?.[1] === "LNB") {
-    lna = "—";
-  } else if (lna === "—" && lnb === "—") {
-    const legacy = resolveLnaLnbFromRow(row, equipment);
-    lna = legacy.lna;
-    lnb = legacy.lnb;
-  }
-
-  return {
-    lna,
-    lnb,
-    demodulators: equipmentNamesFromIds(demodIds, equipment),
-    processors: equipmentNamesFromIds(procIds, equipment),
-  };
-}
-
-/** Equal % widths on `<col>` — reliable in packaged Electron (Chromium table-layout: fixed). */
-const ENGAGED_RESOURCES_DATA_COL_WIDTH = "11%";
-const ENGAGED_RESOURCES_ACTIONS_COL_WIDTH = "12%";
-const ENGAGED_RESOURCES_COLGROUP = [
-  ENGAGED_RESOURCES_DATA_COL_WIDTH,
-  ENGAGED_RESOURCES_DATA_COL_WIDTH,
-  ENGAGED_RESOURCES_DATA_COL_WIDTH,
-  ENGAGED_RESOURCES_DATA_COL_WIDTH,
-  ENGAGED_RESOURCES_DATA_COL_WIDTH,
-  ENGAGED_RESOURCES_DATA_COL_WIDTH,
-  ENGAGED_RESOURCES_DATA_COL_WIDTH,
-  ENGAGED_RESOURCES_DATA_COL_WIDTH,
-  ENGAGED_RESOURCES_ACTIONS_COL_WIDTH,
-] as const;
 
 const ENGAGED_RESOURCE_HEAD_CELL =
   "text-left px-2 py-2 text-[9.5px] uppercase tracking-wider text-foreground font-bold border-r border-border/50 last:border-r-0 min-w-0 max-w-0 overflow-hidden";
@@ -309,36 +270,18 @@ function parseOtherResourcesFromRemarks(remarks: string | null | undefined): str
 
 function buildChainEngagementRemarks(input: {
   remarks: string;
-  frontEndType: "LNA" | "LNB" | "";
-  lnaIds: string[];
-  lnbIds: string[];
   demodBands: DemodBand[];
   demodIds: string[];
-  processorIds: string[];
   otherResourceIds: string[];
   equipment: { id: string; name: string }[];
 }): string {
-  const lnaIds = input.frontEndType === "LNA" ? input.lnaIds : [];
-  const lnbIds = input.frontEndType === "LNB" ? input.lnbIds : [];
-  const frontEnd =
-    input.frontEndType === "LNA" && lnaIds.length > 0
-      ? "LNA"
-      : input.frontEndType === "LNB" && lnbIds.length > 0
-        ? "LNB"
-        : "—";
   const otherNames = input.otherResourceIds
     .map((id) => input.equipment.find((e) => e.id === id)?.name)
     .filter(Boolean) as string[];
   const parts = [
-    `LNA/LNB:${frontEnd}`,
-    lnaIds.length ? `LNA_IDS:${lnaIds.join(",")}` : null,
-    lnbIds.length ? `LNB_IDS:${lnbIds.join(",")}` : null,
-    lnaIds[0] ? `LNA_ID:${lnaIds[0]}` : null,
-    lnbIds[0] ? `LNB_ID:${lnbIds[0]}` : null,
     input.demodBands.length ? `DEMOD_TYPES:${input.demodBands.join(",")}` : null,
     input.demodBands[0] ? `DEMOD_TYPE:${input.demodBands[0]}` : null,
     input.demodIds.length ? `DEMOD_IDS:${input.demodIds.join(",")}` : null,
-    input.processorIds.length ? `PROC_IDS:${input.processorIds.join(",")}` : null,
     input.otherResourceIds.length ? `OTHER_RESOURCE_IDS:${input.otherResourceIds.join(",")}` : null,
     otherNames.length ? `OTHER_RESOURCES:${otherNames.join(", ")}` : null,
     input.remarks.trim(),
@@ -364,31 +307,19 @@ function toDatetimeLocalValue(iso: string | null | undefined): string {
 function stripChainMetaFromRemarks(remarks: string | null | undefined): string {
   return (remarks ?? "")
     .replace(/INT_REPORT:[^|]+\s*\|\s*/g, "")
-    .replace(/LNA\/LNB:[^|]+\s*\|\s*/g, "")
-    .replace(/LNA_IDS:[^|]+\s*\|\s*/g, "")
-    .replace(/LNB_IDS:[^|]+\s*\|\s*/g, "")
-    .replace(/LNA_ID:[^|]+\s*\|\s*/g, "")
-    .replace(/LNB_ID:[^|]+\s*\|\s*/g, "")
     .replace(/DEMOD_TYPE:[^|]+\s*\|\s*/g, "")
     .replace(/DEMOD_TYPES:[^|]+\s*\|\s*/g, "")
     .replace(/DEMOD_IDS:[^|]+\s*\|\s*/g, "")
-    .replace(/PROC_IDS:[^|]+\s*\|\s*/g, "")
     .replace(/OTHER_RESOURCE_IDS:[^|]+\s*\|\s*/g, "")
     .replace(/OTHER_RESOURCES:[^|]+\s*\|\s*/g, "")
     .trim();
 }
 
-type FrontEndType = "LNA" | "LNB" | "";
-
 type EngagementChainForm = {
   satellite_id: string;
   antenna_id: string;
-  front_end_type: FrontEndType;
-  lna_ids: string[];
-  lnb_ids: string[];
   demod_bands: DemodBand[];
   demodulator_ids: string[];
-  processing_server_ids: string[];
   observation_start: string;
   remarks: string;
   other_resource_ids: string[];
@@ -427,34 +358,15 @@ function parseDemodBandsFromRemarks(
   return inferDemodBandsFromIds(demodIds, equipment);
 }
 
-function inferFrontEndTypeFromRow(row: any, lnaIds: string[], lnbIds: string[]): FrontEndType {
-  if (lnaIds.length > 0) return "LNA";
-  if (lnbIds.length > 0) return "LNB";
-  const typeMatch = row.remarks?.match(/LNA\/LNB:(LNA|LNB)/);
-  if (typeMatch?.[1] === "LNA" || typeMatch?.[1] === "LNB") return typeMatch[1] as FrontEndType;
-  return "";
-}
-
 function parseEngagementFormFromRow(row: any, equipment: any[] = []): EngagementChainForm {
-  const lnaIds = parseRemarkIdList(row.remarks, "LNA_IDS");
-  const lnbIds = parseRemarkIdList(row.remarks, "LNB_IDS");
   const demodIds = parseRemarkIdList(row.remarks, "DEMOD_IDS");
-  const procIds = parseRemarkIdList(row.remarks, "PROC_IDS");
-  const legacyLna = parseEquipmentIdFromRemarks(row.remarks, "LNA_ID");
-  const legacyLnb = parseEquipmentIdFromRemarks(row.remarks, "LNB_ID");
-  const resolvedLnaIds = lnaIds.length ? lnaIds : legacyLna ? [legacyLna] : [];
-  const resolvedLnbIds = lnbIds.length ? lnbIds : legacyLnb ? [legacyLnb] : [];
   const resolvedDemodIds = demodIds.length ? demodIds : row.demodulator_id ? [row.demodulator_id] : [];
 
   return {
     satellite_id: resolveSatelliteIdFromRow(row),
     antenna_id: row.antenna_id ?? "",
-    front_end_type: inferFrontEndTypeFromRow(row, resolvedLnaIds, resolvedLnbIds),
-    lna_ids: resolvedLnaIds,
-    lnb_ids: resolvedLnbIds,
     demod_bands: parseDemodBandsFromRemarks(row.remarks, resolvedDemodIds, equipment),
     demodulator_ids: resolvedDemodIds,
-    processing_server_ids: procIds.length ? procIds : row.processing_server_id ? [row.processing_server_id] : [],
     observation_start: toDatetimeLocalValue(row.observation_start),
     remarks: stripChainMetaFromRemarks(row.remarks),
     other_resource_ids: otherResourceIdsFromRow(row, equipment),
@@ -517,9 +429,6 @@ function attachEquipmentToEngagements(rows: any[], equipment: any[]) {
       : null,
     demodulator: r.demodulator_id
       ? { id: r.demodulator_id, name: byId.get(r.demodulator_id)?.name ?? null }
-      : null,
-    server: r.processing_server_id
-      ? { id: r.processing_server_id, name: byId.get(r.processing_server_id)?.name ?? null }
       : null,
   }));
 }
@@ -1124,26 +1033,12 @@ function EngagementUnit() {
           };
 
         const { resources } = entry;
-        let frontEndType: FrontEndType = "";
-        let lnaIds: string[] = [];
-        let lnbIds: string[] = [];
-        if (resources.lnaIds.length > 0) {
-          frontEndType = "LNA";
-          lnaIds = resources.lnaIds;
-        } else if (resources.lnbIds.length > 0) {
-          frontEndType = "LNB";
-          lnbIds = resources.lnbIds;
-        }
 
         const form: EngagementChainForm = {
           satellite_id: resolveSatelliteIdFromRow(tableRow),
           antenna_id: resources.antennaIds[0] ?? "",
-          front_end_type: frontEndType,
-          lna_ids: lnaIds,
-          lnb_ids: lnbIds,
           demod_bands: inferDemodBandsFromIds(resources.demodIds, equipmentRaw),
           demodulator_ids: resources.demodIds,
-          processing_server_ids: resources.procIds,
           observation_start: "",
           remarks: "",
           other_resource_ids: resources.otherIds,
@@ -1155,7 +1050,7 @@ function EngagementUnit() {
           satellite_id: form.satellite_id || undefined,
           antenna_id: form.antenna_id || null,
           demodulator_id: form.demodulator_ids[0] ?? null,
-          processing_server_id: form.processing_server_ids[0] ?? null,
+          processing_server_id: null,
           observation_start: null,
           status: tableRow.status,
           remarks: intelReportId
@@ -1212,10 +1107,7 @@ function EngagementUnit() {
     "#",
     "Satellite",
     "Antenna",
-    "LNA",
-    "LNB",
     "Demodulator",
-    "Processor",
     "Other Resources",
     "",
   ];
@@ -1223,6 +1115,7 @@ function EngagementUnit() {
   return (
     <AppShell
       title={DASHBOARD_PANEL_LABELS.engagement}
+      subtitle={unitLabel}
       showBack
       backLink={{ to: VSAT_DASHBOARD_PATH, search: {} }}
       horizontalNav={null}
@@ -1356,26 +1249,6 @@ function EngagementUnit() {
                       <td className={ENGAGED_RESOURCE_CELL}>
                         {withImportWarning(
                           rowWarningKey,
-                          "LNA",
-                          <ChainEquipmentCell value={chain.lna} />,
-                          chain.lna === "—",
-                          importWarnings,
-                        )}
-                      </td>
-
-                      <td className={ENGAGED_RESOURCE_CELL}>
-                        {withImportWarning(
-                          rowWarningKey,
-                          "LNB",
-                          <ChainEquipmentCell value={chain.lnb} />,
-                          chain.lnb === "—",
-                          importWarnings,
-                        )}
-                      </td>
-
-                      <td className={ENGAGED_RESOURCE_CELL}>
-                        {withImportWarning(
-                          rowWarningKey,
                           "Demodulator",
                           chain.demodulators !== "—" ? (
                             <div className="flex min-w-0 flex-col gap-0.5">
@@ -1390,16 +1263,6 @@ function EngagementUnit() {
                             <span className="block truncate text-foreground/60">—</span>
                           ),
                           chain.demodulators === "—",
-                          importWarnings,
-                        )}
-                      </td>
-
-                      <td className={ENGAGED_RESOURCE_CELL}>
-                        {withImportWarning(
-                          rowWarningKey,
-                          "Processor",
-                          <ChainEquipmentCell value={chain.processors} />,
-                          chain.processors === "—",
                           importWarnings,
                         )}
                       </td>
@@ -1460,13 +1323,9 @@ function EngagementUnit() {
 interface EngagementResourceFieldsProps {
   form: EngagementChainForm;
   setField: <K extends keyof EngagementChainForm>(k: K, v: EngagementChainForm[K]) => void;
-  setFrontEndType: (type: FrontEndType) => void;
   toggleDemodBand: (band: DemodBand, enabled: boolean) => void;
   availableAntennas: { id: string; name: string }[];
-  availableLNA: { id: string; name: string }[];
-  availableLNB: { id: string; name: string }[];
   availableDemod: { id: string; name: string; band: DemodBand | null }[];
-  availableServers: { id: string; name: string }[];
   availableOther: { id: string; name: string }[];
   noAntenna?: boolean;
 }
@@ -1474,13 +1333,9 @@ interface EngagementResourceFieldsProps {
 function EngagementResourceFields({
   form,
   setField,
-  setFrontEndType,
   toggleDemodBand,
   availableAntennas,
-  availableLNA,
-  availableLNB,
   availableDemod,
-  availableServers,
   availableOther,
   noAntenna = false,
 }: EngagementResourceFieldsProps) {
@@ -1507,66 +1362,6 @@ function EngagementResourceFields({
           </SelectContent>
         </Select>
       </F>
-
-      <F label="Select LNA or LNB">
-        <div className="space-y-2">
-          <RadioGroup
-            value={form.front_end_type || ""}
-            onValueChange={(v) => {
-              if (v === "LNA" || v === "LNB") setFrontEndType(v);
-            }}
-            className="flex flex-col gap-2"
-          >
-            <div className="flex items-center gap-6">
-              <div className="flex items-center gap-2">
-                <RadioGroupItem value="LNA" id="eng-fe-lna" />
-                <Label htmlFor="eng-fe-lna" className="mono text-[10px] font-normal cursor-pointer">
-                  LNA
-                </Label>
-              </div>
-              <div className="flex items-center gap-2">
-                <RadioGroupItem value="LNB" id="eng-fe-lnb" />
-                <Label htmlFor="eng-fe-lnb" className="mono text-[10px] font-normal cursor-pointer">
-                  LNB
-                </Label>
-              </div>
-            </div>
-          </RadioGroup>
-          {form.front_end_type ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2 mono text-[9px] uppercase tracking-wider"
-              onClick={() => setFrontEndType("")}
-            >
-              Clear LNA/LNB
-            </Button>
-          ) : null}
-        </div>
-      </F>
-
-      {form.front_end_type === "LNA" && (
-        <F label={`LNA — select one or more (${availableLNA.length} available)`}>
-          <EquipmentMultiPick
-            items={availableLNA}
-            selected={form.lna_ids}
-            onChange={(ids) => setField("lna_ids", ids)}
-            emptyLabel="No LNA available"
-          />
-        </F>
-      )}
-
-      {form.front_end_type === "LNB" && (
-        <F label={`LNB — select one or more (${availableLNB.length} available)`}>
-          <EquipmentMultiPick
-            items={availableLNB}
-            selected={form.lnb_ids}
-            onChange={(ids) => setField("lnb_ids", ids)}
-            emptyLabel="No LNB available"
-          />
-        </F>
-      )}
 
       <F label="Demodulators">
         <div className="space-y-3">
@@ -1596,15 +1391,6 @@ function EngagementResourceFields({
         </div>
       </F>
 
-      <F label={`Processors — select all engaged (${availableServers.length} available)`}>
-        <EquipmentMultiPick
-          items={availableServers}
-          selected={form.processing_server_ids}
-          onChange={(ids) => setField("processing_server_ids", ids)}
-          emptyLabel="No processors available"
-        />
-      </F>
-
       <F label={`Other Resources — select from inventory (${availableOther.length} available)`}>
         <EquipmentMultiPick
           items={availableOther}
@@ -1632,22 +1418,15 @@ function EngagementResourceFields({
 function buildRemarksFromForm(form: EngagementChainForm, equipment: { id: string; name: string }[]): string {
   const hasResources =
     Boolean(form.antenna_id) ||
-    form.lna_ids.length > 0 ||
-    form.lnb_ids.length > 0 ||
     form.demodulator_ids.length > 0 ||
-    form.processing_server_ids.length > 0 ||
     form.demod_bands.length > 0 ||
     form.other_resource_ids.length > 0 ||
     form.remarks.trim().length > 0;
   if (!hasResources) return "";
   return buildChainEngagementRemarks({
     remarks: form.remarks,
-    frontEndType: form.front_end_type,
-    lnaIds: form.lna_ids,
-    lnbIds: form.lnb_ids,
     demodBands: form.demod_bands,
     demodIds: form.demodulator_ids,
-    processorIds: form.processing_server_ids,
     otherResourceIds: form.other_resource_ids,
     equipment,
   });
@@ -1708,11 +1487,10 @@ function EditEngagement({
     [getAllocatedIdsForRow, row],
   );
 
-  const serviceable = (matchStr: string, excludeLnbInLna = false) =>
+  const serviceable = (matchStr: string) =>
     equipment.filter((e: any) => {
       const cat = (e.category?.name ?? "").toLowerCase();
       if (e.serviceability !== "Operational") return false;
-      if (excludeLnbInLna && cat.includes("lnb")) return false;
       return cat.includes(matchStr);
     });
 
@@ -1720,40 +1498,23 @@ function EditEngagement({
 
   useEffect(() => {
     if (open) setForm(parseEngagementFormFromRow(row, equipment));
-  }, [open, row, equipment, row.remarks, row.antenna_id, row.demodulator_id, row.processing_server_id]);
+  }, [open, row, equipment, row.remarks, row.antenna_id, row.demodulator_id]);
 
   function setField<K extends keyof EngagementChainForm>(k: K, v: EngagementChainForm[K]) {
     setForm((f) => ({ ...f, [k]: v }));
   }
 
-  function setFrontEndType(type: FrontEndType) {
-    setForm((f) => ({
-      ...f,
-      front_end_type: type,
-      lna_ids: type === "LNA" ? f.lna_ids : [],
-      lnb_ids: type === "LNB" ? f.lnb_ids : [],
-    }));
-  }
-
   const antennaPool = serviceable("antenna");
-  const lnaPool = serviceable("lna", true);
-  const lnbPool = serviceable("lnb");
   const demodPool = serviceable("demodulat");
-  const serverPool = equipment.filter(
-    (e: any) => e.serviceability === "Operational" && isProcessorEquipment(e),
-  );
   const otherPool = equipment.filter(
     (e: any) => e.serviceability === "Operational" && isOtherResourcesEquipment(e),
   );
 
   const availableAntennas = equipmentAvailableForEdit(antennaPool, allocatedOthers, form.antenna_id ? [form.antenna_id] : []);
-  const availableLNA = equipmentAvailableForEdit(lnaPool, allocatedOthers, form.lna_ids);
-  const availableLNB = equipmentAvailableForEdit(lnbPool, allocatedOthers, form.lnb_ids);
   const availableDemod = mapAvailableDemods(
     equipmentAvailableForEdit(demodPool, allocatedOthers, form.demodulator_ids),
     equipment,
   );
-  const availableServers = serverPool;
   const availableOther = equipmentAvailableForEdit(otherPool, allocatedOthers, form.other_resource_ids);
 
   function toggleDemodBand(band: DemodBand, enabled: boolean) {
@@ -1763,8 +1524,7 @@ function EditEngagement({
   async function submit(e: React.FormEvent) {
     e.preventDefault();
 
-    const processorIds = new Set(form.processing_server_ids);
-    const exclusiveSelected = [...collectFormAllocatedIds(form)].filter((id) => !processorIds.has(id));
+    const exclusiveSelected = [...collectFormAllocatedIds(form)];
     const allocatedNow = getAllocatedIdsForRow(row);
     const conflicts = exclusiveSelected.filter((id) => allocatedNow.has(id));
     if (conflicts.length > 0) {
@@ -1781,7 +1541,7 @@ function EditEngagement({
       satellite_id: satelliteId || undefined,
       antenna_id: form.antenna_id || null,
       demodulator_id: form.demodulator_ids[0] ?? null,
-      processing_server_id: form.processing_server_ids[0] ?? null,
+      processing_server_id: null,
       observation_start: toObservationStartIso(form.observation_start),
       status: row.status,
       remarks: remarks || null,
@@ -1816,22 +1576,18 @@ function EditEngagement({
         </DialogHeader>
 
         <div className="mono text-[8.5px] text-foreground/75 border border-border/50 rounded-sm px-2 py-1.5 bg-secondary/10">
-          Assign resources used for <span className="font-bold">{row.satellites?.name ?? "this satellite"}</span>.
+          Assign Antenna, Demodulator, and Other Resources from inventory for{" "}
+          <span className="font-bold">{row.satellites?.name ?? "this satellite"}</span>.
           Resources selected on other rows are locked — deselect here and save to free them for another row.
-          Processors may be shared across multiple rows.
         </div>
 
         <form onSubmit={submit} className="space-y-3 mt-1">
           <EngagementResourceFields
             form={form}
             setField={setField}
-            setFrontEndType={setFrontEndType}
             toggleDemodBand={toggleDemodBand}
             availableAntennas={availableAntennas}
-            availableLNA={availableLNA}
-            availableLNB={availableLNB}
             availableDemod={availableDemod}
-            availableServers={availableServers}
             availableOther={availableOther}
           />
 
