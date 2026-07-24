@@ -129,6 +129,23 @@ export function HomeSidebarIcon({
   );
 }
 
+/** Larger colourful badge for home launcher tiles — same palette as sidebar icons. */
+export function HomeLauncherIcon({
+  icon: Icon,
+  theme,
+}: {
+  icon: LucideIcon;
+  theme: HomeIconTheme;
+}) {
+  return (
+    <span
+      className={`h-[4.75rem] w-[4.75rem] sm:h-[5.25rem] sm:w-[5.25rem] lg:h-24 lg:w-24 rounded-2xl grid place-items-center shrink-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.30),0_4px_14px_rgba(0,0,0,0.14)] ${SIDEBAR_SOLID_BG[theme]}`}
+    >
+      <Icon className="h-10 w-10 sm:h-11 sm:w-11 lg:h-12 lg:w-12 text-white" strokeWidth={2.25} />
+    </span>
+  );
+}
+
 export function renderSidebarIcon(
   Icon: LucideIcon,
   theme: HomeIconTheme,

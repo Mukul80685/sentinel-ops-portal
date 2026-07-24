@@ -10,15 +10,13 @@ import {
   Settings,
   User,
   Clock,
-  Trash2,
-  Star,
   Megaphone,
   Info,
   Activity,
   Shield,
 } from "lucide-react";
 import { performSignOut, useAuth, useIsAdmin } from "@/lib/auth";
-import { ccHubSearch, resolveAppShellHomeLink } from "@/lib/controlCenter";
+import { resolveAppShellHomeLink } from "@/lib/controlCenter";
 import {
   renderSidebarIcon,
   HOME_SIDEBAR_BTN,
@@ -53,7 +51,6 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 const standardNavItems = [
   { key: "units",      label: "Units",               icon: Landmark,  adminTo: "/admin/units",      userTo: "/inventory" },
   { key: "satellites", label: "Satellites",          icon: Satellite, adminTo: "/admin/satellites", userTo: "/visibility" },
-  { key: "discarded",  label: "Discarded Frequencies", icon: Trash2, adminTo: "/discarded",       userTo: "/discarded" },
   { key: "minutes",    label: "Recent Discussions",  icon: Clock,     adminTo: "/minutes",           userTo: "/minutes" },
 ] as const;
 
@@ -510,13 +507,8 @@ function PrimaryNavSidebar({
   onClockClick: () => void;
 }) {
   const { activeModule, openModule } = useSidebarModules();
-  const ccModule = useRouterState({
-    select: (s) => (s.location.search as { module?: string }).module,
-  });
-  const importantActive =
-    pathname === "/administrator" && ccModule === "important";
 
-  const isHomePage = pathname === "/";
+  const isHomePage = pathname === "/" || pathname === "/dashboard";
   const isAdministratorWorkspace =
     pathname === "/administrator" ||
     pathname === "/visibility" ||
@@ -560,7 +552,7 @@ function PrimaryNavSidebar({
           {isAdministratorWorkspace && (
             <SidebarLink
               to="/"
-              label="Satellite Monitoring Dashboard"
+              label="Dashboard"
               icon={Activity}
               active={false}
               iconTheme="engagement"
@@ -579,21 +571,6 @@ function PrimaryNavSidebar({
             active={activeModule === "discussions"}
             onClick={() => openModule("discussions")}
             iconTheme="discussions"
-          />
-          <SidebarLink
-            to="/administrator"
-            search={ccHubSearch("important")}
-            label="Important Frequencies"
-            icon={Star}
-            active={importantActive}
-            iconTheme="important"
-          />
-          <SidebarLink
-            to="/discarded"
-            label="Discarded Frequencies"
-            icon={Trash2}
-            active={navActive(pathname, "/discarded")}
-            iconTheme="discarded"
           />
         </nav>
 
@@ -690,7 +667,6 @@ function SecondarySidebar({
   const secondaryIconTheme: Partial<Record<(typeof standardNavItems)[number]["key"], HomeIconTheme>> = {
     units: "inventory",
     satellites: "satellite",
-    discarded: "discarded",
     minutes: "discussions",
   };
 

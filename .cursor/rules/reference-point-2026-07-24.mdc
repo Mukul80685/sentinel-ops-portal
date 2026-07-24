@@ -1,0 +1,26 @@
+---
+description: Restore baseline when user cites 24 Jul 2026 reference point
+alwaysApply: true
+---
+
+# Reference point — 24 July 2026
+
+The user may ask to **“go back to 24 Jul 26”**, **“restore 24 July 2026”**, or **“take me to the reference point”**.
+
+## Anchor
+
+- **Git tag:** `reference-2026-07-24`
+- **Commit:** `7d572f7dcfd7162854d5244d257c7bc2f336efa2`
+- **Details:** see `REFERENCE_POINT_2026-07-24.md`
+
+## Agent procedure
+
+1. Confirm intent: inspect tag only vs restore working tree vs reset `main`.
+2. Prefer **non-destructive** restore first: `git checkout -b restore-from-2026-07-24 reference-2026-07-24`.
+3. Only `git reset --hard reference-2026-07-24` on `main` when the user explicitly wants current branch rewound.
+4. Never force-push to `main` without explicit user request (Lovable-connected repo).
+5. After code restore, run `npm run build` and remind user to rebuild EXE if needed.
+
+## Baseline capabilities (do not regress unintentionally)
+
+Priority Allocate (offline EXE), INT drill-down/import, backup/restore snapshots, electron persistence under `%APPDATA%\SSACC\`, visibility/engagement/reports as shipped in tag commit.

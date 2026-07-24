@@ -44,12 +44,24 @@ export type SatelliteDetailEdits = {
   totalTransponders?: string;
 };
 
+/** Merged C-section summary — counts plus protocol names (replaces legacy C1/C2/C3 row tables). */
+export type FrequencyAnalysisEdits = {
+  productiveCount?: string;
+  nonProductiveCount?: string;
+  protocols?: string[];
+  importedMode?: boolean;
+};
+
 export type ReportCellEdits = {
   satellite: SatelliteDetailEdits;
   scan: ScanSummaryEdits;
+  /** @deprecated Legacy per-frequency rows — migrated into frequencyAnalysis when possible. */
   productive: TableStore;
+  /** @deprecated Legacy per-frequency rows — migrated into frequencyAnalysis when possible. */
   nonProductive: TableStore;
+  /** @deprecated Legacy per-frequency rows — migrated into frequencyAnalysis when possible. */
   novel: TableStore;
+  frequencyAnalysis: FrequencyAnalysisEdits;
 };
 
 export type ImportTableKey = "productive" | "nonProductive" | "novel";
@@ -58,11 +70,7 @@ function emptyTableStore(): TableStore {
   return { cells: {}, extra: [] };
 }
 
-const PRODUCTIVE_EXTRA_FIELDS = ["outputType", "details", "protocol"] as const;
-const NON_PRODUCTIVE_EXTRA_FIELDS = ["level", "protocol", "remarks"] as const;
-const NOVEL_EXTRA_FIELDS = ["protocol", "remarks"] as const;
-
-/** Remove persisted ghost rows (band labels, frequency-only entries). */
+/** Remove persisted ghost rows (band labels, frequency-only entries). Keeps valid user rows. */
 function sanitizeFrequencyExtraRow(
   row: { id: string } & Record<string, string>,
   kind: "productive" | "nonProductive" | "novel",
@@ -79,9 +87,30 @@ function sanitizeFrequencyExtraRow(
 
   const frequencyId = row.frequencyId?.trim() ?? "";
   if (!frequencyId || isSpuriousBandLabel(frequencyId)) return false;
-  const otherFields =
-    kind === "productive" ? PRODUCTIVE_EXTRA_FIELDS : NON_PRODUCTIVE_EXTRA_FIELDS;
-  return otherFields.some((field) => (row[field] ?? "").trim().length > 0);
+
+  if (kind === "productive") {
+    return !isFrequencyOnlyImportRow(
+      {
+        "Frequency ID": frequencyId,
+        "Output Type": row.outputType ?? "",
+        "Details of Interception": row.details ?? "",
+        Protocol: row.protocol ?? "",
+      },
+      "Frequency ID",
+      ["Output Type", "Details of Interception", "Protocol"],
+    );
+  }
+
+  return !isFrequencyOnlyImportRow(
+    {
+      "Frequency ID": frequencyId,
+      Level: row.level ?? "",
+      Protocol: row.protocol ?? "",
+      Remarks: row.remarks ?? "",
+    },
+    "Frequency ID",
+    ["Level", "Protocol", "Remarks"],
+  );
 }
 
 function sanitizeTableStoreExtra(raw: Partial<TableStore> | undefined, kind: ImportTableKey): TableStore["extra"] {
@@ -104,6 +133,69 @@ function sanitizeTableStoreExtra(raw: Partial<TableStore> | undefined, kind: Imp
   return cleaned;
 }
 
+function emptyFrequencyAnalysis(): FrequencyAnalysisEdits {
+  return { protocols: [] };
+}
+
+function normalizeProtocols(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "string") continue;
+    const trimmed = entry.trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(trimmed);
+  }
+  return out;
+}
+
+function normalizeFrequencyAnalysis(
+  raw: Partial<FrequencyAnalysisEdits> | undefined,
+  legacy?: Partial<ReportCellEdits>,
+): FrequencyAnalysisEdits {
+  const hasNewData =
+    raw &&
+    (raw.productiveCount?.trim() ||
+      raw.nonProductiveCount?.trim() ||
+      (Array.isArray(raw.protocols) && raw.protocols.some((p) => typeof p === "string" && p.trim())));
+
+  if (hasNewData) {
+    return {
+      productiveCount: raw?.productiveCount?.trim() ?? "",
+      nonProductiveCount: raw?.nonProductiveCount?.trim() ?? "",
+      protocols: normalizeProtocols(raw?.protocols),
+      importedMode: raw?.importedMode === true,
+    };
+  }
+
+  const legacyProd = legacy?.productive?.extra?.length ?? 0;
+  const legacyNp = legacy?.nonProductive?.extra?.length ?? 0;
+  const legacyProtocols = normalizeProtocols(
+    (legacy?.novel?.extra ?? [])
+      .map((row) => row.protocol ?? "")
+      .filter(Boolean),
+  );
+  const legacyImported =
+    legacy?.productive?.importedMode === true ||
+    legacy?.nonProductive?.importedMode === true ||
+    legacy?.novel?.importedMode === true;
+
+  if (legacyProd || legacyNp || legacyProtocols.length || legacyImported) {
+    return {
+      productiveCount: legacyProd ? String(legacyProd) : "",
+      nonProductiveCount: legacyNp ? String(legacyNp) : "",
+      protocols: legacyProtocols,
+      importedMode: legacyImported,
+    };
+  }
+
+  return emptyFrequencyAnalysis();
+}
+
 export function emptyReportEdits(): ReportCellEdits {
   return {
     satellite: {},
@@ -111,7 +203,39 @@ export function emptyReportEdits(): ReportCellEdits {
     productive: emptyTableStore(),
     nonProductive: emptyTableStore(),
     novel: emptyTableStore(),
+    frequencyAnalysis: emptyFrequencyAnalysis(),
   };
+}
+
+/** Parse merged C-section spreadsheet rows into stored frequency analysis summary. */
+export function parseFrequencyAnalysisImportRows(
+  rows: Record<string, string>[],
+): FrequencyAnalysisEdits {
+  let productiveCount = "";
+  let nonProductiveCount = "";
+  const protocols: string[] = [];
+  const seen = new Set<string>();
+
+  for (const row of rows) {
+    const prod = (row["Productive Frequencies"] ?? "").trim();
+    const np = (row["Non-Productive Frequencies"] ?? "").trim();
+    const protocolCell = (row["Newly Encountered Protocols"] ?? "").trim();
+
+    if (prod && !productiveCount) productiveCount = prod;
+    if (np && !nonProductiveCount) nonProductiveCount = np;
+
+    if (!protocolCell) continue;
+    for (const part of protocolCell.split(/[;\n\r]+/)) {
+      const protocol = part.trim();
+      if (!protocol) continue;
+      const key = protocol.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      protocols.push(protocol);
+    }
+  }
+
+  return { productiveCount, nonProductiveCount, protocols, importedMode: true };
 }
 
 function normalizeTableStore(
@@ -122,18 +246,23 @@ function normalizeTableStore(
   return {
     cells: raw?.cells ?? {},
     extra,
-    importedMode: raw?.importedMode === true || extra.length > 0,
+    // Stale importedMode with empty extra (e.g. after bad sanitize) must not trigger metric wipes.
+    importedMode: raw?.importedMode === true && extra.length > 0,
   };
 }
 
 function normalizeReportEdits(raw: Partial<ReportCellEdits> | undefined): ReportCellEdits {
   if (!raw) return emptyReportEdits();
+  const productive = normalizeTableStore(raw.productive, "productive");
+  const nonProductive = normalizeTableStore(raw.nonProductive, "nonProductive");
+  const novel = normalizeTableStore(raw.novel, "novel");
   return {
     satellite: raw.satellite ?? {},
     scan: raw.scan ?? {},
-    productive: normalizeTableStore(raw.productive, "productive"),
-    nonProductive: normalizeTableStore(raw.nonProductive, "nonProductive"),
-    novel: normalizeTableStore(raw.novel, "novel"),
+    productive,
+    nonProductive,
+    novel,
+    frequencyAnalysis: normalizeFrequencyAnalysis(raw.frequencyAnalysis, raw),
   };
 }
 

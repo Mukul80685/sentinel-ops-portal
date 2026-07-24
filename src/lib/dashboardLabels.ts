@@ -1,3 +1,6 @@
+/** VSAT satellite monitoring dashboard route (map + drill-down panels). */
+export const VSAT_DASHBOARD_PATH = "/dashboard" as const;
+
 /** Satellite Monitoring Dashboard drill-down panel ids (URL search param `panel`). */
 export type DashboardPanel = "engagement" | "activity" | "optimization";
 
@@ -17,5 +20,18 @@ export const DASHBOARD_PANEL_PURPOSE: Record<DashboardPanel, string> = {
 };
 
 export function dashboardPanelBackLink(panel: DashboardPanel) {
-  return { to: "/" as const, search: { panel } };
+  return { to: VSAT_DASHBOARD_PATH, search: { panel } };
+}
+
+export function vsatDashboardLink(search?: {
+  unit?: string;
+  panel?: DashboardPanel;
+}) {
+  return {
+    to: VSAT_DASHBOARD_PATH,
+    search: {
+      ...(search?.unit ? { unit: search.unit } : {}),
+      ...(search?.panel ? { panel: search.panel } : {}),
+    },
+  };
 }

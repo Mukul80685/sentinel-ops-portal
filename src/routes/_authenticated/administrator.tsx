@@ -8,6 +8,7 @@ import {
   isControlCenterModule,
   type ControlCenterModuleId,
 } from "@/lib/controlCenter";
+import { VSAT_DASHBOARD_PATH } from "@/lib/dashboardLabels";
 import {
   ImportantFrequenciesView,
   IntelRepositoryView,
@@ -36,7 +37,7 @@ export const Route = createFileRoute("/_authenticated/administrator")({
   },
   beforeLoad: ({ search }) => {
     if (search.module === "engagement") {
-      throw redirect({ to: "/" });
+      throw redirect({ to: VSAT_DASHBOARD_PATH });
     }
   },
 });

@@ -4,7 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { EngagementDashboardView } from "@/routes/_authenticated/engagement/index";
 import { ExecutiveDashboardOverview } from "@/components/satellite-monitoring/ExecutiveDashboardOverview";
 import type { DashboardPanel } from "@/lib/dashboardLabels";
-import { DASHBOARD_PANEL_LABELS } from "@/lib/dashboardLabels";
+import { DASHBOARD_PANEL_LABELS, VSAT_DASHBOARD_PATH } from "@/lib/dashboardLabels";
 
 const UnitActivitySnapshot = lazy(() =>
   import("@/components/satellite-monitoring/UnitActivitySnapshot").then((m) => ({
@@ -42,7 +42,7 @@ function DashboardDetailShell({
   return (
     <div className="flex flex-col w-full min-h-0 gap-4 px-2 sm:px-4 pb-4">
       <Link
-        to="/"
+        to={VSAT_DASHBOARD_PATH}
         search={{ unit: undefined, panel: undefined }}
         className="inline-flex items-center gap-1.5 w-fit mono text-[11px] font-semibold uppercase tracking-wider text-foreground hover:text-primary transition-colors no-underline"
       >

@@ -18,6 +18,7 @@ import { listUnits, listIntelRecordsForUnit, listEquipmentForUnit } from "@/lib/
 import { Archive, Radio, Satellite, Trash2, FileInput, FileSpreadsheet, Check, SkipForward, ExternalLink, Pencil, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { ccModuleBackLink } from "@/lib/controlCenter";
+import { VSAT_DASHBOARD_PATH } from "@/lib/dashboardLabels";
 import {
   buildIntelDrillDownReport,
   buildIntelLinkageContext,
@@ -44,10 +45,10 @@ import {
   getReportCellEdits,
   setReportCellEdits,
   removeReportCellEdits,
+  parseFrequencyAnalysisImportRows,
 } from "@/lib/intelCellStore";
 import {
   coerceSpreadsheetCell,
-  filterFrequencyImportRecords,
   gridToRecords,
   parseIntelSpreadsheet,
 } from "@/lib/intelSpreadsheetImport";
@@ -150,13 +151,11 @@ type SetupStatus = "pending" | "done" | "skipped";
 interface SetupProgress {
   details: "pending" | "done";
   scan: "pending" | "done";
-  productive: SetupStatus;
-  nonProductive: SetupStatus;
-  novel: SetupStatus;
+  frequencyAnalysis: SetupStatus;
 }
 
 function defaultSetup(): SetupProgress {
-  return { details: "pending", scan: "pending", productive: "pending", nonProductive: "pending", novel: "pending" };
+  return { details: "pending", scan: "pending", frequencyAnalysis: "pending" };
 }
 
 function setupKey(unitId: string, sat: string) {
@@ -166,8 +165,42 @@ function setupKey(unitId: string, sat: string) {
 function loadSetup(unitId: string, sat: string): SetupProgress {
   try {
     const raw = localStorage.getItem(setupKey(unitId, sat));
-    return raw ? (JSON.parse(raw) as SetupProgress) : defaultSetup();
-  } catch { return defaultSetup(); }
+    if (!raw) return defaultSetup();
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if ("frequencyAnalysis" in parsed) {
+      return parsed as SetupProgress;
+    }
+    if ("productive" in parsed) {
+      const legacy = parsed as {
+        details: SetupProgress["details"];
+        scan: SetupProgress["scan"];
+        productive: SetupStatus;
+        nonProductive: SetupStatus;
+        novel: SetupStatus;
+      };
+      const legacyComplete =
+        legacy.productive !== "pending" &&
+        legacy.nonProductive !== "pending" &&
+        legacy.novel !== "pending";
+      let frequencyAnalysis: SetupStatus = "pending";
+      if (legacyComplete) {
+        frequencyAnalysis =
+          legacy.productive === "done" ||
+          legacy.nonProductive === "done" ||
+          legacy.novel === "done"
+            ? "done"
+            : "skipped";
+      }
+      return {
+        details: legacy.details,
+        scan: legacy.scan,
+        frequencyAnalysis,
+      };
+    }
+    return defaultSetup();
+  } catch {
+    return defaultSetup();
+  }
 }
 
 function saveSetup(unitId: string, sat: string, p: SetupProgress) {
@@ -176,14 +209,12 @@ function saveSetup(unitId: string, sat: string, p: SetupProgress) {
 
 function isSetupComplete(p: SetupProgress) {
   return (
-    p.details === "done" && p.scan === "done" &&
-    p.productive !== "pending" && p.nonProductive !== "pending" && p.novel !== "pending"
+    p.details === "done" && p.scan === "done" && p.frequencyAnalysis !== "pending"
   );
 }
 
 function isAnyDone(p: SetupProgress) {
-  return p.details === "done" || p.scan === "done" ||
-    p.productive === "done" || p.nonProductive === "done" || p.novel === "done";
+  return p.details === "done" || p.scan === "done" || p.frequencyAnalysis === "done";
 }
 
 function downloadSetupTemplate(filename: string, headers: string[], example: string[]) {
@@ -218,33 +249,13 @@ const SETUP_SECTIONS = [
     },
   },
   {
-    key: "productive" as const,
-    label: "Productive Frequencies",
+    key: "frequencyAnalysis" as const,
+    label: "Frequency Analysis Summary",
     skippable: true,
     template: {
-      filename: "template-productive-frequencies.csv",
-      headers: ["Frequency ID", "Output Type", "Details of Interception", "Protocol"],
-      example: ["14.500 GHz", "Voice", "Clear audio signal detected on uplink", "TDMA"],
-    },
-  },
-  {
-    key: "nonProductive" as const,
-    label: "Non-Productive Frequencies",
-    skippable: true,
-    template: {
-      filename: "template-non-productive-frequencies.csv",
-      headers: ["Frequency ID", "Level", "Protocol", "Remarks"],
-      example: ["12.100 GHz", "3", "OFDM", "Encrypted — unable to decode beyond layer 3"],
-    },
-  },
-  {
-    key: "novel" as const,
-    label: "Newly Encountered Protocols",
-    skippable: true,
-    template: {
-      filename: "template-novel-protocols.csv",
-      headers: ["Frequency", "Protocol", "Remarks"],
-      example: ["14.500 GHz", "TDMA-X", "Novel TDMA variant"],
+      filename: "template-frequency-analysis-summary.csv",
+      headers: ["Productive Frequencies", "Non-Productive Frequencies", "Newly Encountered Protocols"],
+      example: ["30", "20", "TDMA; OFDM; Novel-X"],
     },
   },
 ] as const;
@@ -342,20 +353,20 @@ function SatelliteSetupDialog({
         templateExample: sec.template.example,
       });
       let filteredDropCount = 0;
-      if (
-        sectionKey === "productive" ||
-        sectionKey === "nonProductive" ||
-        sectionKey === "novel"
-      ) {
-        const freqHeader = sectionKey === "novel" ? "Frequency" : "Frequency ID";
+      if (sectionKey === "frequencyAnalysis") {
         const beforeFilter = objs.length;
-        objs = filterFrequencyImportRecords(objs, expectedHeaders, freqHeader);
+        objs = objs.filter((row) => {
+          const prod = (row["Productive Frequencies"] ?? "").trim();
+          const np = (row["Non-Productive Frequencies"] ?? "").trim();
+          const protocol = (row["Newly Encountered Protocols"] ?? "").trim();
+          return !!(prod || np || protocol);
+        });
         filteredDropCount = beforeFilter - objs.length;
       }
       if (objs.length === 0) {
         toast.error(
           filteredDropCount > 0
-            ? `No valid frequency rows found — each row needs a ${sectionKey === "novel" ? "Frequency" : "Frequency ID"} plus at least one other column filled. Band labels (e.g. C-band) alone are not imported.`
+            ? "No valid rows found — enter counts and/or protocol names in the three template columns."
             : `Your file has a header row but no data. ` +
               `Remove the template example row and add at least one row of real data below the column headings.`,
         );
@@ -430,40 +441,13 @@ function SatelliteSetupDialog({
           pending:       String(override?.pending      ?? (row["Frequencies Pending"]  ?? "0")),
         };
 
-      } else if (sectionKey === "productive") {
-        edits.productive = {
-          importedMode: true, cells: {},
-          extra: objs.map((r, i) => ({
-            id: `imp-prod-${i}`,
-            frequencyId: r["Frequency ID"]           ?? "",
-            outputType:  r["Output Type"]             ?? "",
-            details:     r["Details of Interception"] ?? "",
-            protocol:    r["Protocol"]                ?? "",
-          })),
-        };
-
-      } else if (sectionKey === "nonProductive") {
-        edits.nonProductive = {
-          importedMode: true, cells: {},
-          extra: objs.map((r, i) => ({
-            id: `imp-np-${i}`,
-            frequencyId: r["Frequency ID"] ?? "",
-            level:       r["Level"]        ?? "",
-            protocol:    r["Protocol"]     ?? "",
-            remarks:     r["Remarks"]      ?? "",
-          })),
-        };
-
-      } else if (sectionKey === "novel") {
-        edits.novel = {
-          importedMode: true, cells: {},
-          extra: objs.map((r, i) => ({
-            id: `imp-nov-${i}`,
-            frequency: r["Frequency"] ?? "",
-            protocol:  r["Protocol"]  ?? "",
-            remarks:   r["Remarks"]   ?? "",
-          })),
-        };
+      } else if (sectionKey === "frequencyAnalysis") {
+        const parsed = parseFrequencyAnalysisImportRows(objs);
+        if (!parsed.productiveCount && !parsed.nonProductiveCount && !(parsed.protocols?.length ?? 0)) {
+          toast.error("No valid data found — enter counts and/or protocol names in the three columns.");
+          return;
+        }
+        edits.frequencyAnalysis = parsed;
       }
 
       const saved = setReportCellEdits(reportId, edits);
@@ -489,7 +473,7 @@ function SatelliteSetupDialog({
     }
   }
 
-  function handleSkip(sectionKey: "productive" | "nonProductive" | "novel") {
+  function handleSkip(sectionKey: "frequencyAnalysis") {
     persist({ ...progress, [sectionKey]: "skipped" });
   }
 
@@ -528,7 +512,7 @@ function SatelliteSetupDialog({
 
         <p className="mono text-[10px] text-muted-foreground -mt-2">
           Import data for each section. Fields marked as locked are taken from the scan report and cannot be overridden here.
-          Sections 3–5 can be skipped if not applicable.
+          Sections 3 can be skipped if not applicable.
         </p>
 
         <div className="space-y-1 mt-1">
@@ -600,7 +584,7 @@ function SatelliteSetupDialog({
                     {sec.skippable && (
                       <button
                         type="button"
-                        onClick={() => handleSkip(sec.key as "productive" | "nonProductive" | "novel")}
+                        onClick={() => handleSkip(sec.key as "frequencyAnalysis")}
                         className="mono text-[9px] uppercase tracking-wider text-muted-foreground hover:text-foreground border border-border/50 px-1.5 py-0.5 rounded-sm transition-colors"
                       >
                         Skip
@@ -788,7 +772,7 @@ function IntelUnitView() {
   const qc = useQueryClient();
   const canEdit = useCanEdit();
   const intelBackLink =
-    from === "map" ? { to: "/" as const, search: {} } : ccModuleBackLink("intel");
+    from === "map" ? { to: VSAT_DASHBOARD_PATH, search: {} } : ccModuleBackLink("intel");
   const fromMap = from === "map";
   const moduleTitle = fromMap ? "Active Satellite Monitoring" : "Intelligence Repository";
   const allowEdit = canEdit && !fromMap;
@@ -805,13 +789,8 @@ function IntelUnitView() {
   const [suppressedSatNames, setSuppressedSatNames] = useState<Set<string>>(new Set());
   const [suppressedRowKeys, setSuppressedRowKeys] = useState<Set<string>>(new Set());
   const [pendingNewRow, setPendingNewRow] = useState<IntelSatelliteReportRow | null>(null);
-  // Keep a ref so the navigate-back effect always reads the latest overrides without
-  // triggering unnecessary re-runs.
-  const scanOverridesRef = useRef(scanOverrides);
-  useEffect(() => { scanOverridesRef.current = scanOverrides; }, [scanOverrides]);
   /** Stable override row identity for in-progress edits before first persist. */
   const pendingEditOverrideRef = useRef<{ reportId: string; override: ScanReportOverride } | null>(null);
-  const prevReportIdRef = useRef<string | null>(null);
   // Setup wizard: holds the satellite name when the user clicks an imported (non-roster) satellite
   const [setupSatellite, setSetupSatellite] = useState<{ name: string; reportId: string } | null>(null);
 
@@ -968,42 +947,6 @@ function IntelUnitView() {
     if (match) setSelectedReportId(match.reportId);
   }, [searchSatellite, mergedTableRows, dataAvailable]);
 
-  // When the user navigates back from the drill-down page, check whether all frequency
-  // data for that satellite was cleared from within.  If every table is empty and at
-  // least one was previously in imported-mode, zero out the outer scan-report row so it
-  // shows the re-upload prompt instead of stale non-zero counts.
-  useEffect(() => {
-    const prev = prevReportIdRef.current;
-    prevReportIdRef.current = selectedReportId;
-    if (prev === null || selectedReportId !== null) return;
-
-    const edits = getReportCellEdits(prev);
-    const wasEverImported =
-      edits.productive.importedMode ||
-      edits.nonProductive.importedMode ||
-      edits.novel.importedMode;
-    const allEmpty =
-      edits.productive.extra.length === 0 &&
-      edits.nonProductive.extra.length === 0 &&
-      edits.novel.extra.length === 0;
-
-    if (wasEverImported && allEmpty) {
-      const currentOverrides = scanOverridesRef.current;
-      const match = currentOverrides.find(
-        (o) => reportIdForOverride(intUnitSlug, o) === prev,
-      );
-      if (match) {
-        const rowId = overrideRowKey(match);
-        const updated = currentOverrides.map((o) =>
-          overrideRowKey(o) === rowId
-            ? { ...o, totalScanned: 0, analyzed: 0, pending: 0, productivityScore: null }
-            : o,
-        );
-        saveScanOverrides(intUnitSlug, updated, unit?.code);
-        setScanOverrides(updated);
-      }
-    }
-  }, [selectedReportId, intUnitSlug, unitId]);
 
   function downloadImportTemplate() {
     const example = ["EXAMPLE-SAT-1", "V/H", "450", "320", "130", "2024-01-15"];

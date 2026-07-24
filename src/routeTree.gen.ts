@@ -16,6 +16,7 @@ import { Route as AuthenticatedReportsRouteImport } from './routes/_authenticate
 import { Route as AuthenticatedMinutesRouteImport } from './routes/_authenticated/minutes'
 import { Route as AuthenticatedImportantRouteImport } from './routes/_authenticated/important'
 import { Route as AuthenticatedDiscardedRouteImport } from './routes/_authenticated/discarded'
+import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedControlCenterRouteImport } from './routes/_authenticated/control-center'
 import { Route as AuthenticatedAdministratorRouteImport } from './routes/_authenticated/administrator'
 import { Route as AuthenticatedVisibilityIndexRouteImport } from './routes/_authenticated/visibility.index'
@@ -68,6 +69,11 @@ const AuthenticatedImportantRoute = AuthenticatedImportantRouteImport.update({
 const AuthenticatedDiscardedRoute = AuthenticatedDiscardedRouteImport.update({
   id: '/discarded',
   path: '/discarded',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedControlCenterRoute =
@@ -187,6 +193,7 @@ export interface FileRoutesByFullPath {
   '/auth': typeof AuthRoute
   '/administrator': typeof AuthenticatedAdministratorRoute
   '/control-center': typeof AuthenticatedControlCenterRoute
+  '/dashboard': typeof AuthenticatedDashboardRoute
   '/discarded': typeof AuthenticatedDiscardedRoute
   '/important': typeof AuthenticatedImportantRoute
   '/minutes': typeof AuthenticatedMinutesRoute
@@ -213,6 +220,7 @@ export interface FileRoutesByTo {
   '/auth': typeof AuthRoute
   '/administrator': typeof AuthenticatedAdministratorRoute
   '/control-center': typeof AuthenticatedControlCenterRoute
+  '/dashboard': typeof AuthenticatedDashboardRoute
   '/discarded': typeof AuthenticatedDiscardedRoute
   '/important': typeof AuthenticatedImportantRoute
   '/minutes': typeof AuthenticatedMinutesRoute
@@ -242,6 +250,7 @@ export interface FileRoutesById {
   '/auth': typeof AuthRoute
   '/_authenticated/administrator': typeof AuthenticatedAdministratorRoute
   '/_authenticated/control-center': typeof AuthenticatedControlCenterRoute
+  '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/discarded': typeof AuthenticatedDiscardedRoute
   '/_authenticated/important': typeof AuthenticatedImportantRoute
   '/_authenticated/minutes': typeof AuthenticatedMinutesRoute
@@ -272,6 +281,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/administrator'
     | '/control-center'
+    | '/dashboard'
     | '/discarded'
     | '/important'
     | '/minutes'
@@ -298,6 +308,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/administrator'
     | '/control-center'
+    | '/dashboard'
     | '/discarded'
     | '/important'
     | '/minutes'
@@ -326,6 +337,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/_authenticated/administrator'
     | '/_authenticated/control-center'
+    | '/_authenticated/dashboard'
     | '/_authenticated/discarded'
     | '/_authenticated/important'
     | '/_authenticated/minutes'
@@ -404,6 +416,13 @@ declare module '@tanstack/react-router' {
       path: '/discarded'
       fullPath: '/discarded'
       preLoaderRoute: typeof AuthenticatedDiscardedRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/dashboard': {
+      id: '/_authenticated/dashboard'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof AuthenticatedDashboardRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/control-center': {
@@ -560,6 +579,7 @@ const AuthenticatedIntelUnitIdRouteWithChildren =
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedAdministratorRoute: typeof AuthenticatedAdministratorRoute
   AuthenticatedControlCenterRoute: typeof AuthenticatedControlCenterRoute
+  AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
   AuthenticatedDiscardedRoute: typeof AuthenticatedDiscardedRoute
   AuthenticatedImportantRoute: typeof AuthenticatedImportantRoute
   AuthenticatedMinutesRoute: typeof AuthenticatedMinutesRoute
@@ -586,6 +606,7 @@ interface AuthenticatedRouteRouteChildren {
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedAdministratorRoute: AuthenticatedAdministratorRoute,
   AuthenticatedControlCenterRoute: AuthenticatedControlCenterRoute,
+  AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
   AuthenticatedDiscardedRoute: AuthenticatedDiscardedRoute,
   AuthenticatedImportantRoute: AuthenticatedImportantRoute,
   AuthenticatedMinutesRoute: AuthenticatedMinutesRoute,

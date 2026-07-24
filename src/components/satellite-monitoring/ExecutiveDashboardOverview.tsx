@@ -29,7 +29,7 @@ import {
 } from "@/components/satellite-monitoring/ExecutiveProgressRing";
 import { useExecutiveDashboardMetrics } from "@/components/satellite-monitoring/useExecutiveDashboardMetrics";
 import { useOperationalState } from "@/hooks/useOperationalState";
-import { DASHBOARD_PANEL_LABELS, DASHBOARD_PANEL_PURPOSE, type DashboardPanel } from "@/lib/dashboardLabels";
+import { DASHBOARD_PANEL_LABELS, DASHBOARD_PANEL_PURPOSE, VSAT_DASHBOARD_PATH, type DashboardPanel } from "@/lib/dashboardLabels";
 import { listIntelMonitoringSatellites } from "@/lib/intelLiveBridge";
 import { buildOperationalFleetState, buildUnitOptimizationData, type UnitOptimizationData } from "@/lib/operationalState";
 import { scorebar } from "@/components/satellite-monitoring/dashboardUtils";
@@ -77,18 +77,34 @@ type MapMarkerPosition = {
   yPercent: number;
 };
 
+type MarkerSatelliteType = "VSAT" | "THURAYA" | "BEIDOU" | "IRIDIUM";
+
+const MARKER_SATELLITE_TYPES: MarkerSatelliteType[] = ["VSAT", "THURAYA", "BEIDOU", "IRIDIUM"];
+
+const MARKER_SATELLITE_TYPE_LABELS: Record<MarkerSatelliteType, string> = {
+  VSAT: "VSAT",
+  THURAYA: "Thuraya",
+  BEIDOU: "BeiDou",
+  IRIDIUM: "Iridium",
+};
+
+/** Matches HomeLauncherIcon glyph sizing for readable map markers. */
+const MARKER_SATELLITE_ICON_CLASS = "h-10 w-10 sm:h-11 sm:w-11 lg:h-12 lg:w-12";
+
 type MapMarker = {
   id: string;
   pin: MapMarkerPosition;
   label: MapMarkerPosition & { line1: string; line2: string };
   unitId: string | null;
   locked: boolean;
+  satellites: MarkerSatelliteType[];
 };
 
 type MarkerSnapshot = {
   pin: MapMarkerPosition;
   label: MapMarkerPosition & { line1: string; line2: string };
   unitId: string | null;
+  satellites: MarkerSatelliteType[];
 };
 
 type MapUnitSummary = {
@@ -162,6 +178,31 @@ function isValidUnitId(value: unknown): value is string | null {
   return value === null || typeof value === "string";
 }
 
+function isValidMarkerSatelliteType(value: unknown): value is MarkerSatelliteType {
+  return (
+    value === "VSAT" ||
+    value === "THURAYA" ||
+    value === "BEIDOU" ||
+    value === "IRIDIUM"
+  );
+}
+
+function isValidSatellitesArray(value: unknown): value is MarkerSatelliteType[] {
+  return Array.isArray(value) && value.every(isValidMarkerSatelliteType);
+}
+
+function normalizeSatellitesArray(value: unknown): MarkerSatelliteType[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<MarkerSatelliteType>();
+  const normalized: MarkerSatelliteType[] = [];
+  for (const entry of value) {
+    if (!isValidMarkerSatelliteType(entry) || seen.has(entry)) continue;
+    seen.add(entry);
+    normalized.push(entry);
+  }
+  return normalized;
+}
+
 function isValidMapMarker(value: unknown): value is MapMarker {
   if (!value || typeof value !== "object") return false;
   const marker = value as Record<string, unknown>;
@@ -170,7 +211,8 @@ function isValidMapMarker(value: unknown): value is MapMarker {
     isValidMapMarkerPosition(marker.pin) &&
     isValidLabelBlock(marker.label) &&
     isValidUnitId(marker.unitId) &&
-    (marker.locked === undefined || typeof marker.locked === "boolean")
+    (marker.locked === undefined || typeof marker.locked === "boolean") &&
+    (marker.satellites === undefined || isValidSatellitesArray(marker.satellites))
   );
 }
 
@@ -179,6 +221,7 @@ function normalizeMapMarker(value: MapMarker): MapMarker {
     ...value,
     unitId: value.unitId ?? null,
     locked: value.locked === true,
+    satellites: normalizeSatellitesArray(value.satellites),
   };
 }
 
@@ -491,6 +534,266 @@ function createMarkerPartDragHandlers({
     onPointerUp: endDrag,
     onPointerCancel: endDrag,
   };
+}
+
+type MarkerSymbol = "dot" | "antenna" | "satellite";
+
+const MARKER_SYMBOLS: MarkerSymbol[] = ["dot", "antenna", "satellite"];
+
+function useMarkerSymbol(isEditMode: boolean): MarkerSymbol {
+  const [index, setIndex] = useState(0);
+
+  useEffect(() => {
+    if (isEditMode) return;
+
+    const id = setInterval(() => {
+      setIndex((i) => (i + 1) % MARKER_SYMBOLS.length);
+    }, 1000);
+
+    return () => clearInterval(id);
+  }, [isEditMode]);
+
+  if (isEditMode) return "dot";
+  return MARKER_SYMBOLS[index]!;
+}
+
+function DotSymbol({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      aria-hidden="true"
+      width={32}
+      height={32}
+      viewBox="0 0 32 32"
+      className={`block h-8 w-8 shrink-0 drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] ${className}`}
+    >
+      <circle cx={16} cy={16} r={7} fill="black" stroke="white" strokeWidth={2} />
+    </svg>
+  );
+}
+
+function AntennaSymbol({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      aria-hidden="true"
+      width={32}
+      height={32}
+      viewBox="0 0 32 32"
+      className={`block h-8 w-8 shrink-0 ${className}`}
+    >
+      <rect
+        x={13}
+        y={22}
+        width={6}
+        height={2.5}
+        rx={0.5}
+        fill="black"
+        stroke="white"
+        strokeWidth={1.8}
+      />
+      <line
+        x1={16}
+        y1={22}
+        x2={16}
+        y2={10}
+        stroke="white"
+        strokeWidth={1.8}
+        strokeLinecap="round"
+        fill="none"
+      />
+      <path
+        d="M 12 10 Q 16 6 20 10"
+        fill="none"
+        stroke="white"
+        strokeWidth={1.8}
+        strokeLinecap="round"
+      />
+      <path
+        d="M 9 7 Q 16 2 23 7"
+        fill="none"
+        stroke="white"
+        strokeWidth={1.8}
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function SatelliteSymbol({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      aria-hidden="true"
+      width={32}
+      height={32}
+      viewBox="0 0 32 32"
+      className={`block h-8 w-8 shrink-0 drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] ${className}`}
+    >
+      <rect
+        x={5}
+        y={14}
+        width={6}
+        height={4}
+        rx={0.5}
+        fill="black"
+        stroke="white"
+        strokeWidth={1.8}
+      />
+      <rect
+        x={21}
+        y={14}
+        width={6}
+        height={4}
+        rx={0.5}
+        fill="black"
+        stroke="white"
+        strokeWidth={1.8}
+      />
+      <rect
+        x={12}
+        y={12}
+        width={8}
+        height={8}
+        rx={1.5}
+        fill="black"
+        stroke="white"
+        strokeWidth={1.8}
+      />
+      <path
+        d="M 14 12 Q 16 6 18 12"
+        fill="none"
+        stroke="white"
+        strokeWidth={1.8}
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function VsatSymbol({ className = "" }: { className?: string }) {
+  const stroke = "#67e8f9";
+  return (
+    <svg
+      aria-hidden="true"
+      width={32}
+      height={32}
+      viewBox="0 0 32 32"
+      className={`block shrink-0 ${className}`}
+    >
+      <rect x={4} y={14} width={7} height={5} rx={0.5} fill="#0f172a" stroke={stroke} strokeWidth={1.2} />
+      <rect x={21} y={14} width={7} height={5} rx={0.5} fill="#0f172a" stroke={stroke} strokeWidth={1.2} />
+      <rect x={12} y={11} width={8} height={9} rx={1} fill="#0f172a" stroke={stroke} strokeWidth={1.2} />
+      <circle cx={16} cy={15.5} r={1.2} fill={stroke} />
+      <line x1={16} y1={11} x2={16} y2={7} stroke="#64748b" strokeWidth={1} />
+      <path d="M 13 7 Q 16 4 19 7" fill="none" stroke={stroke} strokeWidth={1.2} />
+      <circle cx={16} cy={6} r={0.6} fill="white" />
+    </svg>
+  );
+}
+
+function ThurayaSymbol({ className = "" }: { className?: string }) {
+  const stroke = "#fbbf24";
+  return (
+    <svg
+      aria-hidden="true"
+      width={32}
+      height={32}
+      viewBox="0 0 32 32"
+      className={`block shrink-0 ${className}`}
+    >
+      <rect x={13} y={13} width={6} height={8} rx={1} fill="#111827" stroke={stroke} strokeWidth={1.2} />
+      <circle cx={16} cy={17} r={1.1} fill={stroke} />
+      <rect x={5} y={15} width={6} height={4} rx={0.5} fill="#111827" stroke={stroke} strokeWidth={1.1} />
+      <rect x={21} y={15} width={6} height={4} rx={0.5} fill="#111827" stroke={stroke} strokeWidth={1.1} />
+      <line x1={16} y1={13} x2={16} y2={8} stroke="#64748b" strokeWidth={1} />
+      <circle cx={16} cy={8} r={0.7} fill={stroke} />
+      <circle cx={16} cy={8} r={2.2} fill="none" stroke={stroke} strokeWidth={0.9} />
+      <circle cx={16} cy={8} r={3.4} fill="none" stroke={stroke} strokeWidth={0.8} />
+    </svg>
+  );
+}
+
+function BeidouSymbol({ className = "" }: { className?: string }) {
+  const stroke = "#22c55e";
+  return (
+    <svg
+      aria-hidden="true"
+      width={32}
+      height={32}
+      viewBox="0 0 32 32"
+      className={`block shrink-0 ${className}`}
+    >
+      <rect x={5} y={14} width={6} height={4} rx={0.5} fill="#111827" stroke={stroke} strokeWidth={1.1} />
+      <rect x={21} y={14} width={6} height={4} rx={0.5} fill="#111827" stroke={stroke} strokeWidth={1.1} />
+      <rect x={12} y={11} width={8} height={9} rx={1} fill="#111827" stroke={stroke} strokeWidth={1.2} />
+      <circle cx={16} cy={15.5} r={1.1} fill={stroke} />
+      <line x1={16} y1={20} x2={16} y2={24} stroke="#64748b" strokeWidth={1} />
+      <circle cx={16} cy={24.5} r={1} fill={stroke} />
+    </svg>
+  );
+}
+
+function IridiumSymbol({ className = "" }: { className?: string }) {
+  const stroke = "#c084fc";
+  return (
+    <svg
+      aria-hidden="true"
+      width={32}
+      height={32}
+      viewBox="0 0 32 32"
+      className={`block shrink-0 ${className}`}
+    >
+      <rect x={13} y={10} width={6} height={10} rx={1} fill="#111827" stroke={stroke} strokeWidth={1.2} />
+      <circle cx={16} cy={15} r={1.1} fill={stroke} />
+      <rect x={4} y={13} width={7} height={4} rx={0.5} fill="#111827" stroke={stroke} strokeWidth={1.1} />
+      <rect x={21} y={13} width={7} height={4} rx={0.5} fill="#111827" stroke={stroke} strokeWidth={1.1} />
+      <rect x={7} y={19} width={5} height={3.5} rx={0.5} fill="#111827" stroke={stroke} strokeWidth={1} transform="rotate(35 9.5 20.75)" />
+      <rect x={20} y={19} width={5} height={3.5} rx={0.5} fill="#111827" stroke={stroke} strokeWidth={1} transform="rotate(-35 22.5 20.75)" />
+    </svg>
+  );
+}
+
+function MarkerSatelliteIcon({
+  type,
+  className = "",
+}: {
+  type: MarkerSatelliteType;
+  className?: string;
+}) {
+  switch (type) {
+    case "VSAT":
+      return <VsatSymbol className={className} />;
+    case "THURAYA":
+      return <ThurayaSymbol className={className} />;
+    case "BEIDOU":
+      return <BeidouSymbol className={className} />;
+    case "IRIDIUM":
+      return <IridiumSymbol className={className} />;
+  }
+}
+
+function MarkerSatelliteIconsRow({
+  satellites,
+  className = "",
+  labelClassName = "text-black",
+}: {
+  satellites: MarkerSatelliteType[];
+  className?: string;
+  labelClassName?: string;
+}) {
+  if (!satellites.length) return null;
+  return (
+    <div className={`flex flex-wrap items-end gap-2 sm:gap-3 ${className}`}>
+      {satellites.map((type) => (
+        <div key={type} className="flex flex-col items-center gap-1 shrink-0">
+          <MarkerSatelliteIcon type={type} className={MARKER_SATELLITE_ICON_CLASS} />
+          <span
+            className={`mono text-[10px] sm:text-xs font-bold uppercase tracking-wide leading-none ${labelClassName}`}
+          >
+            {MARKER_SATELLITE_TYPE_LABELS[type]}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function MapPinDot({ className = "" }: { className?: string }) {
@@ -819,6 +1122,11 @@ function MapUnitPanel({
     >
       <div className="relative border-b border-white/10 px-4 py-3 pr-10">
         <h2 className="mono text-sm font-bold uppercase leading-snug tracking-wide text-white">{unitTitle}</h2>
+        <MarkerSatelliteIconsRow
+          satellites={marker.satellites}
+          className="mt-2"
+          labelClassName="text-white/80"
+        />
         {marker.label.line2.trim() ? (
           <p className="mono mt-0.5 text-xs leading-snug tracking-wide text-white/55">{marker.label.line2.trim()}</p>
         ) : null}
@@ -1003,6 +1311,7 @@ function MapMarker({
   onPinSelect,
   onNameClick,
   onUpdateUnitId,
+  onUpdateSatellites,
   onUpdatePinPosition,
   onUpdateLabelPosition,
   onDelete,
@@ -1025,6 +1334,7 @@ function MapMarker({
   onPinSelect: (id: string) => void;
   onNameClick: (id: string) => void;
   onUpdateUnitId: (id: string, unitId: string | null) => void;
+  onUpdateSatellites: (id: string, satellites: MarkerSatelliteType[]) => void;
   onUpdatePinPosition: (id: string, position: MapMarkerPosition) => void;
   onUpdateLabelPosition: (id: string, position: MapMarkerPosition) => void;
   onDelete: (id: string) => void;
@@ -1053,6 +1363,8 @@ function MapMarker({
     clientToMarkerPercents,
   });
 
+  const symbol = useMarkerSymbol(isEditMode);
+
   const unitName = marker.label.line1.trim() || "Unnamed unit";
   const labelPlacement =
     !isEditMode && isRevealed
@@ -1079,7 +1391,16 @@ function MapMarker({
               onPinSelect(marker.id);
             }}
           >
-            <MapPinDot />
+            {(() => {
+              switch (symbol) {
+                case "dot":
+                  return <DotSymbol />;
+                case "antenna":
+                  return <AntennaSymbol />;
+                case "satellite":
+                  return <SatelliteSymbol />;
+              }
+            })()}
           </button>
         </div>
         {labelPlacement ? (
@@ -1104,6 +1425,7 @@ function MapMarker({
             >
               {unitName}
             </button>
+            <MarkerSatelliteIconsRow satellites={marker.satellites} className="px-1.5 pt-1" />
           </div>
         ) : null}
       </>
@@ -1123,44 +1445,79 @@ function MapMarker({
         onPointerUp={pinDragHandlers.onPointerUp}
         onPointerCancel={pinDragHandlers.onPointerCancel}
       >
-        <MapPinDot />
+        <DotSymbol />
       </div>
 
       <div
         data-map-marker
-        className="absolute z-[6] pointer-events-auto min-w-[160px] min-h-[52px]"
+        className="absolute z-[6] pointer-events-auto min-w-[220px] min-h-[52px]"
         style={{ left: labelScreen.screenX, top: labelScreen.screenY }}
         onDoubleClick={stopMarkerPointerEvent}
       >
         <div
-          className="flex min-w-[160px] items-stretch border border-black/50 bg-transparent"
+          className="flex min-w-[220px] flex-col border border-black/50 bg-transparent"
           onPointerDown={stopMarkerPointerEvent}
         >
-          <button
-            type="button"
-            aria-label="Drag label block"
-            title="Drag label"
-            className="flex w-5 min-w-[20px] shrink-0 cursor-move touch-none items-center justify-center self-stretch border-r border-black/50 bg-transparent px-0.5 text-[14px] leading-none text-black"
-            {...labelDragHandlers}
-          >
-            ⠿
-          </button>
-          <select
-            aria-label="Link operational unit"
-            value={marker.unitId ?? ""}
-            disabled={marker.locked}
-            onChange={(event) =>
-              onUpdateUnitId(marker.id, event.target.value ? event.target.value : null)
-            }
-            className="mono min-w-0 flex-1 border-0 bg-transparent px-1 py-1 text-[11px] font-bold tracking-wide text-black outline-none disabled:opacity-80"
-          >
-            <option value="">— Select unit —</option>
-            {units.map((unit) => (
-              <option key={unit.id} value={unit.id}>
-                {unit.name ?? unit.code}
-              </option>
-            ))}
-          </select>
+          <div className="flex min-w-[220px] items-stretch">
+            <button
+              type="button"
+              aria-label="Drag label block"
+              title="Drag label"
+              className="flex w-5 min-w-[20px] shrink-0 cursor-move touch-none items-center justify-center self-stretch border-r border-black/50 bg-transparent px-0.5 text-[14px] leading-none text-black"
+              {...labelDragHandlers}
+            >
+              ⠿
+            </button>
+            <select
+              aria-label="Link operational unit"
+              value={marker.unitId ?? ""}
+              disabled={marker.locked}
+              onChange={(event) =>
+                onUpdateUnitId(marker.id, event.target.value ? event.target.value : null)
+              }
+              className="mono min-w-0 flex-1 border-0 bg-transparent px-1 py-1 text-[11px] font-bold tracking-wide text-black outline-none disabled:opacity-80"
+            >
+              <option value="">— Select unit —</option>
+              {units.map((unit) => (
+                <option key={unit.id} value={unit.id}>
+                  {unit.name ?? unit.code}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-1.5 border-t border-black/50 p-1.5 sm:grid-cols-4">
+            {MARKER_SATELLITE_TYPES.map((type) => {
+              const selected = marker.satellites.includes(type);
+              return (
+                <button
+                  key={type}
+                  type="button"
+                  aria-pressed={selected}
+                  aria-label={`Toggle ${MARKER_SATELLITE_TYPE_LABELS[type]}`}
+                  disabled={marker.locked}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onUpdateSatellites(
+                      marker.id,
+                      selected
+                        ? marker.satellites.filter((entry) => entry !== type)
+                        : [...marker.satellites, type],
+                    );
+                  }}
+                  className={`flex flex-col items-center gap-1 rounded border px-1 py-1.5 ${
+                    selected
+                      ? "border-black bg-black/90 text-white"
+                      : "border-black/40 bg-white/70 text-black hover:bg-white/90"
+                  } disabled:opacity-80`}
+                >
+                  <MarkerSatelliteIcon type={type} className={MARKER_SATELLITE_ICON_CLASS} />
+                  <span className="mono text-[10px] font-bold uppercase tracking-wide leading-none">
+                    {MARKER_SATELLITE_TYPE_LABELS[type]}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
@@ -1350,6 +1707,14 @@ function MapZoomPanViewport() {
     [units],
   );
 
+  const updateMarkerSatellites = useCallback((id: string, satellites: MarkerSatelliteType[]) => {
+    setMarkers((prev) =>
+      prev.map((marker) =>
+        marker.id === id ? { ...marker, satellites: normalizeSatellitesArray(satellites) } : marker,
+      ),
+    );
+  }, []);
+
   const updatePinPosition = useCallback((id: string, position: MapMarkerPosition) => {
     setMarkers((prev) =>
       prev.map((marker) => (marker.id === id ? { ...marker, pin: position } : marker)),
@@ -1399,6 +1764,7 @@ function MapZoomPanViewport() {
                 pin: snapshot.pin,
                 label: snapshot.label,
                 unitId: snapshot.unitId,
+                satellites: [...snapshot.satellites],
                 locked: true,
               }
             : marker,
@@ -1443,6 +1809,7 @@ function MapZoomPanViewport() {
           },
           unitId: null,
           locked: false,
+          satellites: [],
         },
       ]);
       setNewMarkerFocusId(id);
@@ -1556,6 +1923,7 @@ function MapZoomPanViewport() {
                   pin: { ...marker.pin },
                   label: { ...marker.label },
                   unitId: marker.unitId,
+                  satellites: [...marker.satellites],
                 },
               ]),
             );
@@ -1713,19 +2081,6 @@ function MapZoomPanViewport() {
         />
       </div>
 
-      <img
-        src="/logo-left.png"
-        alt=""
-        draggable={false}
-        className="pointer-events-none absolute top-3 left-3 z-10 h-32 w-32 object-contain"
-      />
-      <img
-        src="/logo-right.png"
-        alt=""
-        draggable={false}
-        className="pointer-events-none absolute top-3 right-3 z-10 h-32 w-32 object-contain"
-      />
-
       <div className="pointer-events-none absolute inset-0 z-[5]">
         {markers.map((marker, markerIndex) => {
           const pinScreen = markerToScreenCoords(
@@ -1776,6 +2131,7 @@ function MapZoomPanViewport() {
               onPinSelect={handlePinSelect}
               onNameClick={handleNameClick}
               onUpdateUnitId={updateUnitId}
+              onUpdateSatellites={updateMarkerSatellites}
               onUpdatePinPosition={updatePinPosition}
               onUpdateLabelPosition={updateLabelPosition}
               onDelete={deleteMarker}
@@ -1911,7 +2267,7 @@ function ExecutiveTile({
 }) {
   return (
     <Link
-      to="/"
+      to={VSAT_DASHBOARD_PATH}
       search={{ unit: undefined, panel: tile.panel }}
       className={TILE_CLASS}
       title={DASHBOARD_PANEL_PURPOSE[tile.panel]}

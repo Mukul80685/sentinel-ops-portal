@@ -22,6 +22,7 @@ import {
 } from "../lib/electronPersist";
 import { installAllocationVisibilityReconciliation } from "../lib/priorityAllocation";
 import { sanitizeIntelCellEditsStorage } from "../lib/intelCellStore";
+import { sanitizeIntelScanOverridesStorage } from "../lib/intelScanStorage";
 import { sanitizeVisibilityOverlayDuplicateSatellites } from "../lib/visibilityOverlay";
 
 /**
@@ -182,6 +183,7 @@ function RootComponent() {
     if (!storageReady) return;
     sanitizeVisibilityOverlayDuplicateSatellites();
     sanitizeIntelCellEditsStorage();
+    sanitizeIntelScanOverridesStorage();
     return installAllocationVisibilityReconciliation();
   }, [storageReady]);
 

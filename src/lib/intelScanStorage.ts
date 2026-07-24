@@ -772,28 +772,32 @@ export function loadScanOverrides(
 
   const raw = readIntelLocalJson<ScanReportOverride[]>(intelScanOverridesKey(slug), unitIdOrSlug) ?? [];
 
-  const withIds = ensureOverrideRowIds(unitIdOrSlug, raw, unitCode);
-
-  const sanitized = sanitizeScanOverrides(withIds);
-
-  if (sanitized.length !== withIds.length) {
-
-    saveScanOverrides(unitIdOrSlug, sanitized, unitCode);
-
-  }
-
-  return sanitized;
+  return ensureOverrideRowIds(unitIdOrSlug, raw, unitCode);
 
 }
 
-/** Drop empty-name rows and zero-metric ghosts materialized from seeded base table rows. */
-function sanitizeScanOverrides(overrides: ScanReportOverride[]): ScanReportOverride[] {
-  return overrides.filter((o) => {
-    if (!o.satelliteName.trim()) return false;
-    const hasMetrics = o.totalScanned > 0 || o.analyzed > 0 || o.pending > 0;
-    const hasDate = Boolean(o.updatedOn?.trim());
-    return hasMetrics || hasDate;
-  });
+/** One-time startup cleanup — drop blank satellite names only; never remove user metrics. */
+export function sanitizeIntelScanOverridesStorage(): boolean {
+  if (typeof window === "undefined") return false;
+  let changed = false;
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key?.startsWith("intel-scan-overrides-")) continue;
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as ScanReportOverride[];
+      if (!Array.isArray(parsed)) continue;
+      const cleaned = parsed.filter((o) => o.satelliteName?.trim());
+      if (cleaned.length === parsed.length) continue;
+      localStorage.setItem(key, JSON.stringify(cleaned));
+      changed = true;
+    } catch {
+      /* ignore */
+    }
+  }
+  if (changed) scheduleElectronStorageFlush();
+  return changed;
 }
 
 export function saveScanOverrides(

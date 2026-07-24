@@ -366,8 +366,7 @@ function PriorityUnit() {
         <div className="panel overflow-hidden flex flex-col flex-1 min-h-0">
           <div className="px-4 py-1.5 border-b border-border bg-secondary/20 flex items-center justify-between gap-2 shrink-0">
             <span className="mono text-[10px] uppercase tracking-wider text-muted-foreground">
-              {sortedRows.length} / {visibleCap} satellite{visibleCap !== 1 ? "s" : ""} allocated
-              {visibleCap > 0 ? " (visibility matrix limit)" : ""}
+              {sortedRows.length} satellite{sortedRows.length !== 1 ? "s" : ""} allocated
             </span>
             <span className="mono text-[9px] text-muted-foreground">
               Sorted by {SORTABLE_COLUMNS.find((c) => c.key === sortKey)?.label} ({sortDir === "asc" ? "ascending" : "descending"})

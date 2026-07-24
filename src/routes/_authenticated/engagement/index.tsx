@@ -2,11 +2,11 @@ import { Link, createFileRoute, redirect } from "@tanstack/react-router";
 import { Empty } from "@/components/Empty";
 import { loadRingPalette, useEngagementRingVisuals } from "@/lib/engagementRingVisuals";
 import { useDashboardData } from "@/hooks/useDashboardData";
-import { DASHBOARD_PANEL_LABELS } from "@/lib/dashboardLabels";
+import { DASHBOARD_PANEL_LABELS, VSAT_DASHBOARD_PATH } from "@/lib/dashboardLabels";
 
 export const Route = createFileRoute("/_authenticated/engagement/")({
   beforeLoad: () => {
-    throw redirect({ to: "/" });
+    throw redirect({ to: VSAT_DASHBOARD_PATH });
   },
   component: () => null,
 });

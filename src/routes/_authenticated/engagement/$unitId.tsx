@@ -40,7 +40,7 @@ import {
 } from "@/lib/intelLiveBridge";
 import { INT_UNITS } from "@/lib/intelRepository";
 import { unitDisplayLabel, unitDisplayLocation } from "@/lib/operationalDataset";
-import { DASHBOARD_PANEL_LABELS, dashboardPanelBackLink } from "@/lib/dashboardLabels";
+import { DASHBOARD_PANEL_LABELS, dashboardPanelBackLink, VSAT_DASHBOARD_PATH } from "@/lib/dashboardLabels";
 import { loadRingPalette, useEngagementRingVisuals } from "@/lib/engagementRingVisuals";
 import {
   buildIntelMonitoringEngagementRows,
@@ -690,7 +690,7 @@ class EngagementErrorBoundary extends Component<
           title={DASHBOARD_PANEL_LABELS.engagement}
           subtitle="Unit detail"
           showBack
-          backLink={{ to: "/" as const, search: {} }}
+          backLink={{ to: VSAT_DASHBOARD_PATH, search: {} }}
           horizontalNav={null}
         >
           <div className="panel p-6 text-center space-y-3">
@@ -1224,7 +1224,7 @@ function EngagementUnit() {
     <AppShell
       title={DASHBOARD_PANEL_LABELS.engagement}
       showBack
-      backLink={{ to: "/" as const, search: {} }}
+      backLink={{ to: VSAT_DASHBOARD_PATH, search: {} }}
       horizontalNav={null}
     >
 
